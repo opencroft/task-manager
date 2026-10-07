@@ -1,0 +1,32 @@
+{
+  "name": "task-manager",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --no-warnings --test server/*.test.ts server/workflows/*.test.ts server/inbox/*.test.ts server/dependencies/*.test.ts server/views/*.test.ts server/boards/*.test.ts server/my-work/*.test.ts server/attachments/*.test.ts server/mentions/*.test.ts server/settings/*.test.ts server/versions/*.test.ts server/openproject/*.test.ts server/forge/*.test.ts server/projects/*.test.ts scripts/smoke-stage/*.test.ts && tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "smoke:stage": "node --experimental-strip-types --no-warnings scripts/smoke-stage.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.8.0",
+    "class-variance-authority": "^0.7.1",
+    "cmdk": "^1.1.1",
+    "cn": "^0.4.0",
+    "lucide-react": "^1.14.0",
+    "react-resizable-panels": "^4.13.3",
+    "sonner": "^2.0.8"
+  },
+  "peerDependencies": {
+    "@opencroft/client": "*",
+    "@opencroft/server": "*",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  }
+}

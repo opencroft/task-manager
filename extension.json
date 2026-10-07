@@ -1,0 +1,927 @@
+{
+  "id": "opencroft.task-manager",
+  "name": "Task Manager",
+  "version": "0.1.0",
+  "description": "Task manager: tasks with subtasks, statuses, a timeline, a board and workflows, usable by people and agents alike.",
+  "provides": {
+    "apps": [
+      {
+        "type": "tasks",
+        "title": "Tasks",
+        "description": "A task manager for one project: tasks and subtasks, statuses, timeline, board and workflows.",
+        "icon": "ListTodo",
+        "parameters": [
+          {
+            "id": "id",
+            "label": "Project key",
+            "required": true,
+            "placeholder": "TASK",
+            "description": "Prefix of every task key (TASK-1, TASK-2, …): 2–10 uppercase letters and digits, starting with a letter."
+          }
+        ],
+        "actions": [
+          {
+            "id": "task_list",
+            "description": "List or search this project's tasks. All filters are optional and combine with AND. A list-valued filter takes a plain list, matching any of its values, or {\"include\": [...], \"exclude\": [...]}: a task with any excluded value is left out even when it also has an included one, and an empty or missing include list includes everything else (e.g. label {\"exclude\": [\"wontfix\"]}). Returns {tasks, total}; each task is a compact row: key, summary, status (its name), type, priority, and only when set: assignee (a name), parentKey, childCount, labels, version (its name), startDate, endDate, blockedBy (keys of the blockers not done yet), openPrs (open pull requests mentioning it). detail \"full\" gives every field instead (status object, rank, timestamps, assignee id, all blockers). Default order is the backlog order (rank).",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the rows above; full: every field of each task." },
+                "query": { "type": "string", "description": "Text to find in summary or description (substring, case-insensitive), or a task key such as TASK-12. A key is read however it was copied: any dash, surrounding punctuation (TASK-12:), a space (TASK 12), or #12 for a number in this project." },
+                "status": { "type": ["array", "object"], "items": { "type": ["string", "number"] }, "description": "Status names or ids (see status_list). Like every list filter here: a list to include, or {\"include\": [...], \"exclude\": [...]}." },
+                "statusCategory": { "type": ["array", "object"], "items": { "type": "string", "enum": ["todo", "in_progress", "done"] }, "description": "Match by status category instead of exact status." },
+                "assignee": { "type": ["array", "object"], "items": { "type": "string" }, "description": "Assignee names; \"me\" is you, \"none\" matches unassigned tasks." },
+                "type": { "type": ["array", "object"], "items": { "type": "string", "enum": ["task", "bug", "story", "epic"] } },
+                "priority": { "type": ["array", "object"], "items": { "type": "string", "enum": ["lowest", "low", "medium", "high", "highest"] } },
+                "label": { "type": ["array", "object"], "items": { "type": "string" } },
+                "version": { "type": ["array", "object"], "items": { "type": "string" }, "description": "Version names (see version_list); \"none\" matches tasks in no version." },
+                "parent": { "type": ["string", "array", "object"], "items": { "type": "string" }, "description": "Only direct subtasks of these task keys; \"none\" matches top-level tasks. One key, a list, or {\"include\", \"exclude\"}." },
+                "scheduled": { "type": "boolean", "description": "true: only tasks with start and end dates; false: only tasks without." },
+                "hasOpenPr": { "type": "boolean", "description": "true: only tasks an open pull request mentions (see task_prs); false: only tasks none does." },
+                "sort": {
+                  "type": "object",
+                  "properties": {
+                    "field": { "type": "string", "enum": ["rank", "key", "summary", "status", "type", "priority", "assignee", "reporter", "startDate", "endDate", "createdAt", "updatedAt"] },
+                    "dir": { "type": "string", "enum": ["asc", "desc"] }
+                  }
+                },
+                "board": { "type": "string", "description": "A board's id or name (see board_list): only the tasks it shows, those in its columns' statuses that match its preset filter. The other filters narrow it further." },
+                "limit": { "type": "number", "description": "Page size, default 200, max 1000; with scope \"all\" default 50, max 200." },
+                "offset": { "type": "number" },
+                "scope": { "type": "string", "enum": ["this", "all"], "description": "this (default): this project. all: every task-manager App you can see, exact key matches first, then the most recently changed; each row adds app (its <space>.<app> address, for app_call), and projects says how many were read. With all, status, version, parent, sort and offset are refused (they name things of one project): use statusCategory." }
+              }
+            }
+          },
+          {
+            "id": "task_get",
+            "description": "Read one task: every field that is set, its description (markdown), reporter, ancestors, subtasks, its related tasks grouped by relation (blockedBy: the tasks blocking it, the only relation that holds it back; blocks; follows: the tasks it comes after; precedes; duplicates; duplicatedBy; relatesTo), the latest comments, change history, and pullRequests: the forge pull requests that mention the task ({repo, number, title, state: open|merged|closed, author, url, branch}), open ones first. Empty fields and empty relation lists are left out; subtasks and related tasks are rows of key, summary and status (its name). comments holds the latest 5, oldest of them first ({id, author, body, createdAt, updatedAt only when edited, mine: true on your own}), and commentsTotal counts them all: raise commentsLimit (up to 50) or page through every comment with task_comments. detail \"full\" gives the task page's shape instead: every comment, relations as full tasks, empty fields kept.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "key": { "type": "string", "description": "Task key, e.g. TASK-12." },
+                "commentsLimit": { "type": "number", "description": "How many of the latest comments to return, 1–50. Default 5." },
+                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the answer above; full: the whole task with every comment." }
+              },
+              "required": ["key"]
+            }
+          },
+          {
+            "id": "task_comments",
+            "description": "Read a task's comments a page at a time, newest first: the ones task_get leaves out. Returns {key, comments: [{id, author, body, createdAt, updatedAt only when edited, mine: true on your own}], total, next}; pass next as before for the older ones, until an answer has no next. Pages stay right while comments are added or deleted.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "key": { "type": "string", "description": "Task key, e.g. TASK-12." },
+                "before": { "type": "string", "description": "The next of the page before. Omitted: the newest comments." },
+                "limit": { "type": "number", "description": "Comments per page, 1–50. Default 10." }
+              },
+              "required": ["key"]
+            }
+          },
+          {
+            "id": "task_create",
+            "description": "Create a task, or a subtask when parent is given. Only summary is required; defaults are type task, priority medium, the first to-do status, unassigned, unscheduled, positioned last. You are recorded as the reporter. Returns {result: the created task as a compact row (as task_list), warnings?}; task_get reads it in full.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the task as a row; full: the whole task." },
+                "summary": { "type": "string", "description": "One-line title." },
+                "description": { "type": "string", "description": "Markdown." },
+                "type": { "type": "string", "enum": ["task", "bug", "story", "epic"] },
+                "priority": { "type": "string", "enum": ["lowest", "low", "medium", "high", "highest"] },
+                "status": { "type": ["string", "number"], "description": "Status name or id (see status_list)." },
+                "assignee": { "type": ["string", "object", "null"], "description": "A plain name from assignee_list, agent or person alike, e.g. \"Alice\"; \"me\" is you. The object assignee_list gives works too. Only someone not in the user directory and not listed yet needs {\"kind\":\"person\",\"name\":\"...\"}." },
+                "parent": { "type": ["string", "null"], "description": "Parent task key, making this a subtask." },
+                "labels": { "type": "array", "items": { "type": "string" } },
+                "version": { "type": ["string", "number", "null"], "description": "A version's name (see version_list) to plan the task into." },
+                "startDate": { "type": ["string", "null"], "description": "YYYY-MM-DD. Give both startDate and endDate, or neither." },
+                "endDate": { "type": ["string", "null"], "description": "YYYY-MM-DD, inclusive, not before startDate." },
+                "before": { "type": "string", "description": "Place just before this task key in the backlog order." },
+                "after": { "type": "string", "description": "Place just after this task key in the backlog order." }
+              },
+              "required": ["summary"]
+            }
+          },
+          {
+            "id": "task_update",
+            "description": "Change fields of a task; only the fields you pass change. assignee null unassigns. A status here is a status change, exactly like task_change_status (workflows react to it). Giving only startDate or only endDate moves that side of an existing schedule; null for either unschedules. Returns {result: the updated task as a compact row (as task_list), warnings?}.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the task as a row; full: the whole task." },
+                "key": { "type": "string" },
+                "summary": { "type": "string" },
+                "description": { "type": "string", "description": "Markdown; replaces the whole description." },
+                "type": { "type": "string", "enum": ["task", "bug", "story", "epic"] },
+                "priority": { "type": "string", "enum": ["lowest", "low", "medium", "high", "highest"] },
+                "status": { "type": ["string", "number"], "description": "Status name or id (see status_list)." },
+                "assignee": { "type": ["string", "object", "null"], "description": "A plain name from assignee_list, agent or person alike, e.g. \"Alice\"; \"me\" is you; null unassigns. The object assignee_list gives works too. Only someone not in the user directory and not listed yet needs {\"kind\":\"person\",\"name\":\"...\"}." },
+                "labels": { "type": "array", "items": { "type": "string" }, "description": "Replaces all labels." },
+                "version": { "type": ["string", "number", "null"], "description": "A version's name (see version_list); null or \"none\" takes the task out of its version." },
+                "startDate": { "type": ["string", "null"] },
+                "endDate": { "type": ["string", "null"] }
+              },
+              "required": ["key"]
+            }
+          },
+          {
+            "id": "task_change_status",
+            "description": "Move a task to another status, optionally with a comment explaining why. A workflow attached to the task may refuse a transition it does not allow; the error says why. Returns {result: the task as a compact row (as task_list), warnings?}.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the task as a row; full: the whole task." },
+                "key": { "type": "string" },
+                "status": { "type": ["string", "number"], "description": "Target status name or id (see status_list)." },
+                "comment": { "type": "string", "description": "Markdown comment recorded with the change." }
+              },
+              "required": ["key", "status"]
+            }
+          },
+          {
+            "id": "task_move",
+            "description": "Reparent and/or reorder a task. parent: a task key to become its subtask, or null to make it top-level; omit to keep the current parent. before/after: a task key to sit next to in the order. Moving a task under itself or its own subtask is refused. Returns {result: the task as a compact row (as task_list)}.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the task as a row; full: every field of it." },
+                "key": { "type": "string" },
+                "parent": { "type": ["string", "null"] },
+                "before": { "type": "string" },
+                "after": { "type": "string" }
+              },
+              "required": ["key"]
+            }
+          },
+          {
+            "id": "task_delete",
+            "description": "Delete a task permanently. A task with subtasks is refused unless withSubtasks is true, which deletes the whole subtree. Task numbers are never reused.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "key": { "type": "string" },
+                "withSubtasks": { "type": "boolean" }
+              },
+              "required": ["key"]
+            }
+          },
+          {
+            "id": "task_comment",
+            "description": "Add a markdown comment to a task, attributed to you. @Name (an agent or person from assignee_list, full name or a first name only one has) puts it in their inbox.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "key": { "type": "string" },
+                "body": { "type": "string", "description": "Markdown." }
+              },
+              "required": ["key", "body"]
+            }
+          },
+          {
+            "id": "task_comment_update",
+            "description": "Change the text of a comment you wrote (its id is in task_get's or task_comments' comments, where your own have mine: true). Only a comment's author can edit it; mentions in the new text notify no one again.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "key": { "type": "string" },
+                "id": { "type": "number", "description": "The comment's id, a whole number from task_get or task_comments." },
+                "body": { "type": "string", "description": "Markdown." }
+              },
+              "required": ["key", "id", "body"]
+            }
+          },
+          {
+            "id": "task_comment_delete",
+            "description": "Delete a comment you wrote. Only a comment's author can delete it.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "key": { "type": "string" },
+                "id": { "type": "number", "description": "The comment's id, a whole number from task_get or task_comments." }
+              },
+              "required": ["key", "id"]
+            }
+          },
+          {
+            "id": "status_list",
+            "description": "The project's statuses in board order, each with id, name, category (todo, in_progress or done) and color.",
+            "inputSchema": { "type": "object", "properties": {} }
+          },
+          {
+            "id": "status_create",
+            "description": "Add a status at the end of the board order.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "category": { "type": "string", "enum": ["todo", "in_progress", "done"] },
+                "color": { "type": ["string", "null"], "description": "Hex (#3b82f6) or a color name; omit for the category default." }
+              },
+              "required": ["name", "category"]
+            }
+          },
+          {
+            "id": "status_update",
+            "description": "Rename a status, change its category or its color.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "status": { "type": ["string", "number"], "description": "Current name or id." },
+                "name": { "type": "string" },
+                "category": { "type": "string", "enum": ["todo", "in_progress", "done"] },
+                "color": { "type": ["string", "null"] }
+              },
+              "required": ["status"]
+            }
+          },
+          {
+            "id": "status_reorder",
+            "description": "Set the board order of statuses. order lists every status exactly once, by name or id.",
+            "inputSchema": {
+              "type": "object",
+              "properties": { "order": { "type": "array", "items": { "type": ["string", "number"] } } },
+              "required": ["order"]
+            }
+          },
+          {
+            "id": "status_delete",
+            "description": "Delete a status; its tasks move to moveTo first (a normal status change for each). The last to-do status cannot be deleted.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "status": { "type": ["string", "number"], "description": "Status name or id to delete." },
+                "moveTo": { "type": ["string", "number"], "description": "Status name or id its tasks move to." }
+              },
+              "required": ["status", "moveTo"]
+            }
+          },
+          {
+            "id": "assignee_list",
+            "description": "Who tasks can be assigned to: every agent (by name and agent node id), every person in the user directory (by name and user id), then names this project used for people outside the directory. Any of these names can be passed as a plain assignee string; \"me\" is you.",
+            "inputSchema": { "type": "object", "properties": {} }
+          },
+          {
+            "id": "avatar_list",
+            "description": "The pictures the App draws for people and agents: every agent and every person in the user directory, each with kind, id, name and avatarUrl (an image URL, often a large inline data: one; null when they have none). For the App's own avatars; assignee_list is the one for choosing who to assign.",
+            "inputSchema": { "type": "object", "properties": {} }
+          },
+          {
+            "id": "label_list",
+            "description": "Every label used in this project.",
+            "inputSchema": { "type": "object", "properties": {} }
+          },
+          {
+            "id": "task_parents",
+            "description": "Every task that has subtasks, as { key, summary }, in key order. Cheaper than task_list when you only need the parents, e.g. to pick one for task_list { parent }.",
+            "inputSchema": { "type": "object", "properties": {} }
+          },
+          {
+            "id": "workflows_list",
+            "description": "The project's workflows with their steps, the default first, plus the project's statuses: steps store statuses by id (triggerStatus, each transition's status), and this list gives each id its name.",
+            "inputSchema": { "type": "object", "properties": {} }
+          },
+          {
+            "id": "workflow_get",
+            "description": "One workflow with its ordered steps: kind (agent or approval), trigger status, worker, instructions, an approval step's approvers and approvals needed, transitions (label, toStep: the step that opens next or null for the end, status, gate: an override or null when derived) and the chat folder its thread is filed in.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "workflow": { "type": "string", "description": "Workflow id or name (see workflows_list)." }
+              },
+              "required": ["workflow"]
+            }
+          },
+          {
+            "id": "space_chat",
+            "description": "The space's chat: the group chat at the space's own address, where every workflow step's session, every @mention session and the project chat open their threads. Returns {slug, ref, name, taskManagerIn, agents, youAreIn}. Only its `agents` can work a step or be reached by a mention; any other one waits with \"<agent> isn't in this space's chat\". The task manager never creates the chat or adds members.",
+            "inputSchema": { "type": "object", "properties": {} }
+          },
+          {
+            "id": "space_chat_grant",
+            "description": "Let the task manager into the space's chat, so it can open threads there, acting as the signed-in person, who must be in the chat. Only from the UI (Settings → Chat): an agent cannot, so ask a person to. Returns the chat as space_chat does.",
+            "inputSchema": { "type": "object", "properties": {} }
+          },
+          {
+            "id": "workflow_validate",
+            "description": "Check a workflow without saving it. Returns every issue with the path of the field it concerns; an empty list means workflow_save will accept it.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "workflow": { "type": "object", "properties": { "id": { "type": "string", "description": "Pass to replace an existing workflow; omit to create one." }, "name": { "type": "string" }, "description": { "type": "string" }, "isDefault": { "type": "boolean", "description": "The workflow a task runs when workflow_start names none. The project's first workflow is always the default." }, "steps": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "string", "description": "Keep an existing step's id when editing it, so running tasks still match it. Omit for a new step." }, "name": { "type": "string" }, "triggerStatus": { "type": ["string", "number"], "description": "The status whose entry starts this step when a person moves the task there, by name or id (see status_list). Several steps may share one: that move opens the first of them, and a transition reaches the others." }, "kind": { "type": "string", "enum": ["agent", "approval"], "description": "agent (default): an agent's session works the step. approval: people decide it, approving or rejecting the task; it has approval instead of worker, instructions, folder and sessionOptions." }, "approval": { "type": "object", "description": "An approval step's approvers: { \"approvers\": [{ \"personId\"?: directory user id, \"name\"?: the person's name (when no id), \"required\"?: true when they must approve }], \"needed\"?: approvals that pass the step, from the required count (at least 1) to every approver; omitted: the required count, at least 1 }. Only people (see assignee_list). The step passes once every required approver approved and the approvals reach needed; any one Reject rejects it. Approve leaves by a pass-gated transition, Reject by a fail-gated one, so the step needs at least one of each." }, "worker": { "type": "object", "description": "An agent step's worker: { \"kind\":\"assignee\" } for the task's agent assignee, or { \"kind\":\"agent\",\"agentNodeId\":\"...\" } for a fixed agent (see space_chat for the agents it can be). Omitted: the assignee." }, "instructions": { "type": "string", "description": "Markdown sent as the session's opening message exactly as written, placeholders filled: nothing about the task is added, so name it here (e.g. {{task.key}}: {{task.summary}}). Omitted: \"{{ task.key }}: {{ task.summary }}\"; an empty string stays empty. Placeholders: {{task.key}}, {{task.summary}}, {{task.description}}, {{task.status}}, {{task.type}}, {{task.priority}}, {{task.assignee}}, {{task.url}}, {{step.name}}, {{workflow.name}}, and for an EARLIER step {{steps.<step-name-slug>.outcome}} (or .summary, .agent, .thread). Only how to finish the step is appended after them." }, "transitions": { "type": "array", "items": { "type": ["object", "string", "number"] }, "description": "The ways the step's agent may finish it, in the order offered: { \"id\"?: keep an existing one's, \"label\"?: what the agent picks it by and the run shows, e.g. \"Back to Design\" (distinct within the step; omitted: made from where it leads), \"toStep\"?: the step that opens next, by name or id, or \"end\" (or null) to finish the run (omitted: the first step that status starts, else the end), \"status\": the status (name or id) the task moves to, \"gate\"?: \"pass\" or \"fail\", the round's result shown on the run (omitted or null: pass into a later step or the end, fail back to the same or an earlier one) }. A bare status is { \"status\": it }. Never into the step itself." }, "folder": { "type": "string", "description": "The folder of the space chat's thread list to file the step's thread in, by its name as shown there (as group_chat_start_thread's folder): an exact name match goes into that folder; with none, the folder is created. Omit or leave empty for the top level. A step that comes back reuses its thread, which stays where it is." }, "sessionOptions": { "type": "object", "description": "The chat command bar's settings applied to the step's session every time the step is entered, before its message is sent. Each optional; one left out leaves the session's own setting as it is. A value the session's agent does not offer is skipped then (the run's round records it) and the others still apply.", "properties": { "effort": { "type": "string", "enum": ["max", "extra", "high", "medium", "low", "default", "off"], "description": "Reasoning effort." }, "presence": { "type": "object", "description": "How often the agent reads what is sent to it: { \"kind\": \"high-attention\" | \"realtime\" | \"online\" | \"minutes\" | \"hourly\" | \"daily\" }, or { \"kind\": \"custom\", \"intervalMs\": minutes × 60000 }. The step's own message is read at that cadence too." }, "permissionMode": { "type": "string", "enum": ["auto", "plan", "manual-edits", "accept-edits", "reject-edits", "bypass"], "description": "Permission mode." }, "compactAbove": { "type": "integer", "minimum": 0, "description": "The step's own, not the command bar's: when the step comes back to a session it already has (a rework, or the agent's next step on the task) and that session holds more context than this many tokens, the session is compacted before the step's message, and the message then gives the step's instructions again. Omitted: 200000. 0: never. The run's round records the compaction (context before and after); a failed one still sends the message." } } } }, "required": ["name", "triggerStatus", "transitions"] } } }, "required": ["name", "steps"] }
+              },
+              "required": ["workflow"]
+            }
+          },
+          {
+            "id": "workflow_save",
+            "description": "Create a workflow, or replace a whole one when its id is given: steps left out are removed, so resend every step with its id (read them with workflow_get). To change one step, use workflow_step_update instead. Refused with every validation issue listed when anything is wrong.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "workflow": { "type": "object", "properties": { "id": { "type": "string", "description": "Pass to replace an existing workflow; omit to create one." }, "name": { "type": "string" }, "description": { "type": "string" }, "isDefault": { "type": "boolean", "description": "The workflow a task runs when workflow_start names none. The project's first workflow is always the default." }, "steps": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "string", "description": "Keep an existing step's id when editing it, so running tasks still match it. Omit for a new step." }, "name": { "type": "string" }, "triggerStatus": { "type": ["string", "number"], "description": "The status whose entry starts this step when a person moves the task there, by name or id (see status_list). Several steps may share one: that move opens the first of them, and a transition reaches the others." }, "kind": { "type": "string", "enum": ["agent", "approval"], "description": "agent (default): an agent's session works the step. approval: people decide it, approving or rejecting the task; it has approval instead of worker, instructions, folder and sessionOptions." }, "approval": { "type": "object", "description": "An approval step's approvers: { \"approvers\": [{ \"personId\"?: directory user id, \"name\"?: the person's name (when no id), \"required\"?: true when they must approve }], \"needed\"?: approvals that pass the step, from the required count (at least 1) to every approver; omitted: the required count, at least 1 }. Only people (see assignee_list). The step passes once every required approver approved and the approvals reach needed; any one Reject rejects it. Approve leaves by a pass-gated transition, Reject by a fail-gated one, so the step needs at least one of each." }, "worker": { "type": "object", "description": "An agent step's worker: { \"kind\":\"assignee\" } for the task's agent assignee, or { \"kind\":\"agent\",\"agentNodeId\":\"...\" } for a fixed agent (see space_chat for the agents it can be). Omitted: the assignee." }, "instructions": { "type": "string", "description": "Markdown sent as the session's opening message exactly as written, placeholders filled: nothing about the task is added, so name it here (e.g. {{task.key}}: {{task.summary}}). Omitted: \"{{ task.key }}: {{ task.summary }}\"; an empty string stays empty. Placeholders: {{task.key}}, {{task.summary}}, {{task.description}}, {{task.status}}, {{task.type}}, {{task.priority}}, {{task.assignee}}, {{task.url}}, {{step.name}}, {{workflow.name}}, and for an EARLIER step {{steps.<step-name-slug>.outcome}} (or .summary, .agent, .thread). Only how to finish the step is appended after them." }, "transitions": { "type": "array", "items": { "type": ["object", "string", "number"] }, "description": "The ways the step's agent may finish it, in the order offered: { \"id\"?: keep an existing one's, \"label\"?: what the agent picks it by and the run shows, e.g. \"Back to Design\" (distinct within the step; omitted: made from where it leads), \"toStep\"?: the step that opens next, by name or id, or \"end\" (or null) to finish the run (omitted: the first step that status starts, else the end), \"status\": the status (name or id) the task moves to, \"gate\"?: \"pass\" or \"fail\", the round's result shown on the run (omitted or null: pass into a later step or the end, fail back to the same or an earlier one) }. A bare status is { \"status\": it }. Never into the step itself." }, "folder": { "type": "string", "description": "The folder of the space chat's thread list to file the step's thread in, by its name as shown there (as group_chat_start_thread's folder): an exact name match goes into that folder; with none, the folder is created. Omit or leave empty for the top level. A step that comes back reuses its thread, which stays where it is." }, "sessionOptions": { "type": "object", "description": "The chat command bar's settings applied to the step's session every time the step is entered, before its message is sent. Each optional; one left out leaves the session's own setting as it is. A value the session's agent does not offer is skipped then (the run's round records it) and the others still apply.", "properties": { "effort": { "type": "string", "enum": ["max", "extra", "high", "medium", "low", "default", "off"], "description": "Reasoning effort." }, "presence": { "type": "object", "description": "How often the agent reads what is sent to it: { \"kind\": \"high-attention\" | \"realtime\" | \"online\" | \"minutes\" | \"hourly\" | \"daily\" }, or { \"kind\": \"custom\", \"intervalMs\": minutes × 60000 }. The step's own message is read at that cadence too." }, "permissionMode": { "type": "string", "enum": ["auto", "plan", "manual-edits", "accept-edits", "reject-edits", "bypass"], "description": "Permission mode." }, "compactAbove": { "type": "integer", "minimum": 0, "description": "The step's own, not the command bar's: when the step comes back to a session it already has (a rework, or the agent's next step on the task) and that session holds more context than this many tokens, the session is compacted before the step's message, and the message then gives the step's instructions again. Omitted: 200000. 0: never. The run's round records the compaction (context before and after); a failed one still sends the message." } } } }, "required": ["name", "triggerStatus", "transitions"] } } }, "required": ["name", "steps"] }
+              },
+              "required": ["workflow"]
+            }
+          },
+          {
+            "id": "workflow_step_update",
+            "description": "Change one step of a workflow; fields you leave out keep their values, and the other steps are untouched. Validated like workflow_save. Returns the whole saved workflow.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "workflow": { "type": "string", "description": "Workflow id or name (see workflows_list)." },
+                "step": { "type": "string", "description": "The step's current name or id." },
+                "name": { "type": "string", "description": "New step name." },
+                "triggerStatus": { "type": ["string", "number"], "description": "Status (name or id) whose entry starts this step." },
+                "kind": { "type": "string", "enum": ["agent", "approval"], "description": "agent: an agent's session works the step; approval: its approvers decide it. As in workflow_save." },
+                "approval": { "type": "object", "description": "An approval step's { approvers, needed? }, as in workflow_save; replaces them whole." },
+                "worker": { "type": "object", "description": "{ \"kind\":\"assignee\" } or { \"kind\":\"agent\",\"agentNodeId\":\"...\" } (see space_chat for the agents it can be)." },
+                "instructions": { "type": "string", "description": "Markdown opening message, sent exactly as written with placeholders filled; placeholders as in workflow_save." },
+                "transitions": { "type": "array", "items": { "type": ["object", "string", "number"] }, "description": "The step's transitions, as in workflow_save; replaces the list. Pass a kept one's id to keep it." },
+                "folder": { "type": "string", "description": "Thread-list folder of the space's chat the step's thread is filed in, by name; \"\" for the top level. As in workflow_save." },
+                "sessionOptions": { "type": "object", "description": "{ effort?, presence?, permissionMode?, compactAbove? } applied to the step's session before its message, as in workflow_save; replaces the step's whole set, so {} clears them all (compactAbove then takes its default)." }
+              },
+              "required": ["workflow", "step"]
+            }
+          },
+          {
+            "id": "workflow_delete",
+            "description": "Delete a workflow. Refused while a task is running it; cancel those runs first.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "workflow": { "type": "string", "description": "Workflow id or name (see workflows_list)." }
+              },
+              "required": ["workflow"]
+            }
+          },
+          {
+            "id": "workflow_start",
+            "description": "Start a workflow on a task (the project's default when none is named). If a step starts on the task's current status, the run begins there; otherwise (e.g. from To Do) the task is moved to the first step's status, which starts that step. Each step opens a group-chat thread '<KEY> <step>' for its agent. Returns the run in brief, as workflow_runs_list.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the run in brief; full: every field of it." },
+                "task": { "type": "string", "description": "Task key, e.g. TASK-12." },
+                "workflow": { "type": "string", "description": "Workflow id or name (see workflows_list)." }
+              },
+              "required": ["task"]
+            }
+          },
+          {
+            "id": "workflow_run_get",
+            "description": "A task's workflow runs. run: the ACTIVE run (every step's state, agent, session thread, outcome and summary), or null when none is active; a run that ended (finished or cancelled) is in history, newest first. Each step's rounds say which transition each left by and its gate (pass: moved on; fail: sent back). openStep: the step being worked, with the labels of its transitions; for an approval step also approval: { needed, approvers (each with required and their decision in the open round, or null), transitions: { approve: [...], reject: [...] } (the labels each verdict may take), canDecide (whether you are an approver), viewerId (your person id, when a person calls) }. An approval round's decisions list who decided what, by which transition, and when.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "task": { "type": "string", "description": "Task key, e.g. TASK-12." }
+              },
+              "required": ["task"]
+            }
+          },
+          {
+            "id": "workflow_step_finish",
+            "description": "Finish the step you are working on a task by one of its transitions: the task moves to that transition's status and its step opens next (or the run ends). Only the step's own agent may finish it; an approval step is decided by its approvers with workflow_step_decide instead. Put what you did, and what the next step needs, in summary. Returns the run in brief, as workflow_runs_list.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the run in brief; full: every field of it." },
+                "task": { "type": "string", "description": "Task key, e.g. TASK-12." },
+                "transition": { "type": "string", "description": "The label (or id) of one of the open step's transitions; workflow_run_get lists them as openStep.transitions. A status name or id also works: when two transitions set it, the one into the step that status starts." },
+                "summary": { "type": "string", "description": "Markdown: what was done and what the next step should know. Recorded on the step and posted as a task comment." }
+              },
+              "required": ["task", "transition"]
+            }
+          },
+          {
+            "id": "workflow_step_decide",
+            "description": "Approve or reject the open approval step of a task, as one of its approvers (people only, signed in to the App). The step passes once every required approver approved and the approvals reach the number needed; any one Reject rejects it. The decision that settles the step moves the task by the transition it chose, and its comment becomes the step's summary. An approver may change their decision until the step settles. The rule is applied when a decision is made: changing the step's approvers or the number needed while it is open settles nothing by itself, and the next decision is judged by the step as it is then. Agents cannot decide, finish the step or move the task while it is open; workflow_run_cancel stays open to them, and records who cancelled. Returns the run in brief, as workflow_runs_list.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the run in brief; full: every field of it." },
+                "task": { "type": "string", "description": "Task key, e.g. TASK-12." },
+                "verdict": { "type": "string", "enum": ["approve", "reject"], "description": "approve leaves by a pass-gated transition, reject by a fail-gated one." },
+                "transition": { "type": "string", "description": "The label (or id) of the transition to take, from workflow_run_get's openStep.approval.transitions for the verdict. Required when the verdict has more than one." },
+                "comment": { "type": "string", "description": "Why: recorded with the decision, and on the step when it settles the step." }
+              },
+              "required": ["task", "verdict"]
+            }
+          },
+          {
+            "id": "workflow_step_restart",
+            "description": "Restart a step of a task's run: the step for the task's current status gets its session again (or opens it, if it failed to); any other step is reached by moving the task to that step's status. Returns the run in brief, as workflow_runs_list.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the run in brief; full: every field of it." },
+                "task": { "type": "string", "description": "Task key, e.g. TASK-12." },
+                "step": { "type": "string", "description": "Step name or id." }
+              },
+              "required": ["task", "step"]
+            }
+          },
+          {
+            "id": "workflow_run_cancel",
+            "description": "Cancel a task's active workflow run. The open step's session is told to stop; the task keeps its status. Returns the run in brief, as workflow_runs_list.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the run in brief; full: every field of it." },
+                "task": { "type": "string", "description": "Task key, e.g. TASK-12." }
+              },
+              "required": ["task"]
+            }
+          },
+          {
+            "id": "workflow_runs_list",
+            "description": "Workflow runs across the project, newest first, optionally only active, finished or cancelled ones, or one workflow's. Returns {runs}; each run in brief: taskKey, workflow (name), state, startedAt, endedAt, and steps [{name, state, agent, outcome, attempts (when reworked), error}], empty fields left out. workflow_run_get gives one task's run in full, with each step's summary and session. match lists the runs one workflow_stats step figure counted.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): runs in brief; full: every field of each run and step." },
+                "state": { "type": "string", "enum": ["active", "finished", "cancelled"] },
+                "workflow": { "type": "string", "description": "Workflow id or name (see workflows_list)." },
+                "limit": { "type": "number", "description": "Default 200." },
+                "match": {
+                  "type": "object",
+                  "description": "Needs workflow; state is ignored. Only runs started in range with a round at step that matches every other field given, as workflow_stats counts them. The answer adds total: every matching run, while runs stops at limit.",
+                  "properties": {
+                    "range": { "type": "string", "enum": ["7d", "30d", "90d", "all"], "description": "Default 30d." },
+                    "step": { "type": "string", "description": "Step id or name." },
+                    "exit": { "type": "string", "enum": ["moved_on", "sent_back", "other", "cancelled", "open"], "description": "How the round ended (see workflow_stats exits)." },
+                    "transition": { "type": "string", "description": "With exit sent_back: that transition's label." },
+                    "rounds": { "type": "number", "enum": [1, 2, 3, 4], "description": "Rounds the run took at the step; 4 means 4 or more." },
+                    "couldntStart": { "type": "string", "enum": ["unassigned", "not_in_chat", "session_failed", "unrecorded"], "description": "The round couldn't start for this reason." }
+                  },
+                  "required": ["step"]
+                }
+              }
+            }
+          },
+          {
+            "id": "workflow_stats",
+            "description": "How one workflow is going, from what the engine recorded: runs started, finished, cancelled and still active, with the median and 90th-percentile run time of the finished ones; firstPass (finished runs that entered every step once); throughput (runs started, finished and cancelled per day, or per week for 90d and all). Then per current step, in order: runs that reached it (entered), runs that came back to it (reworked), its rounds and how they ended (exits: movedOn by a pass transition, sentBack per fail transition, other = a status change outside its transitions, cancelled, open), roundsPerRun ([1, 2, 3, 4+] rounds a run took there), couldntStart (times it couldn't start, by reason: unassigned, not_in_chat, session_failed, or unrecorded from before reasons were kept), the time per round (from entering the step until the task left its status), finishedTimeMs (its rounds' time within finished runs), and spend split into first rounds and rework. workflow_runs_list with match lists the runs behind a step figure. agents repeats the step figures for the rounds each agent or person worked; a person's round lasts until they change the status. The range counts runs STARTED inside it, and everything about those runs. Times are in ms, nearest-rank, with samples = how many rounds or runs were measured. median is null below 5 samples and p90 below 10 (minSamples in the answer): too few to tell, so report the count instead of a time. A step no run reached has entered 0 and samples 0. Rounds from before rounds were recorded count once per step, so samples can be below the rounds worked.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "workflow": { "type": "string", "description": "Workflow id or name (see workflows_list)." },
+                "range": { "type": "string", "enum": ["7d", "30d", "90d", "all"], "description": "Runs started in the last 7, 30 or 90 days, or all. Default 30d." }
+              },
+              "required": ["workflow"]
+            }
+          },
+          {
+            "id": "inbox_list",
+            "description": "Your notifications in this project, newest first: a task assigned to you, an @mention of you in a comment, a workflow step opened for you or waiting on you, a step of a run you started (or on a task you reported) that needs attention, a run you started finishing or being cancelled, and status changes on tasks you reported or are assigned. Your own actions never notify you. Returns items, the unread total over all kinds, and nextBefore for the next page (null on the last). Each item: id, kind, createdAt, read, task {key, summary, type}, and when set: actor, workflow, step, from and to (status names), excerpt, muted.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): statuses by name, empty fields left out; full: status objects with category and colour." },
+                "filter": {
+                  "type": "string",
+                  "enum": ["all", "assigned", "mentions", "workflows", "status"],
+                  "description": "Default all. workflows = every step and run notification."
+                },
+                "before": { "type": "string", "description": "nextBefore from the previous page." },
+                "limit": { "type": "number", "description": "1–100, default 30." }
+              }
+            }
+          },
+          {
+            "id": "inbox_mark_read",
+            "description": "Mark your notifications read: ids from inbox_list, or all: true for every one. Returns the unread total left.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "ids": { "type": "array", "items": { "type": "string" } },
+                "all": { "type": "boolean" }
+              }
+            }
+          },
+          {
+            "id": "inbox_mark_unread",
+            "description": "Mark some of your notifications unread again (ids from inbox_list). Returns the unread total.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "ids": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": ["ids"]
+            }
+          },
+          {
+            "id": "inbox_mute",
+            "description": "Mute a task for yourself: nothing new about it (status changes, mentions, assignment, workflow steps) comes to your inbox until you unmute it. inbox_list marks a muted task's notifications with muted: true.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "task": { "type": "string", "description": "The task's key, e.g. TASK-12." },
+                "muted": { "type": "boolean", "description": "true to mute, false to unmute." }
+              },
+              "required": ["task", "muted"]
+            }
+          },
+          {
+            "id": "task_link",
+            "description": "Record a relation between two tasks, read as \"from <type> to\". blocks (the default): to waits until from is done; the only relation that holds a task back. follows: from comes after to. duplicates: from duplicates to. relates: related either way round. blocked_by, precedes and duplicated_by name the same relations from the other end. Recording one already there changes nothing. Refused for a task related to itself, and for blocks that would make a loop (the refusal names the loop). Returns {result: the to task as a compact row (as task_list), whose blockedBy lists its blockers not done yet}; task_get lists a task's relations grouped.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the task as a row; full: the whole task." },
+                "from": { "type": "string", "description": "Key of the task the relation reads from, e.g. TASK-3 in \"TASK-3 blocks TASK-7\"." },
+                "to": { "type": "string", "description": "Key of the other task, e.g. TASK-7." },
+                "type": {
+                  "type": "string",
+                  "enum": ["blocks", "blocked_by", "relates", "duplicates", "duplicated_by", "follows", "precedes"],
+                  "description": "The relation; blocks when omitted."
+                }
+              },
+              "required": ["from", "to"]
+            }
+          },
+          {
+            "id": "task_unlink",
+            "description": "Remove a relation recorded with task_link: the same from, to and type (either end's name for it). Refused when that relation isn't recorded. Returns {result: the to task as a compact row (as task_list)}.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the task as a row; full: the whole task." },
+                "from": { "type": "string", "description": "Key of the task the relation reads from." },
+                "to": { "type": "string", "description": "Key of the other task." },
+                "type": {
+                  "type": "string",
+                  "enum": ["blocks", "blocked_by", "relates", "duplicates", "duplicated_by", "follows", "precedes"],
+                  "description": "The relation; blocks when omitted."
+                }
+              },
+              "required": ["from", "to"]
+            }
+          },
+          {
+            "id": "view_list",
+            "description": "Saved views: named filter sets for the tasks page or the board. Returns your own views, then those shared with the project, each with id, name, page, filter, group (the board's grouping), columns (the tasks table's columns in order; null on the board), shared, owner, isDefault (your default for its page) and editable (you own it). A view's filter takes the same fields as task_list, so pass it to task_list as it is to get the tasks the view shows.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "page": { "type": "string", "enum": ["tasks", "board"], "description": "Only this page's views." }
+              }
+            }
+          },
+          {
+            "id": "view_save",
+            "description": "Save a view, or change one you own (pass its id; fields you leave out keep their values). A new view needs name and page. Names are unique among your own views of a page. Returns the saved view.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "The view to change; omit to save a new one." },
+                "name": { "type": "string" },
+                "page": { "type": "string", "enum": ["tasks", "board"] },
+                "filter": {
+                  "type": "object",
+                  "description": "The fields task_list takes: query, status, assignee, type, priority, label, version, parent, sort. A plain list is saved as {\"include\": [...]}; a view returns each list filter as {include?, exclude?}."
+                },
+                "group": { "type": ["string", "null"], "enum": ["assignee", null], "description": "Board views only: \"assignee\" for a swimlane per assignee, null for none." },
+                "columns": {
+                  "type": ["array", "null"],
+                  "items": { "type": "string", "enum": ["type", "key", "summary", "priority", "status", "assignee", "reporter", "parent", "labels", "version", "dates", "created", "updated"] },
+                  "description": "Tasks views only: the table's columns, left to right; key and summary are required. null (or leaving it out on a new view) shows the default set: type, key, summary, priority, status, assignee, reporter, created, updated."
+                },
+                "shared": { "type": "boolean", "description": "true: everyone in the project sees it; false: only you." }
+              }
+            }
+          },
+          {
+            "id": "view_delete",
+            "description": "Delete a view you own.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "view": { "type": "string", "description": "The view's id or name (see view_list)." }
+              },
+              "required": ["view"]
+            }
+          },
+          {
+            "id": "view_set_default",
+            "description": "Make a view your default for its page: the tasks page or the board opens on it. Any view you can see works, your own or a shared one. view null clears your default. Returns the view, or null.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "page": { "type": "string", "enum": ["tasks", "board"] },
+                "view": { "type": ["string", "null"], "description": "The view's id or name; null clears the default." }
+              },
+              "required": ["page", "view"]
+            }
+          },
+          {
+            "id": "board_list",
+            "description": "The project's boards, by name. A project has only the boards someone set up. Each: id, name, columns (left to right, each {name, statuses: [{id, name}] top to bottom; name null means it is named after its first status}), filter (its preset filter: the fields task_list takes, less status and sort), createdAt, updatedAt. task_list {board} gives the tasks a board shows.",
+            "inputSchema": { "type": "object", "properties": {} }
+          },
+          {
+            "id": "board_get",
+            "description": "Read one board, as board_list gives it, and workflowFit: for each of the project's workflows, the statuses its steps start on or finish into that no column holds ({workflowId, workflow, missing: [{id, name}]}; missing empty means the board serves that workflow).",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "board": { "type": "string", "description": "The board's id or name." }
+              },
+              "required": ["board"]
+            }
+          },
+          {
+            "id": "board_save",
+            "description": "Create a board, or change one (pass its id or name as id; fields you leave out keep their values). A new board needs a name; names are unique in the project. columns replaces every column: left to right, each {name?, statuses} with statuses top to bottom, each a section of that column. A status sits in at most one column; statuses left out are not on the board. filter replaces the preset filter. Returns the board.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "The board to change, by id or name; omit to create one." },
+                "name": { "type": "string" },
+                "columns": {
+                  "type": "array",
+                  "items": { "type": "object" },
+                  "description": "Left to right: [{\"name\": \"Doing\" (omit or null: its first status's name), \"statuses\": [\"In Progress\", \"In Review\"] (names or ids, see status_list)}]."
+                },
+                "filter": { "type": "object", "description": "The preset filter: the fields task_list takes, less status and sort: query, assignee, type, priority, label, version, parent, each list one a plain list or {\"include\": [...], \"exclude\": [...]}. {} clears it." }
+              }
+            }
+          },
+          {
+            "id": "board_delete",
+            "description": "Delete a board. Its tasks stay as they are.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "board": { "type": "string", "description": "The board's id or name." }
+              },
+              "required": ["board"]
+            }
+          },
+          {
+            "id": "my_work",
+            "description": "What needs you now in this project (every project with scope \"all\"), the same answer the App's My work page shows you: waiting (workflow steps whose session is open for you, an agent; steps waiting on you, a person assigned to the task; approval steps you approve and have not decided yet; and steps that cannot proceed on a run you started or a task you reported, with the engine's reason), assigned (your tasks that are not done, earliest end date first, as task_list's compact rows without the assignee: the first 10, or assignedLimit; assignedTotal counts them all, and task_list {assignee: [\"me\"], statusCategory: [\"todo\",\"in_progress\"]} pages through every one), startingSoon (the keys of those of them starting in the next 7 days, today included; a key past the cap is also in startingSoonNotShown, with no row in assigned) and recent (your inbox, newest first; mark items read with inbox_mark_read). viewer says whose work it is: you, as the host identifies the caller. Empty fields are left out. detail \"full\" gives full tasks in assigned and startingSoon.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default) or full: every assigned task in full, startingSoon repeating them." },
+                "assignedLimit": { "type": "number", "description": "How many assigned tasks to return, 1–200. Default 10. Across projects it caps the merged list." },
+                "today": { "type": "string", "description": "YYYY-MM-DD: the day Starting soon counts from. Default today in UTC." },
+                "recentLimit": { "type": "number", "description": "How many recent notifications to return, 1–50. Default 8." },
+                "scope": { "type": "string", "enum": ["this", "all"], "description": "this (default): this project. all: every task-manager App you can see, each section merged in its own order; every row adds app (its <space>.<app> address, for app_call), and projects says how many were read." }
+              }
+            }
+          },
+          {
+            "id": "task_attach",
+            "description": "Attach a file to a task, as you. Pass its bytes base64-encoded (a data: URL prefix is fine), at most 25 MB. The server decides the stored type from the bytes: PNG, JPEG, GIF and WebP are previewable images, everything else is a download. Returns the attachment: id, name, size, contentType, previewable, createdAt, uploader.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "key": { "type": "string", "description": "Task key, e.g. TASK-12." },
+                "name": { "type": "string", "description": "File name with its extension, e.g. \"login-error.png\"." },
+                "contentBase64": { "type": "string", "description": "The file's bytes, base64." }
+              },
+              "required": ["key", "name", "contentBase64"]
+            }
+          },
+          {
+            "id": "task_attachments",
+            "description": "A task's attachments, oldest first, without their bytes. Use task_attachment_get for a file's content.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "key": { "type": "string", "description": "Task key, e.g. TASK-12." }
+              },
+              "required": ["key"]
+            }
+          },
+          {
+            "id": "task_attachment_get",
+            "description": "One attachment with its bytes: {attachment, contentBase64}.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "Attachment id, from task_attachments." }
+              },
+              "required": ["id"]
+            }
+          },
+          {
+            "id": "task_attachment_rename",
+            "description": "Rename an attachment. Returns it.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "Attachment id, from task_attachments." },
+                "name": { "type": "string", "description": "The new file name." }
+              },
+              "required": ["id", "name"]
+            }
+          },
+          {
+            "id": "task_attachment_delete",
+            "description": "Delete an attachment and its bytes. Recorded in the task's history.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "Attachment id, from task_attachments." }
+              },
+              "required": ["id"]
+            }
+          },
+          {
+            "id": "mention_sessions",
+            "description": "The agents @mentioned in a task's comments, one session each, a thread in the space's chat: {agent, chatSlug, threadId, threadRef, startedAt, lastAt, note}, most recently active first. `note` says why a mention did not reach its agent (e.g. \"<agent> isn't in this space's chat\"), or that agent-to-agent mentions are paused on the task.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "key": { "type": "string", "description": "Task key, e.g. \"TASK-12\"." }
+              },
+              "required": ["key"]
+            }
+          },
+          {
+            "id": "project_info",
+            "description": "The project's name (the App's display name), key (the prefix of every task key; it cannot change here), address (the App's <space>.<slug>, as app_call takes it) and space (whose chat, the group chat at the same slug, is where the task manager's threads open).",
+            "inputSchema": { "type": "object", "properties": {} }
+          },
+          {
+            "id": "label_overview",
+            "description": "Every label in use as { name, color, count }: its colour (null for none) and how many tasks carry it, by name.",
+            "inputSchema": { "type": "object", "properties": {} }
+          },
+          {
+            "id": "label_rename",
+            "description": "Rename a label on every task that carries it (each gets a history entry) and in every saved view that filters by it; its colour moves with it. Refused when another label already has the new name: merge into it instead (label_merge). Returns { label, tasks }.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "label": { "type": "string", "description": "The label's name; case may differ when it matches one label." },
+                "to": { "type": "string", "description": "The new name, up to 50 characters." }
+              },
+              "required": ["label", "to"]
+            }
+          },
+          {
+            "id": "label_merge",
+            "description": "Merge one label into another: every task carrying label gets into instead, saved views follow, and label is gone (with its colour). Returns { label: into, tasks }.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "label": { "type": "string", "description": "The label that goes away." },
+                "into": { "type": "string", "description": "The label that stays." }
+              },
+              "required": ["label", "into"]
+            }
+          },
+          {
+            "id": "label_delete",
+            "description": "Remove a label from every task that carries it (each gets a history entry) and from saved views' filters. The tasks stay. Returns { label: null, tasks }.",
+            "inputSchema": {
+              "type": "object",
+              "properties": { "label": { "type": "string" } },
+              "required": ["label"]
+            }
+          },
+          {
+            "id": "label_color",
+            "description": "Set a label's colour, shown on its chips everywhere, or null for none.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "label": { "type": "string" },
+                "color": {
+                  "type": ["string", "null"],
+                  "enum": ["gray", "red", "orange", "amber", "green", "teal", "sky", "blue", "violet", "pink", null]
+                }
+              },
+              "required": ["label", "color"]
+            }
+          },
+          {
+            "id": "version_list",
+            "description": "The project's versions (semantic releases), lowest first. Each is a compact row: name, state (planned, released or archived), and only when set: targetDate, releasedAt, description, open and done (task counts). detail \"full\" adds ids and timestamps.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": "string", "enum": ["compact", "full"] },
+                "state": { "type": "array", "items": { "type": "string", "enum": ["planned", "released", "archived"] }, "description": "Only versions in these states." }
+              }
+            }
+          },
+          {
+            "id": "version_create",
+            "description": "Create a planned version. name is semver: MAJOR.MINOR.PATCH with an optional -pre part (e.g. 1.4.0, 2.0.0-beta.1), unique in the project. Returns {result: the version as a row}.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": "string", "enum": ["compact", "full"] },
+                "name": { "type": "string" },
+                "targetDate": { "type": ["string", "null"], "description": "YYYY-MM-DD, when it is meant to ship." },
+                "description": { "type": "string", "description": "One line." }
+              },
+              "required": ["name"]
+            }
+          },
+          {
+            "id": "version_update",
+            "description": "Change a version: rename it, set its target date or description, archive it (state \"archived\") or plan it again (state \"planned\"). Releasing goes through version_release. Returns {result: the version as a row}.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": "string", "enum": ["compact", "full"] },
+                "version": { "type": ["string", "number"], "description": "The version's name or id." },
+                "name": { "type": "string" },
+                "targetDate": { "type": ["string", "null"] },
+                "description": { "type": "string" },
+                "state": { "type": "string", "enum": ["planned", "archived"] }
+              },
+              "required": ["version"]
+            }
+          },
+          {
+            "id": "version_release",
+            "description": "Release a planned version: its state becomes released with today's date (or date). Open tasks stay on it unless moveOpenTo names another planned version (or \"none\"). Returns {result: {version, moved?, notes}}, where notes are the version's done tasks grouped by type, as markdown.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": "string", "enum": ["compact", "full"] },
+                "version": { "type": ["string", "number"], "description": "The version's name or id." },
+                "date": { "type": "string", "description": "YYYY-MM-DD; today when omitted." },
+                "moveOpenTo": { "type": ["string", "number"], "description": "A planned version for the tasks not done yet, or \"none\" to take them out of any version." }
+              },
+              "required": ["version"]
+            }
+          },
+          {
+            "id": "import_openproject",
+            "description": "Import this project's tasks from an OpenProject project: work packages with hierarchy, description, dates, status, type, priority, assignee, comments, relations and attachments. Two steps. Without confirm it only previews, writing nothing: {connection, project, workPackages, alreadyImported, plan: {create, update, unchanged}, conflicts, attachments: {count, bytes, skipped}, relations, byType, byStatus, people, mapping, keepNumbers}, where mapping says what each OpenProject status (by id: {status: our status id} or {create: {name, category, color}}), type (task|bug|story|epic|skip) and user (an assignee from assignee_list, or null) becomes. Check it, then call again with confirm: true and any mapping entries to change. A re-run brings every imported task up to date with OpenProject (status, summary, description, type, priority, assignee, dates, parent), adds new tasks, comments, relations and attachments, and never duplicates; a relation or attachment removed here is not brought back. Attachments keep their name, upload time and uploader; a file over 25 MB is listed in skipped; an image embedded in a description or comment shows the copy here. A field edited here since the last import is kept; where OpenProject changed the same field, the task is listed in conflicts [{key, summary, fields: [{field, here, openProject}], overwritten}] and keeps the edit unless its key is in overwrite. Returns {created, updated, unchanged, conflicts, comments, relations: {found, added, importedBefore, alreadyHere}, attachments: {added, bytes, importedBefore, rewritten}, statusesCreated, skipped, notes}. Never writes to OpenProject. Uses the connection a person saved in Settings → Import; only a person can set url and secretKey.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "url": { "type": "string", "description": "The OpenProject address. Set by a person only; agents use the saved one." },
+                "secretKey": { "type": "string", "description": "The name of the Secrets Store key holding the API token (never the token). Set by a person only." },
+                "project": { "type": "string", "description": "The OpenProject project's identifier or id; the saved one when omitted." },
+                "mapping": { "type": "object", "description": "Changes to the preview's mapping: {statuses?, types?, people?}, each keyed by the OpenProject id." },
+                "keepNumbers": { "type": "boolean", "description": "Give tasks OpenProject's numbers (PROJ-12 becomes <key>-12) where still free. Default true." },
+                "overwrite": { "type": "array", "items": { "type": "string" }, "description": "Keys of tasks in conflict whose edits here give way to OpenProject's values. Default none: every edit made here is kept." },
+                "relations": {
+                  "type": "boolean",
+                  "description": "true: import only OpenProject's relations (relates, blocks, follows/precedes, duplicates) between tasks imported before, found by the work package each came from; nothing else changes. Without confirm it previews. Returns {imported, found, added: {blocks, relates, duplicates, follows}, importedBefore, alreadyHere, skipped}. Each relation is imported once, so a re-run adds only new ones and never one removed here since."
+                },
+                "confirm": { "type": "boolean", "description": "true imports; otherwise only the preview is returned." }
+              }
+            }
+          },
+          {
+            "id": "import_openproject_state",
+            "description": "The saved OpenProject connection (address, project and Secrets Store key name; never the token), the last import's result (or null for either), and the schedule: sync {minutes, error}.",
+            "inputSchema": { "type": "object", "properties": {} }
+          },
+          {
+            "id": "import_openproject_sync",
+            "description": "Import from OpenProject on a schedule, for running both side by side: every 5, 15 or 60 minutes, or null to stop. It reuses the saved connection and the last import's mapping, so it can be turned on only after a first import. A scheduled run brings new relations and attachments too, keeps every edit made here and lists conflicts in the last import's result. Returns the same as import_openproject_state.",
+            "inputSchema": {
+              "type": "object",
+              "properties": { "minutes": { "type": ["integer", "null"], "enum": [5, 15, 60, null], "description": "5, 15 or 60; null turns the schedule off." } },
+              "required": ["minutes"]
+            }
+          },
+          {
+            "id": "task_prs",
+            "description": "The forge pull requests that mention a task's key in their title, body or branch, open ones first: {key, pullRequests: [{repo, number, title, state: open|merged|closed, author, url, branch, updatedAt}]}. The server reads the forge once a minute; nothing needs linking by hand.",
+            "inputSchema": {
+              "type": "object",
+              "properties": { "key": { "type": "string", "description": "Task key, e.g. TASK-12." } },
+              "required": ["key"]
+            }
+          },
+          {
+            "id": "forge_status",
+            "description": "The forge connection pull requests are read through (address, owner and the Secrets Store key's name; never the token), when it was last read, the last error, and how many pull requests were read and link to tasks.",
+            "inputSchema": { "type": "object", "properties": {} }
+          },
+          {
+            "id": "forge_connect",
+            "description": "Connect the forge whose pull requests link to tasks. Only a person can, in Settings → Pull requests; agents are refused.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "url": { "type": "string", "description": "The forge's address, e.g. https://git.example.com." },
+                "owner": { "type": "string", "description": "The organisation or user whose repositories are read." },
+                "secretKey": { "type": "string", "description": "The Secrets Store key holding a read token (read:repository, read:issue); it starts with FORGEJO_." }
+              },
+              "required": ["url", "owner", "secretKey"]
+            }
+          },
+          {
+            "id": "forge_disconnect",
+            "description": "Stop reading the forge and forget the pull requests read. Only a person can, in Settings → Pull requests.",
+            "inputSchema": { "type": "object", "properties": {} }
+          }
+        ]
+      }
+    ]
+  }
+}

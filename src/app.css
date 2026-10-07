@@ -1,0 +1,7 @@
+/*
+ * Stylesheet the shadcn CLI points at when installing design-kit components.
+ * The extension compiler builds this extension's CSS itself, from the class
+ * names in the sources under src, against the host theme — so nothing here is
+ * shipped, and theme tokens are not redefined.
+ */
+@import "tailwindcss";
