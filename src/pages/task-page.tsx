@@ -4,7 +4,6 @@
 
 import { TaskManagerError } from '@/components/ui/states/task-manager-error'
 import { TaskManagerSkeleton } from '@/components/ui/states/task-manager-skeleton'
-
 import { useProject } from '../app/project'
 import { usePageShortcuts } from '../app/shortcuts'
 import { hrefFor, useQueryParam } from '../lib/router'
@@ -24,10 +23,10 @@ export function TaskPage({ taskKey }: { taskKey: string }) {
 
   if (missing) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
-        <p className="font-medium">{missing}</p>
-        <p className="text-sm text-muted-foreground">It may have been deleted, or the link is mistyped.</p>
-        <a href={hrefFor(['tasks'])} className="text-sm text-primary hover:underline">
+      <div className='flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center'>
+        <p className='font-medium'>{missing}</p>
+        <p className='text-sm text-muted-foreground'>It may have been deleted, or the link is mistyped.</p>
+        <a href={hrefFor(['tasks'])} className='text-sm text-primary hover:underline'>
           Back to all tasks
         </a>
       </div>
@@ -35,7 +34,11 @@ export function TaskPage({ taskKey }: { taskKey: string }) {
   }
 
   if (!task) {
-    return loadError ? <TaskManagerError title={`Couldn't load ${taskKey}`} message={loadError} onRetry={retry} /> : <TaskManagerSkeleton page="details" />
+    return loadError ? (
+      <TaskManagerError title={`Couldn't load ${taskKey}`} message={loadError} onRetry={retry} />
+    ) : (
+      <TaskManagerSkeleton page='details' />
+    )
   }
 
   return <TaskDetails task={task} load={load} update={update} candidates={candidates} />

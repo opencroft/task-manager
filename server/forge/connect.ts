@@ -24,7 +24,9 @@ function validConnection(input: Partial<ForgeConnection>): ForgeConnection {
   }
   const secretKey = String(input.secretKey ?? '').trim()
   if (!secretKey.startsWith(FORGE_SECRET_PREFIX) || secretKey.length === FORGE_SECRET_PREFIX.length) {
-    throw new TaskError(`Name the Secrets Store key holding the forge token (secretKey); it starts with ${FORGE_SECRET_PREFIX}, e.g. FORGEJO_TASKS_TOKEN`)
+    throw new TaskError(
+      `Name the Secrets Store key holding the forge token (secretKey); it starts with ${FORGE_SECRET_PREFIX}, e.g. FORGEJO_TASKS_TOKEN`,
+    )
   }
   return { url, owner, secretKey }
 }
@@ -45,6 +47,9 @@ export function usableConnection(db: Db): { connection: ForgeConnection | null; 
     return { connection: validConnection(saved), problem: null }
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error)
-    return { connection: null, problem: `The saved connection is not one Settings accepts, so the forge is not read: ${reason}. Connect again in Settings → Pull requests.` }
+    return {
+      connection: null,
+      problem: `The saved connection is not one Settings accepts, so the forge is not read: ${reason}. Connect again in Settings → Pull requests.`,
+    }
   }
 }

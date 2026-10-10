@@ -1,12 +1,15 @@
 // The `tasks` App's actions: one handler per action id, shared by agents
 // (`app_call`, attributed to ctx.callerAgent) and the App's own UI
 // (`callAppAction`, attributed to ctx.callerPerson). Input schemas and
-// descriptions live in extension.json.
+// descriptions live in extension.json; each handler gets its parameters
+// checked against its schema and typed by it (action-params.ts).
 
-import type { AppActionContext, AppActionHandler } from '@opencroft/server'
-import host from '@opencroft/server'
+import type { AppActionContext, AppActionHandler } from '@opencroft/server/apps'
+import { agents, users } from '@opencroft/server/people'
 
+import type { ActionId } from '../shared/action-inputs.ts'
 import { PROJECT_KEY_PATTERN, type TasksActionId } from '../shared/types.ts'
+import { type TypedHandlers, typedActions } from './action-params.ts'
 import { boardRestriction } from './boards/store.ts'
 import { listComments } from './comments.ts'
 import { instanceDb } from './db.ts'
@@ -14,14 +17,11 @@ import type { Invocation } from './hooks.ts'
 import { broadcastTasksChanged } from './live.ts'
 import {
   type AgentInfo,
-  type PersonInfo,
-  type Scope,
-  TaskError,
   addComment,
   changeStatus,
-  deleteComment,
   createStatus,
   createTask,
+  deleteComment,
   deleteStatus,
   deleteTask,
   getTask,
@@ -32,7 +32,10 @@ import {
   listStatuses,
   listTasks,
   moveTask,
+  type PersonInfo,
   reorderStatuses,
+  type Scope,
+  TaskError,
   updateComment,
   updateStatus,
   updateTask,
@@ -57,11 +60,11 @@ async function listAgents(): Promise<AgentInfo[]> {
   if (agentCache && Date.now() - agentCache.at < 10_000) {
     return agentCache.agents
   }
-  const agents = (await host.agents.list())
+  const named = (await agents.list())
     .map((a) => ({ id: a.id, name: a.name.trim(), avatarUrl: a.avatarUrl }))
     .filter((agent) => agent.name)
-  agentCache = { at: Date.now(), agents }
-  return agents
+  agentCache = { at: Date.now(), agents: named }
+  return named
 }
 
 // The directory changes rarely too; the same short cache.
@@ -71,7 +74,9 @@ async function listPeople(): Promise<PersonInfo[]> {
   if (peopleCache && Date.now() - peopleCache.at < 10_000) {
     return peopleCache.people
   }
-  const people = (await host.users.list()).map((u) => ({ id: u.id, name: u.name.trim(), avatarUrl: u.avatarUrl })).filter((p) => p.name)
+  const people = (await users.list())
+    .map((u) => ({ id: u.id, name: u.name.trim(), avatarUrl: u.avatarUrl }))
+    .filter((p) => p.name)
   peopleCache = { at: Date.now(), people }
   return people
 }
@@ -107,41 +112,31 @@ export function scopeFor(ctx: AppActionContext, inv: Invocation = invocationOf(c
   }
 }
 
-type Params = Record<string, unknown>
-type Handler = (scope: Scope, params: Params) => unknown
+/** `handlers` as App actions: each runs in the caller's scope, on its parameters once they are checked. */
+export function scopedActions<A extends ActionId>(handlers: TypedHandlers<A, Scope>): Record<string, AppActionHandler> {
+  return typedActions(handlers, (ctx) => scopeFor(ctx))
+}
 
-// biome-ignore lint/suspicious/noExplicitAny: inputs are validated by the service
-const p = (params: Params) => params as any
-
-const handlers: Record<TasksActionId, Handler> = {
-  task_list: (s, params) => {
-    const { board, ...input } = p(params)
-    return listTasks(s, input, board === undefined ? undefined : boardRestriction(s, board))
-  },
-  task_get: (s, params) => getTask(s, params.key),
-  task_comments: (s, params) => listComments(s, p(params)),
-  task_create: (s, params) => createTask(s, p(params)),
-  task_update: (s, params) => updateTask(s, p(params)),
-  task_change_status: (s, params) => changeStatus(s, p(params)),
-  task_move: (s, params) => moveTask(s, p(params)),
-  task_delete: (s, params) => deleteTask(s, p(params)),
-  task_comment: (s, params) => addComment(s, p(params)),
-  task_comment_update: (s, params) => updateComment(s, p(params)),
-  task_comment_delete: (s, params) => deleteComment(s, p(params)),
+export const taskActions = scopedActions<TasksActionId>({
+  task_list: (s, { board, ...input }) =>
+    listTasks(s, input, board === undefined ? undefined : boardRestriction(s, board)),
+  task_get: (s, input) => getTask(s, input.key),
+  task_comments: (s, input) => listComments(s, input),
+  task_create: (s, input) => createTask(s, input),
+  task_update: (s, input) => updateTask(s, input),
+  task_change_status: (s, input) => changeStatus(s, input),
+  task_move: (s, input) => moveTask(s, input),
+  task_delete: (s, input) => deleteTask(s, input),
+  task_comment: (s, input) => addComment(s, input),
+  task_comment_update: (s, input) => updateComment(s, input),
+  task_comment_delete: (s, input) => deleteComment(s, input),
   status_list: (s) => listStatuses(s),
-  status_create: (s, params) => createStatus(s, p(params)),
-  status_update: (s, params) => updateStatus(s, p(params)),
-  status_reorder: (s, params) => reorderStatuses(s, p(params)),
-  status_delete: (s, params) => deleteStatus(s, p(params)),
+  status_create: (s, input) => createStatus(s, input),
+  status_update: (s, input) => updateStatus(s, input),
+  status_reorder: (s, input) => reorderStatuses(s, input),
+  status_delete: (s, input) => deleteStatus(s, input),
   assignee_list: (s) => listAssignees(s),
   avatar_list: (s) => listAvatars(s),
   label_list: (s) => listLabels(s),
   task_parents: (s) => listParents(s),
-}
-
-export const taskActions: Record<string, AppActionHandler> = Object.fromEntries(
-  Object.entries(handlers).map(([id, handler]) => [
-    id,
-    (ctx: AppActionContext, params: Params) => handler(scopeFor(ctx), params ?? {}),
-  ]),
-)
+})

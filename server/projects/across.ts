@@ -3,10 +3,9 @@
 // project out — the host is reached only through ./index.ts, so this runs
 // under `node --test`.
 
-import type { AppActionContext, AppActionHandler } from '@opencroft/server'
+import type { AppActionContext, AppActionHandler } from '@opencroft/server/apps'
 
 import { PROJECTS_READ_MAX, type ProjectRef, type ProjectsRead } from '../../shared/projects.ts'
-import { TaskError } from '../service.ts'
 
 /** One task-manager App, as the host lists it. */
 export interface ProjectInstance {
@@ -49,27 +48,30 @@ export async function acrossProjects<T>(
       unavailable.push({ ...project, error: error instanceof Error ? error.message : String(error) })
     }
   }
-  return { parts, projects: { read: asked.length, total: instances.length, ...(unavailable.length > 0 ? { unavailable } : {}) } }
+  return {
+    parts,
+    projects: { read: asked.length, total: instances.length, ...(unavailable.length > 0 ? { unavailable } : {}) },
+  }
 }
 
 /**
- * An action taking `scope`: the action as it was for `"this"` (or none), with
- * the parameter taken off; `across` for `"all"`; anything else refused.
+ * An action taking `scope`, which the boundary check holds to its enum: the
+ * action as it was for `"this"` (or none), with the parameter taken off;
+ * `across` for `"all"`.
  */
-export function scoped(own: AppActionHandler, across: (ctx: AppActionContext, params: Record<string, unknown>) => unknown): AppActionHandler {
+export function scoped(
+  own: AppActionHandler,
+  across: (ctx: AppActionContext, params: Record<string, unknown>) => unknown,
+): AppActionHandler {
   return (ctx, params) => {
     const { scope, ...rest } = params ?? {}
-    if (scope === undefined || scope === 'this') {
-      return own(ctx, rest)
-    }
-    if (scope === 'all') {
-      return across(ctx, rest)
-    }
-    throw new TaskError('scope is "this" (the default: this project) or "all" (every project you can see)')
+    return scope === 'all' ? across(ctx, rest) : own(ctx, rest)
   }
 }
 
 /** Every item of every part, each carrying its part's project. */
-export function tagged<T extends object>(parts: Array<{ project: ProjectRef; value: T[] }>): Array<T & { project: ProjectRef }> {
+export function tagged<T extends object>(
+  parts: Array<{ project: ProjectRef; value: T[] }>,
+): Array<T & { project: ProjectRef }> {
   return parts.flatMap(({ project, value }) => value.map((item) => ({ ...item, project })))
 }

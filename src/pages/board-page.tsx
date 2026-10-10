@@ -10,10 +10,19 @@
 // reorders it, and dropping into another lane reassigns it. Filters and the
 // grouping live in the URL, so a board view is a link.
 
-import { AppToolbar, legacy } from '@opencroft/client'
+import { AppToolbar } from '@opencroft/client/app'
 import { cn } from 'cn'
 import { ArrowRightLeft, ArrowUpDown, FoldVertical, ListChecks, UnfoldVertical } from 'lucide-react'
-import { type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  type ReactNode,
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import { toast } from 'sonner'
 
 import { ScrollArea } from '@/components/ui/layout/scroll-area'
 import { TaskManagerToolbar } from '@/components/ui/navigation/task-manager-toolbar'
@@ -34,7 +43,6 @@ import { TaskSavedViews } from '@/components/ui/tasks/task-saved-views'
 import { TaskStatusBadge } from '@/components/ui/tasks/task-status-badge'
 import { useBoardTouchReorder } from '@/components/ui/tasks/use-board-touch-reorder'
 import { type DragSession, useTimelineDrag } from '@/components/ui/timeline/use-timeline-drag'
-
 import type { Board } from '../../shared/boards'
 import type { Assignee, Status, TaskListInput, TaskSummary } from '../../shared/types'
 import { useProject } from '../app/project'
@@ -118,7 +126,10 @@ function sortCards(cards: TaskSummary[], by: ColumnSort): TaskSummary[] {
 }
 
 /** Each column's sort, per board and column, kept in this browser. */
-function useColumnSorts(instanceId: string, boardId: string): [(column: number) => ColumnSort, (column: number, by: ColumnSort) => void] {
+function useColumnSorts(
+  instanceId: string,
+  boardId: string,
+): [(column: number) => ColumnSort, (column: number, by: ColumnSort) => void] {
   const storageKey = `task-pipelines:${instanceId}:board-sort:${boardId}`
   const [sorts, setSorts] = useState<Record<number, ColumnSort>>({})
   useEffect(() => {
@@ -151,7 +162,9 @@ function targetAt(x: number, y: number, draggedKey: string): DropTarget | null {
   }
   const statusId = Number(section.dataset.boardStatus)
   const lane = section.dataset.boardLane ?? NO_LANE
-  const cards = [...section.querySelectorAll<HTMLElement>('[data-board-key]')].filter((el) => el.dataset.boardKey !== draggedKey)
+  const cards = [...section.querySelectorAll<HTMLElement>('[data-board-key]')].filter(
+    (el) => el.dataset.boardKey !== draggedKey,
+  )
   const before = cards.find((card) => {
     const box = card.getBoundingClientRect()
     return y < box.top + box.height / 2
@@ -163,7 +176,12 @@ function targetAt(x: number, y: number, draggedKey: string): DropTarget | null {
 function scrollListNear(pointer: { x: number; y: number }): void {
   const list = document
     .elementsFromPoint(pointer.x, pointer.y)
-    .find((el): el is HTMLElement => el instanceof HTMLElement && el.scrollHeight > el.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(el).overflowY))
+    .find(
+      (el): el is HTMLElement =>
+        el instanceof HTMLElement &&
+        el.scrollHeight > el.clientHeight + 1 &&
+        /auto|scroll/.test(getComputedStyle(el).overflowY),
+    )
   if (!list) {
     return
   }
@@ -186,7 +204,7 @@ export function BoardPage() {
     return error ? (
       <TaskManagerError title="Couldn't load the boards" message={error} onRetry={() => void reload()} />
     ) : (
-      <TaskManagerSkeleton page="board" />
+      <TaskManagerSkeleton page='board' />
     )
   }
   // A saved board opens once the list holds it, so a new one is never looked up before it is known.
@@ -198,13 +216,15 @@ export function BoardPage() {
     return <BoardSetupPage board={null} onSaved={onSaved} />
   }
   const remembered = lastBoard(instanceId).get()
-  const board = id ? boards.find((candidate) => candidate.id === id) : (boards.find((candidate) => candidate.id === remembered) ?? boards[0])
+  const board = id
+    ? boards.find((candidate) => candidate.id === id)
+    : (boards.find((candidate) => candidate.id === remembered) ?? boards[0])
   if (!board) {
     // No board to show: the picker still lists the others, and leads to a new one.
     return (
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className='flex min-h-0 flex-1 flex-col'>
         <AppToolbar>
-          <TaskManagerToolbar label="Board controls">
+          <TaskManagerToolbar label='Board controls'>
             <BoardPicker
               boards={boards}
               activeId={null}
@@ -214,9 +234,12 @@ export function BoardPage() {
           </TaskManagerToolbar>
         </AppToolbar>
         {id ? (
-          <TaskManagerError title="This board is gone" message="It was deleted, or the link is wrong. Pick another board above." />
+          <TaskManagerError
+            title='This board is gone'
+            message='It was deleted, or the link is wrong. Pick another board above.'
+          />
         ) : (
-          <TaskManagerEmpty kind="no-boards" onCreateBoard={() => navigate(hrefFor(['board', 'new']))} />
+          <TaskManagerEmpty kind='no-boards' onCreateBoard={() => navigate(hrefFor(['board', 'new']))} />
         )}
       </div>
     )
@@ -236,7 +259,11 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
   const query = current.filter.query ?? ''
   // Keeps its identity until the URL or the view changes: the list's fetch is keyed on it.
   const values = useMemo(
-    () => Object.fromEntries(FILTER_IDS.map((id) => [id, selectionOf(current.filter[id])])) as Record<FilterId, ReturnType<typeof selectionOf>>,
+    () =>
+      Object.fromEntries(FILTER_IDS.map((id) => [id, selectionOf(current.filter[id])])) as Record<
+        FilterId,
+        ReturnType<typeof selectionOf>
+      >,
     [current.filter],
   )
   const rootRef = useRef<HTMLDivElement>(null)
@@ -275,7 +302,9 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
       board.columns.map((column, index) => ({
         index,
         title: column.name ?? (column.statuses.length === 1 ? undefined : (column.statuses[0]?.name ?? 'Empty column')),
-        statuses: column.statuses.map((placed) => statuses.find((status) => status.id === placed.id)).filter((status) => status !== undefined),
+        statuses: column.statuses
+          .map((placed) => statuses.find((status) => status.id === placed.id))
+          .filter((status) => status !== undefined),
       })),
     [board.columns, statuses],
   )
@@ -305,6 +334,7 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
     return () => clearTimeout(timer)
   }, [searchDraft, query, write, base])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a changed board setup reloads through updatedAt
   const input = useMemo<TaskListInput>(
     () => ({
       board: board.id,
@@ -314,7 +344,6 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
       label: current.filter.label,
       version: current.filter.version,
     }),
-    // biome-ignore lint/correctness/useExhaustiveDependencies: a changed board setup reloads through updatedAt
     [board.id, board.updatedAt, query, current.filter],
   )
 
@@ -388,12 +417,20 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
       const statusChanged = task.status.id !== status.id
       const inTarget = all.filter(
         (candidate) =>
-          candidate.key !== task.key && candidate.status.id === status.id && (!grouped || laneOf(candidate) === target.lane),
+          candidate.key !== task.key &&
+          candidate.status.id === status.id &&
+          (!grouped || laneOf(candidate) === target.lane),
       )
-      const position = target.beforeKey ? { before: target.beforeKey } : inTarget.length ? { after: inTarget[inTarget.length - 1].key } : {}
+      const position = target.beforeKey
+        ? { before: target.beforeKey }
+        : inTarget.length
+          ? { after: inTarget[inTarget.length - 1].key }
+          : {}
       // Dropped where it already was: nothing to do.
       if (!statusChanged && !laneChanged) {
-        const section = all.filter((candidate) => candidate.status.id === status.id && (!grouped || laneOf(candidate) === target.lane))
+        const section = all.filter(
+          (candidate) => candidate.status.id === status.id && (!grouped || laneOf(candidate) === target.lane),
+        )
         const next = section[section.findIndex((candidate) => candidate.key === task.key) + 1]?.key ?? null
         if (next === target.beforeKey) {
           return
@@ -420,7 +457,7 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
         if (statusChanged) {
           const { warnings } = await api.task_change_status({ key: task.key, status: status.id })
           for (const warning of warnings ?? []) {
-            legacy.toast.warning(warning)
+            toast.warning(warning)
           }
         }
         if (laneChanged) {
@@ -501,7 +538,10 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
 
   // ─── Rendering ──────────────────────────────────────────────────────────
 
-  const filters = useMemo(() => taskFilterDefs(FILTER_IDS, { statuses, assignees, labels, versions }), [statuses, assignees, labels, versions])
+  const filters = useMemo(
+    () => taskFilterDefs(FILTER_IDS, { statuses, assignees, labels, versions }),
+    [statuses, assignees, labels, versions],
+  )
 
   const draggedTask = session ? tasks?.find((task) => task.key === session.key) : undefined
 
@@ -533,7 +573,8 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
   // Sorted columns show their cards by that field; dragging still sets the board order underneath.
   const cardsOf = (lane: string, column: ViewColumn, status: Status): TaskSummary[] =>
     sortCards(cardsBySection.get(`${lane}:${status.id}`) ?? NO_CARDS, sortOf(column.index))
-  const columnCards = (lane: string, column: ViewColumn) => column.statuses.flatMap((status) => cardsBySection.get(`${lane}:${status.id}`) ?? NO_CARDS)
+  const columnCards = (lane: string, column: ViewColumn) =>
+    column.statuses.flatMap((status) => cardsBySection.get(`${lane}:${status.id}`) ?? NO_CARDS)
 
   // Picking cards for bulk actions: Ctrl/Cmd-click toggles one, Shift-click takes the cards
   // between the last one picked and this one, when both are in the same section.
@@ -546,7 +587,9 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
       const span = section.slice(Math.min(from, to), Math.max(from, to) + 1).map((card) => card.key)
       setSelection((current) => [...new Set([...current, ...span])])
     } else {
-      setSelection((current) => (current.includes(task.key) ? current.filter((key) => key !== task.key) : [...current, task.key]))
+      setSelection((current) =>
+        current.includes(task.key) ? current.filter((key) => key !== task.key) : [...current, task.key],
+      )
     }
     anchor.current = task.key
   }
@@ -560,7 +603,9 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
       return
     }
     const shown = new Set(tasks.map((task) => task.key))
-    setSelection((current) => (current.every((key) => shown.has(key)) ? current : current.filter((key) => shown.has(key))))
+    setSelection((current) =>
+      current.every((key) => shown.has(key)) ? current : current.filter((key) => shown.has(key)),
+    )
   }, [tasks])
 
   // Every card of a column to another status, after a confirm: one ordinary change per task.
@@ -571,12 +616,18 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
       description: `Every card in ${from}${grouped ? ' in this lane' : ''} moves to ${to.name}. Workflows that start on ${to.name} start for each of them.`,
       action: `Move ${moving.length}`,
       onConfirm: async () => {
-        const results = await Promise.allSettled(moving.map((task) => api.task_change_status({ key: task.key, status: to.id })))
+        const results = await Promise.allSettled(
+          moving.map((task) => api.task_change_status({ key: task.key, status: to.id })),
+        )
         const failed = results.filter((result) => result.status === 'rejected')
         if (failed.length > 0) {
-          fail(new Error(`${failed.length} of ${moving.length} could not move: ${errorMessage((failed[0] as PromiseRejectedResult).reason)}`))
+          fail(
+            new Error(
+              `${failed.length} of ${moving.length} could not move: ${errorMessage((failed[0] as PromiseRejectedResult).reason)}`,
+            ),
+          )
         } else {
-          legacy.toast.success(`Moved ${moving.length} to ${to.name}`)
+          toast.success(`Moved ${moving.length} to ${to.name}`)
         }
       },
     })
@@ -598,7 +649,12 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
         label: 'Sort',
         icon: ArrowUpDown,
         group: 'change',
-        entries: COLUMN_SORTS.map((sort) => ({ id: sort.id, label: sort.label, checked: sort.id === by, onSelect: () => setColumnSort(column.index, sort.id) })),
+        entries: COLUMN_SORTS.map((sort) => ({
+          id: sort.id,
+          label: sort.label,
+          checked: sort.id === by,
+          onSelect: () => setColumnSort(column.index, sort.id),
+        })),
       },
       cards.length > 0 && {
         id: 'move-all',
@@ -609,7 +665,7 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
           .filter((other) => !(column.statuses.length === 1 && column.statuses[0].id === other.id))
           .map((other) => ({
             id: String(other.id),
-            label: <TaskStatusBadge name={other.name} category={other.category} color={other.color} size="sm" />,
+            label: <TaskStatusBadge name={other.name} category={other.category} color={other.color} size='sm' />,
             onSelect: () => moveAll(cards, nameOf(column), other),
           })),
       },
@@ -619,37 +675,39 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
   const renderColumn = (column: ViewColumn, lane: { id: string; assignee: Assignee | null }) => {
     const cards = columnCards(lane.id, column)
     const hasCards = (status: Status) => (cardsBySection.get(`${lane.id}:${status.id}`) ?? NO_CARDS).length > 0
-    const sections: ReactNode[] = shownSections(column.statuses, hasCards, session !== null).map(({ status, labelled }) => {
-      const sectionCards = cardsOf(lane.id, column, status)
-      const isTarget = drop?.statusId === status.id && drop.lane === lane.id
-      const has = (key: string | null | undefined) => (key ? sectionCards.some((task) => task.key === key) : false)
-      return (
-        <BoardColumnSection
-          key={status.id}
-          data-board-status={status.id}
-          data-board-lane={lane.id}
-          status={status}
-          count={sectionCards.length}
-          labelled={labelled}
-          dropTarget={isTarget}
-        >
-          {sectionCards.length > 0 ? (
-            <BoardColumnCards
-              cards={sectionCards}
-              phone={phone}
-              selectedKey={has(selectedKey) ? selectedKey : null}
-              draggedKey={has(session?.key) ? (session?.key ?? null) : null}
-              dropBeforeKey={isTarget ? drop?.beforeKey : undefined}
-              steps={steps}
-              menuFor={menuFor}
-              onDragStart={onCardDragStart}
-              picked={picked}
-              onPickToggle={onPickToggle}
-            />
-          ) : null}
-        </BoardColumnSection>
-      )
-    })
+    const sections: ReactNode[] = shownSections(column.statuses, hasCards, session !== null).map(
+      ({ status, labelled }) => {
+        const sectionCards = cardsOf(lane.id, column, status)
+        const isTarget = drop?.statusId === status.id && drop.lane === lane.id
+        const has = (key: string | null | undefined) => (key ? sectionCards.some((task) => task.key === key) : false)
+        return (
+          <BoardColumnSection
+            key={status.id}
+            data-board-status={status.id}
+            data-board-lane={lane.id}
+            status={status}
+            count={sectionCards.length}
+            labelled={labelled}
+            dropTarget={isTarget}
+          >
+            {sectionCards.length > 0 ? (
+              <BoardColumnCards
+                cards={sectionCards}
+                phone={phone}
+                selectedKey={has(selectedKey) ? selectedKey : null}
+                draggedKey={has(session?.key) ? (session?.key ?? null) : null}
+                dropBeforeKey={isTarget ? drop?.beforeKey : undefined}
+                steps={steps}
+                menuFor={menuFor}
+                onDragStart={onCardDragStart}
+                picked={picked}
+                onPickToggle={onPickToggle}
+              />
+            ) : null}
+          </BoardColumnSection>
+        )
+      },
+    )
     const first = column.statuses[0]
     return (
       <BoardColumn
@@ -701,7 +759,7 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
         try {
           await api.board_delete({ board: board.id })
           lastBoard(instanceId).set(null)
-          legacy.toast.success(`Deleted ${board.name}`)
+          toast.success(`Deleted ${board.name}`)
           navigate(hrefFor(['board']))
         } catch (error) {
           fail(error)
@@ -710,14 +768,16 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
     })
 
   return (
-    <div ref={rootRef} className="flex min-h-0 flex-1 flex-col">
+    <div ref={rootRef} className='flex min-h-0 flex-1 flex-col'>
       {/* The page's controls sit in the host's toolbar: the board, filters, saved views, and how the board is laid out. */}
       <AppToolbar>
         <TaskManagerToolbar
-          label="Board controls"
+          label='Board controls'
           end={
-            <span className="text-xs text-muted-foreground tabular-nums">
-              {tasks === null ? '' : `${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'}${anyFilter ? ' shown' : ''}`}
+            <span className='text-xs text-muted-foreground tabular-nums'>
+              {tasks === null
+                ? ''
+                : `${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'}${anyFilter ? ' shown' : ''}`}
             </span>
           }
         >
@@ -730,7 +790,7 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
             onDelete={deleteBoard}
           />
           <TaskFilterBar
-            layout="row"
+            layout='row'
             query={searchDraft}
             onQueryChange={setSearchDraft}
             searchRef={searchRef}
@@ -754,8 +814,13 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
       </AppToolbar>
 
       {moveError ? (
-        <div className="shrink-0 px-3 pb-2 sm:px-4">
-          <TaskManagerError variant="inline" title={moveError.title} message={moveError.message} onDismiss={() => setMoveError(null)} />
+        <div className='shrink-0 px-3 pb-2 sm:px-4'>
+          <TaskManagerError
+            variant='inline'
+            title={moveError.title}
+            message={moveError.message}
+            onDismiss={() => setMoveError(null)}
+          />
         </div>
       ) : null}
 
@@ -770,11 +835,11 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
             }}
           />
         ) : (
-          <TaskManagerSkeleton page="board" />
+          <TaskManagerSkeleton page='board' />
         )
       ) : phone ? (
         <BoardColumnPager
-          className="min-h-0 flex-1 pt-2"
+          className='min-h-0 flex-1 pt-2'
           columns={columns.map((column) => ({
             id: column.index,
             title: column.title,
@@ -792,9 +857,9 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
       ) : (
         <ScrollArea
           ref={boardRef}
-          data-slot="board"
-          scrollbars="both"
-          className="flex-1"
+          data-slot='board'
+          scrollbars='both'
+          className='flex-1'
           // As wide as its widest row, so the end padding scrolls into view; one row of columns fills the height and each column scrolls itself.
           innerClassName={cn('w-max px-3 py-3 sm:px-4', grouped ? 'gap-4' : 'h-full flex-row gap-3')}
         >
@@ -803,22 +868,50 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
                 const count = tasks.filter((task) => laneOf(task) === lane.id).length
                 const folded = collapsedLanes.has(lane.id)
                 return (
-                  <section key={lane.id} aria-label={lane.assignee?.name ?? 'Unassigned'} className="flex shrink-0 flex-col gap-2">
+                  <section
+                    key={lane.id}
+                    aria-label={lane.assignee?.name ?? 'Unassigned'}
+                    className='flex shrink-0 flex-col gap-2'
+                  >
                     <ItemContextMenu
                       entries={[
                         folded
-                          ? { id: 'expand', label: 'Expand lane', icon: UnfoldVertical, onSelect: () => toggleLane(lane.id) }
-                          : { id: 'collapse', label: 'Collapse lane', icon: FoldVertical, onSelect: () => toggleLane(lane.id) },
-                        { id: 'collapse-all', label: 'Collapse all lanes', icon: FoldVertical, onSelect: () => setCollapsedLanes(new Set(lanes.map((other) => other.id))) },
-                        { id: 'expand-all', label: 'Expand all lanes', icon: UnfoldVertical, onSelect: () => setCollapsedLanes(new Set()) },
+                          ? {
+                              id: 'expand',
+                              label: 'Expand lane',
+                              icon: UnfoldVertical,
+                              onSelect: () => toggleLane(lane.id),
+                            }
+                          : {
+                              id: 'collapse',
+                              label: 'Collapse lane',
+                              icon: FoldVertical,
+                              onSelect: () => toggleLane(lane.id),
+                            },
+                        {
+                          id: 'collapse-all',
+                          label: 'Collapse all lanes',
+                          icon: FoldVertical,
+                          onSelect: () => setCollapsedLanes(new Set(lanes.map((other) => other.id))),
+                        },
+                        {
+                          id: 'expand-all',
+                          label: 'Expand all lanes',
+                          icon: UnfoldVertical,
+                          onSelect: () => setCollapsedLanes(new Set()),
+                        },
                       ]}
-                      render={<button type="button" aria-expanded={!folded} onClick={() => toggleLane(lane.id)} />}
-                      className="sticky left-0 flex w-fit items-center gap-2 rounded-md px-1 py-0.5 text-sm font-medium hover:bg-muted"
+                      render={<button type='button' aria-expanded={!folded} onClick={() => toggleLane(lane.id)} />}
+                      className='sticky left-0 flex w-fit items-center gap-2 rounded-md px-1 py-0.5 text-sm font-medium hover:bg-muted'
                     >
-                      <TaskAssignee assignee={lane.assignee} withName size="sm" />
-                      <span className="text-xs text-muted-foreground tabular-nums">{count}</span>
+                      <TaskAssignee assignee={lane.assignee} withName size='sm' />
+                      <span className='text-xs text-muted-foreground tabular-nums'>{count}</span>
                     </ItemContextMenu>
-                    {folded ? null : <div className="flex items-start gap-3">{columns.map((column) => renderColumn(column, lane))}</div>}
+                    {folded ? null : (
+                      <div className='flex items-start gap-3'>
+                        {columns.map((column) => renderColumn(column, lane))}
+                      </div>
+                    )}
                   </section>
                 )
               })
@@ -827,17 +920,21 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
       )}
 
       {bulk.selected.length > 0 || bulk.result ? (
-        <div className="shrink-0 px-3 pb-3 sm:px-4">
+        <div className='shrink-0 px-3 pb-3 sm:px-4'>
           <TaskBulkBar {...bulk} />
         </div>
       ) : null}
 
       {session && draggedTask && grab ? (
         <div
-          className="pointer-events-none fixed z-50"
+          className='pointer-events-none fixed z-50'
           style={{ left: session.pointer.x - grab.dx, top: session.pointer.y - grab.dy, width: grab.width }}
         >
-          <BoardCard task={withOpenBlockers(draggedTask)} workflowStep={steps.get(draggedTask.key) ?? null} dragState="overlay" />
+          <BoardCard
+            task={withOpenBlockers(draggedTask)}
+            workflowStep={steps.get(draggedTask.key) ?? null}
+            dragState='overlay'
+          />
         </div>
       ) : null}
     </div>

@@ -80,6 +80,11 @@ export async function compactSession(chats: CompactPort, thread: string): Promis
     }
     return await chats.compact(thread)
   } catch (error) {
-    return { outcome: 'failed', contextBefore: null, contextAfter: null, error: error instanceof Error ? error.message : String(error) }
+    return {
+      outcome: 'failed',
+      contextBefore: null,
+      contextAfter: null,
+      error: error instanceof Error ? error.message : String(error),
+    }
   }
 }

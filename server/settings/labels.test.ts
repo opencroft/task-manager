@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { parseParams } from '../action-params.ts'
 import { makeScope } from '../attachments/testing.ts'
 import { saveBoard } from '../boards/store.ts'
 import { createTask, getTask } from '../service.ts'
@@ -18,7 +19,9 @@ async function setup() {
 
 const labelsOf = (scope: ReturnType<typeof makeScope>, key: string) => getTask(scope, key).labels
 const lastLabelEntry = (scope: ReturnType<typeof makeScope>, key: string) =>
-  getTask(scope, key).activity.filter((entry) => entry.field === 'labels').at(-1)
+  getTask(scope, key)
+    .activity.filter((entry) => entry.field === 'labels')
+    .at(-1)
 
 test('the overview counts each label and carries its colour', async () => {
   const { scope } = await setup()
@@ -38,7 +41,11 @@ test('rename rewrites every task, leaves a history entry on each, and takes the 
   assert.deepEqual(labelsOf(scope, a), ['backend', 'design system'])
   assert.deepEqual(labelsOf(scope, b), ['design system', 'frontend'])
   assert.deepEqual(
-    { from: lastLabelEntry(scope, a)?.from, to: lastLabelEntry(scope, a)?.to, actor: lastLabelEntry(scope, a)?.actor.name },
+    {
+      from: lastLabelEntry(scope, a)?.from,
+      to: lastLabelEntry(scope, a)?.to,
+      actor: lastLabelEntry(scope, a)?.actor.name,
+    },
     { from: 'backend, ui', to: 'backend, design system', actor: 'Alice' },
   )
   assert.deepEqual(scope.events.at(-1), { keys: [a, b], kind: 'task' })
@@ -46,7 +53,10 @@ test('rename rewrites every task, leaves a history entry on each, and takes the 
 
 test('rename onto another label is refused, whatever its case; a case-only rename of itself is not', async () => {
   const { scope, a } = await setup()
-  assert.throws(() => renameLabel(scope, { label: 'ui', to: 'Frontend' }), /"frontend" already exists; merge "ui" into it instead/)
+  assert.throws(
+    () => renameLabel(scope, { label: 'ui', to: 'Frontend' }),
+    /"frontend" already exists; merge "ui" into it instead/,
+  )
   assert.deepEqual(labelsOf(scope, a), ['backend', 'ui'])
   renameLabel(scope, { label: 'ui', to: 'UI' })
   assert.deepEqual(labelsOf(scope, a), ['backend', 'UI'])
@@ -85,9 +95,23 @@ test('saved views and board filters that include or exclude a label follow a ren
   const { scope } = await setup()
   const owner = { key: 'person:m', name: 'Alice' }
   const at = '2026-09-26T16:00:00.000Z'
-  const one = saveView(scope.db, owner, { page: 'tasks', name: 'UI work', filter: { label: ['ui', 'frontend'], query: 'x' } }, at)
-  const two = saveView(scope.db, owner, { page: 'board', name: 'Backend', filter: { label: { exclude: ['backend'] } } }, at)
-  const board = saveBoard(scope, { name: 'Not backend', filter: { label: { include: ['ui'], exclude: ['backend'] } } }, at)
+  const one = saveView(
+    scope.db,
+    owner,
+    { page: 'tasks', name: 'UI work', filter: { label: ['ui', 'frontend'], query: 'x' } },
+    at,
+  )
+  const two = saveView(
+    scope.db,
+    owner,
+    { page: 'board', name: 'Backend', filter: { label: { exclude: ['backend'] } } },
+    at,
+  )
+  const board = saveBoard(
+    scope,
+    { name: 'Not backend', filter: { label: { include: ['ui'], exclude: ['backend'] } } },
+    at,
+  )
   const filterOf = (table: 'saved_view' | 'board', id: string) =>
     JSON.parse((scope.db.prepare(`SELECT filter FROM ${table} WHERE id = ?`).get(id) as { filter: string }).filter)
 
@@ -104,11 +128,18 @@ test('saved views and board filters that include or exclude a label follow a ren
 
 test('a colour is a palette name or null, and a missing label is named with the close ones', async () => {
   const { scope } = await setup()
-  assert.throws(() => colorLabel(scope, { label: 'ui', color: '#ff0000' }), /color must be one of: gray, red/)
+  // A colour outside the palette is refused at the action boundary, before colorLabel runs.
+  assert.throws(
+    () => parseParams('label_color', { label: 'ui', color: '#ff0000' }),
+    /"color" must be one of "gray", "red"/,
+  )
   colorLabel(scope, { label: 'ui', color: 'teal' })
   assert.deepEqual(scope.events.at(-1), { keys: [], kind: 'label' })
   colorLabel(scope, { label: 'ui', color: null })
   assert.equal(labelOverview(scope).find((label) => label.name === 'ui')?.color, null)
-  assert.throws(() => deleteLabel(scope, { label: 'fronted' }), /No label "fronted" on any task\. Did you mean "frontend"/)
+  assert.throws(
+    () => deleteLabel(scope, { label: 'fronted' }),
+    /No label "fronted" on any task\. Did you mean "frontend"/,
+  )
   assert.throws(() => renameLabel(scope, { label: 'ui', to: 'x'.repeat(51) }), /longer than 50 characters/)
 })

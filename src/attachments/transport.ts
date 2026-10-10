@@ -4,7 +4,7 @@
 // body; a file is read by its URL, so the browser streams, ranges and caches
 // it, and an <img> shows it without the page holding its bytes.
 
-import { legacy } from '@opencroft/client'
+import { routeUrl } from '@opencroft/client/extension'
 
 import { ATTACHMENTS_ROUTE, type TaskAttachment } from '../../shared/attachments'
 
@@ -20,16 +20,16 @@ export interface AttachmentTransport {
   releaseAll(): void
 }
 
-function routeUrl(query: Record<string, string>): string {
-  return `/api/ext/${legacy.extensionId}/http/${ATTACHMENTS_ROUTE}?${new URLSearchParams(query)}`
+function attachmentsUrl(query: Record<string, string>): string {
+  return `${routeUrl(ATTACHMENTS_ROUTE)}?${new URLSearchParams(query)}`
 }
 
 export function attachmentTransport(instanceId: string): AttachmentTransport {
   const fileUrl = (attachment: TaskAttachment, extra: Record<string, string> = {}) =>
-    routeUrl({ app: instanceId, id: attachment.id, ...extra })
+    attachmentsUrl({ app: instanceId, id: attachment.id, ...extra })
   return {
     async upload(key, file) {
-      const response = await fetch(routeUrl({ app: instanceId, key, name: file.name }), {
+      const response = await fetch(attachmentsUrl({ app: instanceId, key, name: file.name }), {
         method: 'POST',
         body: file,
         credentials: 'same-origin',

@@ -2,6 +2,7 @@
 // to know without watching the board. One inbox per caller per project; the
 // kit's `task-inbox` renders `TaskNotification` as is.
 
+import type { ActionInputs } from './action-inputs.ts'
 import type { StatusCategory, TaskKey, TaskType } from './types.ts'
 
 export type TaskNotificationKind =
@@ -58,16 +59,15 @@ export const INBOX_FILTERS: Record<InboxFilter, TaskNotificationKind[] | null> =
   all: null,
   assigned: ['assigned'],
   mentions: ['mentioned'],
-  workflows: ['step_open', 'step_waiting', 'step_attention', 'approval_requested', 'workflow_finished', 'workflow_cancelled'],
+  workflows: [
+    'step_open',
+    'step_waiting',
+    'step_attention',
+    'approval_requested',
+    'workflow_finished',
+    'workflow_cancelled',
+  ],
   status: ['status_changed'],
-}
-
-export interface InboxListInput {
-  filter?: InboxFilter
-  /** `nextBefore` of the previous page. */
-  before?: string
-  /** 1–100; default 30. */
-  limit?: number
 }
 
 export interface InboxListResult {
@@ -79,18 +79,15 @@ export interface InboxListResult {
   nextBefore: string | null
 }
 
+/** Some notifications by id, or every one; the schema can only say both are optional. */
 export type InboxMarkReadInput = { ids: string[] } | { all: true }
 
-export interface InboxMarkUnreadInput {
-  /** From inbox_list. */
-  ids: string[]
-}
-
-export interface InboxMuteInput {
-  /** The task's key, e.g. TASK-12. */
-  task: TaskKey
-  /** true stops new notifications about the task for you; false lets them come again. */
-  muted: boolean
+export interface InboxActionMap {
+  inbox_list: { input: ActionInputs['inbox_list']; output: InboxListResult }
+  inbox_mark_read: { input: InboxMarkReadInput; output: { unread: number } }
+  inbox_mark_unread: { input: ActionInputs['inbox_mark_unread']; output: { unread: number } }
+  /** `muted` true stops new notifications about the task for the caller; false lets them come again. */
+  inbox_mute: { input: ActionInputs['inbox_mute']; output: { task: TaskKey; muted: boolean } }
 }
 
 /**

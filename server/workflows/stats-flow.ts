@@ -11,8 +11,8 @@ import type {
   CouldntStartKey,
   CouldntStartReason,
   RunExit,
-  RunsMatch,
   RunState,
+  RunsMatch,
   StatsRange,
   StatsSpend,
   StatsThroughput,
@@ -95,7 +95,15 @@ export function flowRounds(db: Db, workflowId: string, since: string): FlowRound
     reasons: JSON.parse(row.reasons) as CouldntStartReason[],
     spend:
       row.ended_by === 'transition' && row.usage_state === 'settled' && row.usage_shared_with === null
-        ? { tokens: row.tokens_total ?? 0, cost: row.cost ? (JSON.parse(row.cost) as Array<{ amount: number; currency: string }>).map(({ currency, amount }) => ({ currency, amount })) : [] }
+        ? {
+            tokens: row.tokens_total ?? 0,
+            cost: row.cost
+              ? (JSON.parse(row.cost) as Array<{ amount: number; currency: string }>).map(({ currency, amount }) => ({
+                  currency,
+                  amount,
+                }))
+              : [],
+          }
         : null,
   }))
 }
@@ -127,7 +135,7 @@ function roundsByRun(rounds: FlowRound[]): Map<string, number> {
   return taken
 }
 
-const roundsBucket = (n: number): 1 | 2 | 3 | 4 => (Math.min(Math.max(n, 1), 4) as 1 | 2 | 3 | 4)
+const roundsBucket = (n: number): 1 | 2 | 3 | 4 => Math.min(Math.max(n, 1), 4) as 1 | 2 | 3 | 4
 
 function couldntStartOf(rounds: FlowRound[]): StepStats['couldntStart'] {
   const counts = new Map<CouldntStartKey, number>()
@@ -202,7 +210,10 @@ export function stepFlow(
     roundsPerRun,
     couldntStart: couldntStartOf(rounds),
     finishedTimeMs,
-    spend: { first: sumSpend(rounds.filter((r) => r.roundNo === 1)), rework: sumSpend(rounds.filter((r) => r.roundNo > 1)) },
+    spend: {
+      first: sumSpend(rounds.filter((r) => r.roundNo === 1)),
+      rework: sumSpend(rounds.filter((r) => r.roundNo > 1)),
+    },
   }
 }
 
@@ -236,7 +247,9 @@ function bucketOf(iso: string, bucket: StatsThroughput['bucket']): string {
 export function throughput(db: Db, workflowId: string, range: StatsRange, now: string): StatsThroughput {
   const bucket = range === '7d' || range === '30d' ? 'day' : 'week'
   const runs = db
-    .prepare('SELECT state, started_at, ended_at FROM workflow_run WHERE workflow_id = ? AND started_at >= ? ORDER BY started_at')
+    .prepare(
+      'SELECT state, started_at, ended_at FROM workflow_run WHERE workflow_id = ? AND started_at >= ? ORDER BY started_at',
+    )
     .all(workflowId, rangeStart(range, now)) as Array<{ state: RunState; started_at: string; ended_at: string | null }>
   const from = range === 'all' ? runs[0]?.started_at : rangeStart(range, now)
   if (!from) {
@@ -244,7 +257,11 @@ export function throughput(db: Db, workflowId: string, range: StatsRange, now: s
   }
   const points = new Map<string, StatsThroughput['points'][number]>()
   const last = bucketOf(now, bucket)
-  for (let at = bucketOf(from, bucket); at <= last; at = new Date(Date.parse(at) + (bucket === 'week' ? 7 : 1) * DAY).toISOString().slice(0, 10)) {
+  for (
+    let at = bucketOf(from, bucket);
+    at <= last;
+    at = new Date(Date.parse(at) + (bucket === 'week' ? 7 : 1) * DAY).toISOString().slice(0, 10)
+  ) {
     points.set(at, { start: at, started: 0, finished: 0, cancelled: 0 })
   }
   for (const run of runs) {
@@ -271,14 +288,21 @@ export function matchingRunIds(db: Db, workflowId: string, match: RunsMatch, now
     if (match.exit && exitOf(round) !== match.exit) {
       continue
     }
-    if (match.exit === 'sent_back' && match.transition && (round.transition ?? UNNAMED_TRANSITION) !== match.transition) {
+    if (
+      match.exit === 'sent_back' &&
+      match.transition &&
+      (round.transition ?? UNNAMED_TRANSITION) !== match.transition
+    ) {
       continue
     }
     if (match.rounds && roundsBucket(taken.get(round.runId) ?? 0) !== match.rounds) {
       continue
     }
     if (match.couldntStart) {
-      const recorded = match.couldntStart === 'unrecorded' ? round.attention > round.reasons.length : round.reasons.includes(match.couldntStart)
+      const recorded =
+        match.couldntStart === 'unrecorded'
+          ? round.attention > round.reasons.length
+          : round.reasons.includes(match.couldntStart)
       if (!recorded) {
         continue
       }

@@ -6,16 +6,17 @@
 import type { PullRequestState } from '../../shared/types.ts'
 import type { Db } from '../db.ts'
 import type { ForgeClient, ForgePull } from './api.ts'
-import { type PullRequestInput, existingNumbers, readConnection, recordSync, writePullRequests } from './store.ts'
+import { existingNumbers, type PullRequestInput, readConnection, recordSync, writePullRequests } from './store.ts'
 
 // The cursor is set back this far on each read, so a pull request updated
 // while the previous read ran, or stamped by a forge clock a little behind
 // ours, is read again rather than missed. Writing one twice changes nothing.
 const OVERLAP_MS = 2 * 60 * 1000
 
-const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-const keyPattern = (projectKey: string, flags: string) => new RegExp(`(?<![A-Za-z0-9])${escape(projectKey)}-(\\d+)(?!\\d)`, flags)
+const keyPattern = (projectKey: string, flags: string) =>
+  new RegExp(`(?<![A-Za-z0-9])${escapeRegExp(projectKey)}-(\\d+)(?!\\d)`, flags)
 
 const numbersIn = (text: string, pattern: RegExp) => [...text.matchAll(pattern)].map((match) => Number(match[1]))
 
@@ -27,7 +28,11 @@ export function branchNumbers(projectKey: string, branch: string): number[] {
 /** The task numbers a pull request mentions: `<KEY>-<n>` in its title or body as written, and in its branch in any case. */
 export function mentionedNumbers(projectKey: string, pull: Pick<ForgePull, 'title' | 'body' | 'headRef'>): number[] {
   const inText = keyPattern(projectKey, 'g')
-  const numbers = new Set([...numbersIn(pull.title, inText), ...numbersIn(pull.body, inText), ...branchNumbers(projectKey, pull.headRef)])
+  const numbers = new Set([
+    ...numbersIn(pull.title, inText),
+    ...numbersIn(pull.body, inText),
+    ...branchNumbers(projectKey, pull.headRef),
+  ])
   return [...numbers].sort((a, b) => a - b)
 }
 
@@ -43,7 +48,12 @@ export interface SyncResult {
 }
 
 /** One read. Throws on a forge failure after recording it; the cursor then stays where it was. */
-export async function syncOnce(db: Db, projectKey: string, client: ForgeClient, now: () => Date = () => new Date()): Promise<SyncResult> {
+export async function syncOnce(
+  db: Db,
+  projectKey: string,
+  client: ForgeClient,
+  now: () => Date = () => new Date(),
+): Promise<SyncResult> {
   const connection = readConnection(db)
   if (!connection) {
     return { read: 0, changed: [] }
@@ -69,7 +79,10 @@ export async function syncOnce(db: Db, projectKey: string, client: ForgeClient, 
       }
     }
     const touched = writePullRequests(db, found, (branch) => branchNumbers(projectKey, branch))
-    recordSync(db, { at: now().toISOString(), cursor: new Date(startedAt.getTime() - OVERLAP_MS).toISOString().replace(/\.\d{3}Z$/, 'Z') })
+    recordSync(db, {
+      at: now().toISOString(),
+      cursor: new Date(startedAt.getTime() - OVERLAP_MS).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    })
     return { read: found.length, changed: existingNumbers(db, touched) }
   } catch (error) {
     recordSync(db, { at: now().toISOString(), error: error instanceof Error ? error.message : String(error) })

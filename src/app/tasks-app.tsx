@@ -5,7 +5,7 @@
 // falls back to the default page. `?peek=KEY-N` on a page opens that task in
 // the peek beside it.
 
-import { AppActions, type AppComponentProps, AppSidebar, AppTitle } from '@opencroft/client'
+import { AppActions, type AppComponentProps, AppSidebar, AppTitle } from '@opencroft/client/app'
 import { cn } from 'cn'
 import { Settings2 } from 'lucide-react'
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react'
@@ -13,7 +13,6 @@ import { type RefObject, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { TaskPeekLayout } from '@/components/ui/tasks/task-peek-panel'
 import { TasksSidebar } from '@/components/ui/tasks/tasks-nav'
-
 import { PROJECT_KEY_PATTERN } from '../../shared/types'
 import { ProjectChat } from '../chat/project-chat'
 import { ProjectInbox } from '../inbox/project-inbox'
@@ -21,11 +20,11 @@ import { hrefFor, navigate, useAppRouter, useTasksLocation } from '../lib/router
 import { TaskPage } from '../pages/task-page'
 import { TaskPeek } from '../pages/task-peek'
 import { SETTINGS_ROUTE, SettingsPage, settingsHref } from '../settings/settings-page'
+import { PageScrollerContext, usePageScrollMemory } from './page-scroll'
 import { ProjectProvider } from './project'
 import { DEFAULT_ROUTE, routes } from './routes'
 import { ShortcutsProvider } from './shortcuts'
 import { SidebarSectionProvider } from './sidebar-section'
-import { PageScrollerContext, usePageScrollMemory } from './page-scroll'
 import { peekKeyOf, useNewTabClicks } from './task-opener'
 
 export function TasksApp({ instanceId, params }: AppComponentProps) {
@@ -65,7 +64,7 @@ export function TasksApp({ instanceId, params }: AppComponentProps) {
 
   if (!PROJECT_KEY_PATTERN.test(projectKey)) {
     return (
-      <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">
+      <div className='flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground'>
         This app's project key "{projectKey}" is not valid. Edit the app and set a key like TASK.
       </div>
     )
@@ -89,24 +88,25 @@ export function TasksApp({ instanceId, params }: AppComponentProps) {
             <ProjectInbox instanceId={instanceId} />
             <Button
               variant={settings ? 'secondary' : 'ghost'}
-              size="icon-sm"
-              aria-label="Project settings"
-              title="Project settings"
+              size='icon-sm'
+              aria-label='Project settings'
+              title='Project settings'
               aria-current={settings ? 'page' : undefined}
               nativeButton={false}
+              // biome-ignore lint/a11y/useAnchorContent: the Button renders as this anchor, so the icon below is its content
               render={<a href={settingsHref()} />}
             >
               <Settings2 />
             </Button>
           </AppActions>
           {/* One path on every device: a pushed panel on a wide screen, the host's sheet on a phone. */}
-          <AppSidebar mode="push">
+          <AppSidebar mode='push'>
             <TasksSidebar items={pages} active={active}>
-              {active === 'workflows' ? <div ref={setSectionSlot} className="flex min-h-0 flex-1 flex-col" /> : null}
+              {active === 'workflows' ? <div ref={setSectionSlot} className='flex min-h-0 flex-1 flex-col' /> : null}
             </TasksSidebar>
           </AppSidebar>
           <SidebarSectionProvider value={sectionSlot}>
-            <main className="flex h-full min-h-0 w-full flex-1 flex-col">
+            <main className='flex h-full min-h-0 w-full flex-1 flex-col'>
               {/* The layout's page pane is the page's scroller. A page that fills it and scrolls inside itself (Board, Timeline, Settings) is bounded by it; a longer one grows the pane's content and the pane scrolls. */}
               <TaskPeekLayout
                 storageKey={`tasks:${instanceId}:peek-size`}

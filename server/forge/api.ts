@@ -42,7 +42,9 @@ export function normalizeForgeUrl(value: unknown): string {
     throw new TaskError('The forge address must start with https://, so the token is never sent unencrypted')
   }
   if (url.username || url.password) {
-    throw new TaskError('Give the forge address without a user name or password in it; the token comes from the Secrets Store')
+    throw new TaskError(
+      'Give the forge address without a user name or password in it; the token comes from the Secrets Store',
+    )
   }
   return `${url.origin}${url.pathname.replace(/\/+$/, '').replace(/\/api\/v1$/, '')}`
 }
@@ -72,7 +74,13 @@ export function toPull(item: Json): ForgePull {
   }
 }
 
-export function forgeClient(options: { url: string; token: string; secretKey: string; fetch?: Fetch; signal?: AbortSignal }): ForgeClient {
+export function forgeClient(options: {
+  url: string
+  token: string
+  secretKey: string
+  fetch?: Fetch
+  signal?: AbortSignal
+}): ForgeClient {
   const base = normalizeForgeUrl(options.url)
   const doFetch: Fetch = options.fetch ?? ((input, init) => fetch(input, init))
 
@@ -88,13 +96,17 @@ export function forgeClient(options: { url: string; token: string; secretKey: st
       })
     } catch (error) {
       options.signal?.throwIfAborted()
-      throw new TaskError(`Could not reach the forge at ${base}: ${error instanceof Error ? error.message : String(error)}`)
+      throw new TaskError(
+        `Could not reach the forge at ${base}: ${error instanceof Error ? error.message : String(error)}`,
+      )
     }
     if (response.status === 401) {
       throw new TaskError(`The forge refused the token stored under "${options.secretKey}" (401)`)
     }
     if (response.status === 403) {
-      throw new TaskError(`The token stored under "${options.secretKey}" may not read ${what} (403): it needs read:repository and read:issue`)
+      throw new TaskError(
+        `The token stored under "${options.secretKey}" may not read ${what} (403): it needs read:repository and read:issue`,
+      )
     }
     if (!response.ok) {
       throw new TaskError(`The forge answered ${response.status} for ${what}`)
@@ -111,7 +123,13 @@ export function forgeClient(options: { url: string; token: string; secretKey: st
     async changedRepos(owner, since) {
       const repos = new Set<string>()
       for (let page = 1; page <= MAX_PAGES; page++) {
-        const query = new URLSearchParams({ type: 'pulls', state: 'all', owner, limit: String(PAGE), page: String(page) })
+        const query = new URLSearchParams({
+          type: 'pulls',
+          state: 'all',
+          owner,
+          limit: String(PAGE),
+          page: String(page),
+        })
         if (since) {
           query.set('since', since)
         }
@@ -131,8 +149,16 @@ export function forgeClient(options: { url: string; token: string; secretKey: st
     async pulls(repo, since) {
       const found: ForgePull[] = []
       for (let page = 1; page <= MAX_PAGES; page++) {
-        const query = new URLSearchParams({ state: 'all', sort: 'recentupdate', limit: String(PAGE), page: String(page) })
-        const items = (await get(`/repos/${repo.split('/').map(encodeURIComponent).join('/')}/pulls?${query}`, `the pull requests of ${repo}`)) as Json[]
+        const query = new URLSearchParams({
+          state: 'all',
+          sort: 'recentupdate',
+          limit: String(PAGE),
+          page: String(page),
+        })
+        const items = (await get(
+          `/repos/${repo.split('/').map(encodeURIComponent).join('/')}/pulls?${query}`,
+          `the pull requests of ${repo}`,
+        )) as Json[]
         const pulls = (Array.isArray(items) ? items : []).map(toPull)
         // Compared as instants: the forge may write a time zone offset where the cursor has Z.
         const fresh = since ? pulls.filter((pull) => Date.parse(pull.updatedAt) >= Date.parse(since)) : pulls

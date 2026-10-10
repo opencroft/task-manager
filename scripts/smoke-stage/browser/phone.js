@@ -1,7 +1,7 @@
 // On a phone the App's sidebar is the host's sheet. Tapping a page in it opens
 // that page and closes the sheet, and no page is wider than
 // the screen. Runs at the viewport the runner gives (390 px wide).
-async (page, args, h) => {
+export default async (_page, args, h) => {
   const { own } = h
   const base = h.app(args.app)
   const sheetOpen = () => own.evaluate(() => Boolean(document.querySelector('[data-slot=sidebar][data-mobile=true]')))
@@ -23,14 +23,25 @@ async (page, args, h) => {
       return
     }
     h.step(`${target}: tap the page in the sheet`)
-    await own.locator(`[data-slot=sidebar][data-mobile=true] a[href="${base}/${target}"]`).first().click({ timeout: 5000 })
+    await own
+      .locator(`[data-slot=sidebar][data-mobile=true] a[href="${base}/${target}"]`)
+      .first()
+      .click({ timeout: 5000 })
     const moved = await h.until(async () => h.path().split('?')[0] === `${base}/${target}`, 5000)
     const closed = await h.until(async () => !(await sheetOpen()), 3000)
-    await h.check(`${target}: tap opens it and closes the sheet`, moved && closed, `${h.path()}${closed ? '' : ', sheet still open'}`)
+    await h.check(
+      `${target}: tap opens it and closes the sheet`,
+      moved && closed,
+      `${h.path()}${closed ? '' : ', sheet still open'}`,
+    )
     h.step(`${target}: measure the width`)
     await h.quiet()
     const size = await overflow()
-    await h.check(`${target}: no horizontal overflow`, size.content <= size.width, `${size.content} in ${size.width} px`)
+    await h.check(
+      `${target}: no horizontal overflow`,
+      size.content <= size.width,
+      `${size.content} in ${size.width} px`,
+    )
   }
   await h.check('no page errors', h.errors.length === 0, h.errors.slice(0, 3).join(' | ') || 'none')
 }

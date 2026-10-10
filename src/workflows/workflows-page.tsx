@@ -2,10 +2,10 @@
 // chosen one's step editor (or its runs, or its statistics) on the right. The
 // selection and the tab live in the URL, so each of them is a link.
 
-import { legacy } from '@opencroft/client'
 import { cn } from 'cn'
 import { Info, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -18,15 +18,14 @@ import { Textarea } from '@/components/ui/textarea'
 import { WorkflowList } from '@/components/ui/workflows/workflow-list'
 import { WorkflowStepCard, type WorkflowStepCardValue } from '@/components/ui/workflows/workflow-step-card'
 import { WorkflowStepList } from '@/components/ui/workflows/workflow-step-list'
-
 import type { Status } from '../../shared/types'
 import {
   DEFAULT_COMPACT_ABOVE,
   DEFAULT_STEP_INSTRUCTIONS,
   derivedGate,
+  type SpaceChatState,
   STEP_EFFORTS,
   STEP_PERMISSION_MODES,
-  type SpaceChatState,
   type StepEffort,
   type StepPermissionMode,
   type StepSessionOptions,
@@ -41,7 +40,16 @@ import { useTasksLive } from '../lib/live'
 import { navigateQuery, useQueryParam } from '../lib/router'
 import { settingsHref } from '../settings/settings-page'
 import { workflowsApi } from './api'
-import { copySteps, type DraftStep, type DraftTransition, draftTransition, duplicateStep, newStepId, nextKey, noApproval } from './draft-steps'
+import {
+  copySteps,
+  type DraftStep,
+  type DraftTransition,
+  draftTransition,
+  duplicateStep,
+  newStepId,
+  nextKey,
+  noApproval,
+} from './draft-steps'
 import { runsMatchParams } from './runs-match'
 import { WorkflowRunsView } from './runs-view'
 import { WorkflowStatsView } from './stats-view'
@@ -81,7 +89,12 @@ function toDraft(wf: WorkflowDef): Draft {
     name: wf.name,
     description: wf.description,
     isDefault: wf.isDefault,
-    steps: wf.steps.map((s) => ({ ...s, approval: s.approval ?? noApproval(), key: nextKey(), transitions: s.transitions.map(draftTransition) })),
+    steps: wf.steps.map((s) => ({
+      ...s,
+      approval: s.approval ?? noApproval(),
+      key: nextKey(),
+      transitions: s.transitions.map(draftTransition),
+    })),
   }
 }
 
@@ -140,9 +153,15 @@ function templateDraft(statuses: Status[], taken: string[]): Draft {
   for (let n = 2; taken.some((t) => t.toLowerCase() === name.toLowerCase()); n += 1) {
     name = `Development ${n}`
   }
-  const devStep = dev ? templateStep('Development', dev, 'Implement {{ task.key }}: {{ task.summary }}.\n\n{{ task.description }}') : null
+  const devStep = dev
+    ? templateStep('Development', dev, 'Implement {{ task.key }}: {{ task.summary }}.\n\n{{ task.description }}')
+    : null
   const reviewStep = review
-    ? templateStep('Review', review, 'Review the work on {{ task.key }}: {{ task.summary }}. The developer reported:\n\n{{ steps.development.summary }}')
+    ? templateStep(
+        'Review',
+        review,
+        'Review the work on {{ task.key }}: {{ task.summary }}. The developer reported:\n\n{{ steps.development.summary }}',
+      )
     : null
   if (devStep) {
     devStep.transitions = edges(reviewStep ? ['Ready for review', reviewStep, review] : ['Done', null, done])
@@ -150,7 +169,12 @@ function templateDraft(statuses: Status[], taken: string[]): Draft {
   if (reviewStep) {
     reviewStep.transitions = edges(['Approved', null, done], ['Changes requested', devStep, dev])
   }
-  return { name, description: '', isDefault: false, steps: [devStep, reviewStep].filter((s): s is DraftStep => s !== null) }
+  return {
+    name,
+    description: '',
+    isDefault: false,
+    steps: [devStep, reviewStep].filter((s): s is DraftStep => s !== null),
+  }
 }
 
 function templateStep(name: string, status: Status | undefined, instructions: string): DraftStep {
@@ -185,9 +209,21 @@ function edges(...list: Array<[string, DraftStep | null, Status | undefined]>): 
 function qaTemplate(statuses: Status[]): Draft {
   const [dev, review, qa] = statuses.filter((s) => s.category === 'in_progress')
   const done = statuses.find((s) => s.category === 'done')
-  const devStep = templateStep('Development', dev, 'Implement {{ task.key }}: {{ task.summary }}.\n\n{{ task.description }}')
-  const reviewStep = templateStep('Review', review, 'Review the work on {{ task.key }}: {{ task.summary }}. The developer reported:\n\n{{ steps.development.summary }}')
-  const qaStep = templateStep('QA', qa, 'Test {{ task.key }}: {{ task.summary }} as a user would. The review said:\n\n{{ steps.review.summary }}')
+  const devStep = templateStep(
+    'Development',
+    dev,
+    'Implement {{ task.key }}: {{ task.summary }}.\n\n{{ task.description }}',
+  )
+  const reviewStep = templateStep(
+    'Review',
+    review,
+    'Review the work on {{ task.key }}: {{ task.summary }}. The developer reported:\n\n{{ steps.development.summary }}',
+  )
+  const qaStep = templateStep(
+    'QA',
+    qa,
+    'Test {{ task.key }}: {{ task.summary }} as a user would. The review said:\n\n{{ steps.review.summary }}',
+  )
   devStep.transitions = edges(['Ready for review', reviewStep, review])
   reviewStep.transitions = edges(['Approved', qaStep, qa], ['Changes requested', devStep, dev])
   qaStep.transitions = edges(['Passed', null, done], ['Failed', devStep, dev])
@@ -226,7 +262,8 @@ export function WorkflowsPage() {
   const [selectedId, setSelectedId] = useQueryParam('w')
   const [tab] = useQueryParam('tab')
   // Another tab or workflow leaves the runs a statistic counted behind: its step belongs to this workflow's Runs tab.
-  const openTab = (id: keyof typeof TAB_LABELS) => navigateQuery({ tab: id === 'steps' ? null : id, ...runsMatchParams(null) }, { replace: true })
+  const openTab = (id: keyof typeof TAB_LABELS) =>
+    navigateQuery({ tab: id === 'steps' ? null : id, ...runsMatchParams(null) }, { replace: true })
   const selectWorkflow = (id: string) => navigateQuery({ w: id, ...runsMatchParams(null) }, { replace: true })
   const [workflows, setWorkflows] = useState<WorkflowDef[] | null>(null)
   // The space's chat, where every step's session opens: its agents are the ones a step can be given to.
@@ -335,7 +372,7 @@ export function WorkflowsPage() {
     setSaveError(null)
     try {
       const saved = await api.workflow_save({ workflow: toPayload(draft) })
-      legacy.toast.success(`Saved ${saved.name}`)
+      toast.success(`Saved ${saved.name}`)
       setDirty(false)
       loadedFor.current = null
       setSelectedId(saved.id)
@@ -363,10 +400,10 @@ export function WorkflowsPage() {
           await tasks.status_reorder({ order })
           current = await tasks.status_list({})
         }
-        legacy.toast.success('Added the status "In QA" for the QA step')
+        toast.success('Added the status "In QA" for the QA step')
       }
       const saved = await api.workflow_save({ workflow: toPayload(qaTemplate(current)) })
-      legacy.toast.success(`Created ${saved.name}`)
+      toast.success(`Created ${saved.name}`)
       loadedFor.current = null
       setSelectedId(saved.id)
       await load()
@@ -392,12 +429,13 @@ export function WorkflowsPage() {
   const remove = (wf: WorkflowDef) =>
     confirm({
       title: `Delete ${wf.name}?`,
-      description: 'Tasks that ran it keep their run history. A workflow a task is running now cannot be deleted; cancel that run first.',
+      description:
+        'Tasks that ran it keep their run history. A workflow a task is running now cannot be deleted; cancel that run first.',
       action: 'Delete',
       destructive: true,
       onConfirm: async () => {
         await api.workflow_delete({ workflow: wf.id })
-        legacy.toast.success(`Deleted ${wf.name}`)
+        toast.success(`Deleted ${wf.name}`)
         if (selectedId === wf.id) {
           setSelectedId(null)
         }
@@ -427,30 +465,38 @@ export function WorkflowsPage() {
   }
 
   const statusOptions = useMemo(
-    () => statuses.map((s) => ({ id: s.id, name: s.name, display: <TaskStatusBadge name={s.name} category={s.category} color={s.color} size="sm" /> })),
+    () =>
+      statuses.map((s) => ({
+        id: s.id,
+        name: s.name,
+        display: <TaskStatusBadge name={s.name} category={s.category} color={s.color} size='sm' />,
+      })),
     [statuses],
   )
   // Who can approve: the people of the host's directory, the only ones with an id.
   const people = useMemo(
-    () => assignees.flatMap(({ assignee }) => (assignee.kind === 'person' && assignee.id ? [{ id: assignee.id, name: assignee.name }] : [])),
+    () =>
+      assignees.flatMap(({ assignee }) =>
+        assignee.kind === 'person' && assignee.id ? [{ id: assignee.id, name: assignee.name }] : [],
+      ),
     [assignees],
   )
   const grouped = groupIssues(issues)
 
   if (!workflows) {
     return loadError ? (
-      <TaskManagerError title="Couldn’t load workflows" message={loadError} onRetry={() => void load()} />
+      <TaskManagerError title='Couldn’t load workflows' message={loadError} onRetry={() => void load()} />
     ) : (
-      <TaskManagerSkeleton page="workflows" />
+      <TaskManagerSkeleton page='workflows' />
     )
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 p-4">
+    <div className='flex min-h-0 flex-1 flex-col gap-4 p-4'>
       {/* The workflow list is this page's section of the App sidebar. */}
       <PageSidebarSection>
         <WorkflowList
-          variant="sidebar"
+          variant='sidebar'
           workflows={workflows}
           selectedId={selectedId}
           onSelect={selectWorkflow}
@@ -462,10 +508,10 @@ export function WorkflowsPage() {
         />
       </PageSidebarSection>
 
-      <main className="flex min-w-0 flex-1 flex-col gap-4">
+      <main className='flex min-w-0 flex-1 flex-col gap-4'>
         {saveError ? (
           <TaskManagerError
-            variant="inline"
+            variant='inline'
             title={creating || !draft ? 'Couldn’t create the workflow' : 'Couldn’t save the workflow'}
             message={saveError}
             onDismiss={() => setSaveError(null)}
@@ -473,27 +519,29 @@ export function WorkflowsPage() {
         ) : null}
         {!draft ? (
           <TaskManagerEmpty
-            kind="no-workflows"
+            kind='no-workflows'
             busy={templating}
             onUseTemplate={() => void createFromTemplate()}
             onCreateWorkflow={() => setSelectedId('new')}
           />
         ) : (
           <>
-            <div className="flex items-center gap-1 border-b" role="tablist">
+            <div className='flex items-center gap-1 border-b' role='tablist'>
               {(['steps', 'runs', 'stats'] as const).map((id) => {
                 const current = (tab ?? 'steps') === id
                 return (
                   <button
                     key={id}
-                    type="button"
-                    role="tab"
+                    type='button'
+                    role='tab'
                     aria-selected={current}
                     disabled={id !== 'steps' && creating}
                     onClick={() => openTab(id)}
                     className={cn(
                       '-mb-px border-b-2 px-3 py-2 text-sm transition-colors disabled:opacity-40',
-                      current ? 'border-primary font-medium text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground',
+                      current
+                        ? 'border-primary font-medium text-foreground'
+                        : 'border-transparent text-muted-foreground hover:text-foreground',
                     )}
                   >
                     {TAB_LABELS[id]}
@@ -501,14 +549,14 @@ export function WorkflowsPage() {
                 )
               })}
               {(tab ?? 'steps') === 'steps' ? (
-                <div className="ml-auto flex items-center gap-2 pb-1.5">
+                <div className='ml-auto flex items-center gap-2 pb-1.5'>
                   {dirty ? (
-                    <Button variant="ghost" size="sm" onClick={discard} disabled={saving}>
+                    <Button variant='ghost' size='sm' onClick={discard} disabled={saving}>
                       Discard
                     </Button>
                   ) : null}
-                  <Button size="sm" onClick={() => void save()} disabled={!dirty || saving || issues.length > 0}>
-                    {saving ? <Loader2 className="animate-spin" /> : null}
+                  <Button size='sm' onClick={() => void save()} disabled={!dirty || saving || issues.length > 0}>
+                    {saving ? <Loader2 className='animate-spin' /> : null}
                     {creating ? 'Create workflow' : 'Save'}
                   </Button>
                 </div>
@@ -520,52 +568,60 @@ export function WorkflowsPage() {
             ) : (tab ?? 'steps') === 'stats' && selected ? (
               <WorkflowStatsView key={selected.id} instanceId={instanceId} workflow={selected} />
             ) : (
-              <div className="flex max-w-4xl flex-col gap-4">
-                <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-start">
-                  <div className="flex flex-col gap-1">
+              <div className='flex max-w-4xl flex-col gap-4'>
+                <div className='grid gap-3 sm:grid-cols-[1fr_auto] sm:items-start'>
+                  <div className='flex flex-col gap-1'>
                     <Input
                       value={draft.name}
-                      placeholder="Workflow name"
-                      aria-label="Workflow name"
+                      placeholder='Workflow name'
+                      aria-label='Workflow name'
                       aria-invalid={grouped.top.name ? true : undefined}
                       onChange={(event) => edit({ name: event.target.value })}
-                      className="text-base font-semibold"
+                      className='text-base font-semibold'
                     />
                     {grouped.top.name?.map((m) => (
-                      <span key={m} className="text-xs text-destructive">
+                      <span key={m} className='text-xs text-destructive'>
                         {m}
                       </span>
                     ))}
                   </div>
                   {/* biome-ignore lint/a11y/noLabelWithoutControl: the Base UI Checkbox inside is the control (a button role="checkbox"), and pressing the label toggles it */}
-                  <label className="flex h-9 items-center gap-2 text-sm">
-                    <Checkbox checked={draft.isDefault} onCheckedChange={(checked) => edit({ isDefault: checked === true })} />
+                  <label className='flex h-9 items-center gap-2 text-sm'>
+                    <Checkbox
+                      checked={draft.isDefault}
+                      onCheckedChange={(checked) => edit({ isDefault: checked === true })}
+                    />
                     Default for new runs
                   </label>
                 </div>
                 <Textarea
                   value={draft.description}
                   rows={2}
-                  placeholder="What is this workflow for? (optional)"
-                  aria-label="Description"
+                  placeholder='What is this workflow for? (optional)'
+                  aria-label='Description'
                   onChange={(event) => edit({ description: event.target.value })}
                 />
 
-                <p className="flex items-start gap-2 rounded-md bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
-                  <Info className="mt-0.5 size-3.5 shrink-0" />
+                <p className='flex items-start gap-2 rounded-md bg-muted/60 px-3 py-2 text-xs text-muted-foreground'>
+                  <Info className='mt-0.5 size-3.5 shrink-0' />
                   <span>
                     Every step's session opens in this space's chat
-                    {spaceChat?.name ? <span className="font-medium text-foreground"> {spaceChat.name}</span> : null}. The agent working a step must
-                    be in it; any other one waits with that reason.{' '}
-                    {spaceChat && !spaceChat.taskManagerIn ? "The task manager isn't in the chat yet: let it in from Settings → Chat. " : ''}
-                    <a href={settingsHref('chat')} className="font-medium text-primary underline-offset-4 hover:underline">
+                    {spaceChat?.name ? <span className='font-medium text-foreground'> {spaceChat.name}</span> : null}.
+                    The agent working a step must be in it; any other one waits with that reason.{' '}
+                    {spaceChat && !spaceChat.taskManagerIn
+                      ? "The task manager isn't in the chat yet: let it in from Settings → Chat. "
+                      : ''}
+                    <a
+                      href={settingsHref('chat')}
+                      className='font-medium text-primary underline-offset-4 hover:underline'
+                    >
                       Chat settings
                     </a>
                   </span>
                 </p>
 
                 {grouped.top.steps?.map((m) => (
-                  <span key={m} className="text-sm text-destructive">
+                  <span key={m} className='text-sm text-destructive'>
                     {m}
                   </span>
                 ))}
@@ -573,7 +629,7 @@ export function WorkflowsPage() {
                 <WorkflowStepList
                   items={draft.steps}
                   onReorder={reorderStep}
-                  addLabel="Add step"
+                  addLabel='Add step'
                   onAdd={() =>
                     edit({
                       steps: [

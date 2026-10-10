@@ -9,7 +9,16 @@ import type {
   OpenProjectStatusTarget,
   OpenProjectTypeTarget,
 } from '../../shared/openproject.ts'
-import { type Assignee, PRIORITIES, type Priority, STATUS_CATEGORIES, type Status, type StatusCategory, TASK_TYPES, type TaskType } from '../../shared/types.ts'
+import {
+  type Assignee,
+  PRIORITIES,
+  type Priority,
+  STATUS_CATEGORIES,
+  type Status,
+  type StatusCategory,
+  TASK_TYPES,
+  type TaskType,
+} from '../../shared/types.ts'
 import type { AgentInfo, PersonInfo } from '../service.ts'
 import { TaskError } from '../service.ts'
 import type { SourceStatus, SourceType, SourceWorkPackage } from './api.ts'
@@ -75,13 +84,20 @@ export function guessPerson(name: string, agents: AgentInfo[], people: PersonInf
 }
 
 /** The mapping the preview suggests for the statuses, types and people the work packages use. */
-export function suggestMapping(source: SourceData, ours: Status[], agents: AgentInfo[], people: PersonInfo[]): OpenProjectMapping {
+export function suggestMapping(
+  source: SourceData,
+  ours: Status[],
+  agents: AgentInfo[],
+  people: PersonInfo[],
+): OpenProjectMapping {
   const usedStatuses = new Set(source.workPackages.map((wp) => wp.statusId))
   const statuses: Record<string, OpenProjectStatusTarget> = {}
   for (const status of source.statuses.filter((candidate) => usedStatuses.has(candidate.id))) {
     const same = ours.find((candidate) => lower(candidate.name) === lower(status.name))
     const color = status.color && COLOR.test(status.color) ? status.color : null
-    statuses[status.id] = same ? { status: same.id } : { create: { name: statusName(status.name), category: guessCategory(status), color } }
+    statuses[status.id] = same
+      ? { status: same.id }
+      : { create: { name: statusName(status.name), category: guessCategory(status), color } }
   }
   const types: Record<string, OpenProjectTypeTarget> = {}
   for (const wp of source.workPackages) {
@@ -98,14 +114,23 @@ function checkStatusTarget(id: string, target: unknown, ours: Status[]): OpenPro
   const value = target as Record<string, unknown> | null
   if (value && typeof value.status === 'number') {
     if (!ours.some((status) => status.id === value.status)) {
-      throw new TaskError(`Status mapping for OpenProject status ${id}: there is no status ${value.status} here (see status_list)`)
+      throw new TaskError(
+        `Status mapping for OpenProject status ${id}: there is no status ${value.status} here (see status_list)`,
+      )
     }
     return { status: value.status }
   }
   const create = (value?.create ?? null) as Record<string, unknown> | null
-  if (create && typeof create.name === 'string' && create.name.trim() && STATUS_CATEGORIES.includes(create.category as StatusCategory)) {
+  if (
+    create &&
+    typeof create.name === 'string' &&
+    create.name.trim() &&
+    STATUS_CATEGORIES.includes(create.category as StatusCategory)
+  ) {
     if (create.name.replace(/\s+/g, ' ').trim().length > STATUS_NAME_MAX) {
-      throw new TaskError(`Status mapping for OpenProject status ${id}: a status name is at most ${STATUS_NAME_MAX} characters`)
+      throw new TaskError(
+        `Status mapping for OpenProject status ${id}: a status name is at most ${STATUS_NAME_MAX} characters`,
+      )
     }
     return {
       create: {
@@ -126,9 +151,15 @@ function checkPersonTarget(id: string, target: unknown, agents: AgentInfo[], peo
   }
   const value = target as Record<string, unknown>
   if (value?.kind === 'agent') {
-    const agent = agents.find((candidate) => candidate.id === value.id || (!value.id && typeof value.name === 'string' && lower(candidate.name) === lower(value.name)))
+    const agent = agents.find(
+      (candidate) =>
+        candidate.id === value.id ||
+        (!value.id && typeof value.name === 'string' && lower(candidate.name) === lower(value.name)),
+    )
     if (!agent) {
-      throw new TaskError(`People mapping for OpenProject user ${id}: no agent ${JSON.stringify(value.id ?? value.name)} (see assignee_list)`)
+      throw new TaskError(
+        `People mapping for OpenProject user ${id}: no agent ${JSON.stringify(value.id ?? value.name)} (see assignee_list)`,
+      )
     }
     return { kind: 'agent', id: agent.id, name: agent.name }
   }
@@ -136,7 +167,9 @@ function checkPersonTarget(id: string, target: unknown, agents: AgentInfo[], peo
     if (typeof value.id === 'string' && value.id) {
       const person = people.find((candidate) => candidate.id === value.id)
       if (!person) {
-        throw new TaskError(`People mapping for OpenProject user ${id}: no person with id "${value.id}" (see assignee_list)`)
+        throw new TaskError(
+          `People mapping for OpenProject user ${id}: no person with id "${value.id}" (see assignee_list)`,
+        )
       }
       return { kind: 'person', id: person.id, name: person.name }
     }
@@ -144,7 +177,9 @@ function checkPersonTarget(id: string, target: unknown, agents: AgentInfo[], peo
       return { kind: 'person', name: value.name.trim() }
     }
   }
-  throw new TaskError(`People mapping for OpenProject user ${id} must be null, {"kind": "agent", "id"} or {"kind": "person", "id" or "name"}`)
+  throw new TaskError(
+    `People mapping for OpenProject user ${id} must be null, {"kind": "agent", "id"} or {"kind": "person", "id" or "name"}`,
+  )
 }
 
 /**
@@ -159,7 +194,11 @@ export function resolveMapping(
   agents: AgentInfo[],
   people: PersonInfo[],
 ): OpenProjectMapping {
-  const result: OpenProjectMapping = { statuses: { ...suggested.statuses }, types: { ...suggested.types }, people: { ...suggested.people } }
+  const result: OpenProjectMapping = {
+    statuses: { ...suggested.statuses },
+    types: { ...suggested.types },
+    people: { ...suggested.people },
+  }
   for (const layer of layers) {
     if (!layer) {
       continue
@@ -174,7 +213,9 @@ export function resolveMapping(
         continue
       }
       if (target !== 'skip' && !TASK_TYPES.includes(target as TaskType)) {
-        throw new TaskError(`Type mapping for OpenProject type ${id} must be one of: ${[...TASK_TYPES, 'skip'].join(', ')}`)
+        throw new TaskError(
+          `Type mapping for OpenProject type ${id} must be one of: ${[...TASK_TYPES, 'skip'].join(', ')}`,
+        )
       }
       result.types[id] = target
     }
@@ -187,7 +228,11 @@ export function resolveMapping(
   return result
 }
 
-function countBy(items: SourceWorkPackage[], key: (wp: SourceWorkPackage) => string, name: (wp: SourceWorkPackage) => string): OpenProjectCount[] {
+function countBy(
+  items: SourceWorkPackage[],
+  key: (wp: SourceWorkPackage) => string,
+  name: (wp: SourceWorkPackage) => string,
+): OpenProjectCount[] {
   const counts = new Map<string, OpenProjectCount>()
   for (const wp of items) {
     const id = key(wp)
@@ -202,14 +247,26 @@ function countBy(items: SourceWorkPackage[], key: (wp: SourceWorkPackage) => str
 export function typeCounts(source: SourceData): OpenProjectCount[] {
   const order = source.types.map((type) => type.id)
   const rank = (id: string) => (order.includes(id) ? order.indexOf(id) : order.length)
-  return countBy(source.workPackages, (wp) => wp.typeId, (wp) => wp.typeName).sort((a, b) => rank(a.id) - rank(b.id))
+  return countBy(
+    source.workPackages,
+    (wp) => wp.typeId,
+    (wp) => wp.typeName,
+  ).sort((a, b) => rank(a.id) - rank(b.id))
 }
 
 /** Work packages per status, in OpenProject's status order. */
 export function statusCounts(source: SourceData): OpenProjectStatusCount[] {
   const byId = new Map(source.statuses.map((status) => [status.id, status]))
-  return countBy(source.workPackages, (wp) => wp.statusId, (wp) => wp.statusName)
-    .map((entry) => ({ ...entry, isClosed: byId.get(entry.id)?.isClosed ?? false, color: byId.get(entry.id)?.color ?? null }))
+  return countBy(
+    source.workPackages,
+    (wp) => wp.statusId,
+    (wp) => wp.statusName,
+  )
+    .map((entry) => ({
+      ...entry,
+      isClosed: byId.get(entry.id)?.isClosed ?? false,
+      color: byId.get(entry.id)?.color ?? null,
+    }))
     .sort((a, b) => (byId.get(a.id)?.position ?? 0) - (byId.get(b.id)?.position ?? 0))
 }
 
@@ -245,7 +302,10 @@ export function mapPriority(name: string | null): Priority {
  * single date, or a work package with only a start or only a finish, becomes a
  * one-day task on that date.
  */
-export function mapDates(wp: Pick<SourceWorkPackage, 'startDate' | 'dueDate' | 'date'>): { start: string | null; end: string | null } {
+export function mapDates(wp: Pick<SourceWorkPackage, 'startDate' | 'dueDate' | 'date'>): {
+  start: string | null
+  end: string | null
+} {
   const start = wp.startDate ?? wp.date ?? wp.dueDate
   const end = wp.dueDate ?? wp.date ?? wp.startDate
   if (!start || !end) {
@@ -281,7 +341,9 @@ export function pointAtCopies(text: string, base: string, copies: ReadonlyMap<st
   if (copies.size === 0 || !text.includes('attachments/')) {
     return text
   }
-  const address = new RegExp(`^(?:${escapeRegExp(base)})?(?:/api/v3/attachments/(\\d+)/content|/attachments/(\\d+)(?:/[^\\s)"'<>]*)?)$`)
+  const address = new RegExp(
+    `^(?:${escapeRegExp(base)})?(?:/api/v3/attachments/(\\d+)/content|/attachments/(\\d+)(?:/[^\\s)"'<>]*)?)$`,
+  )
   const copyOf = (url: string) => {
     const match = address.exec(url.trim())
     return match ? copies.get((match[1] ?? match[2]) as string) : undefined

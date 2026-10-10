@@ -6,9 +6,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { TaskAttachment as SectionAttachment, TaskAttachmentUpload } from '@/components/ui/tasks/task-attachments'
-
 import { ATTACHMENT_MAX_BYTES, type TaskAttachment } from '../../shared/attachments'
-import { type TasksApi, errorMessage } from '../lib/api'
+import { errorMessage, type TasksApi } from '../lib/api'
 import { useTasksLive } from '../lib/live'
 import { attachmentImageMarkdown } from './comment-images'
 import { attachmentTransport } from './transport'
@@ -96,7 +95,9 @@ export function useTaskAttachments(api: TasksApi, instanceId: string, taskKey: s
             files.current.delete(id)
             return
           }
-          setUploads((current) => current.map((upload) => (upload.id === id ? { ...upload, error: errorMessage(failure) } : upload)))
+          setUploads((current) =>
+            current.map((upload) => (upload.id === id ? { ...upload, error: errorMessage(failure) } : upload)),
+          )
         })
     },
     [api, load, taskKey, transport],

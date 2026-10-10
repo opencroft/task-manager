@@ -3,22 +3,20 @@
 
 import { randomUUID } from 'node:crypto'
 
+import type { ActionInputs } from '../../shared/action-inputs.ts'
 import {
   BOARD_FILTER_KEYS,
   type Board,
   type BoardColumn,
-  type BoardColumnInput,
   type BoardDetail,
   type BoardFilter,
-  type BoardRefInput,
   type BoardRestriction,
-  type BoardSaveInput,
   boardStatusIds,
   workflowFit,
 } from '../../shared/boards.ts'
 import { didYouMean } from '../closest-names.ts'
 import { transaction } from '../db.ts'
-import { type Scope, TaskError, listStatuses, listTasks, resolveStatus } from '../service.ts'
+import { listStatuses, listTasks, resolveStatus, type Scope, TaskError } from '../service.ts'
 import { checkFilter } from '../views/store.ts'
 import { listWorkflows } from '../workflows/store.ts'
 
@@ -77,13 +75,14 @@ function boardRows(scope: Scope): BoardRow[] {
 }
 
 /** The board `ref` names: an id, or a name in any case. */
-function resolveBoard(scope: Scope, ref: unknown): BoardRow {
-  const wanted = typeof ref === 'string' ? ref.trim() : ''
+function resolveBoard(scope: Scope, ref: string): BoardRow {
+  const wanted = ref.trim()
   if (!wanted) {
     throw new TaskError('Name a board by its id or name (board_list gives them)')
   }
   const rows = boardRows(scope)
-  const found = rows.find((row) => row.id === wanted) ?? rows.find((row) => row.name.toLowerCase() === wanted.toLowerCase())
+  const found =
+    rows.find((row) => row.id === wanted) ?? rows.find((row) => row.name.toLowerCase() === wanted.toLowerCase())
   if (!found) {
     const names = rows.map((row) => row.name)
     throw new TaskError(`No board "${wanted}".${didYouMean(wanted, names)} Boards: ${names.join(', ') || 'none yet'}`)
@@ -91,8 +90,8 @@ function resolveBoard(scope: Scope, ref: unknown): BoardRow {
   return found
 }
 
-function checkName(name: unknown): string {
-  const trimmed = typeof name === 'string' ? name.trim() : ''
+function checkName(name: string): string {
+  const trimmed = name.trim()
   if (!trimmed || trimmed.length > NAME_MAX) {
     throw new TaskError(`A board needs a name of 1–${NAME_MAX} characters`)
   }
@@ -104,19 +103,25 @@ function checkColumnName(name: unknown, index: number): string | null {
     return null
   }
   if (typeof name !== 'string' || name.trim().length > NAME_MAX) {
-    throw new TaskError(`Column ${index + 1}: a column name is text of at most ${NAME_MAX} characters, or null for its first status's`)
+    throw new TaskError(
+      `Column ${index + 1}: a column name is text of at most ${NAME_MAX} characters, or null for its first status's`,
+    )
   }
   return name.trim() || null
 }
 
-/** The columns as they will be stored: names cleaned, statuses resolved to ids, each status in one column only. */
-function checkColumns(scope: Scope, columns: unknown): Array<{ name: string | null; statusIds: number[] }> {
-  if (!Array.isArray(columns)) {
-    throw new TaskError('columns must be a list of {name?, statuses}')
-  }
+/**
+ * The columns as they will be stored: names cleaned, statuses resolved to ids,
+ * each status in one column only. A column's own fields are read here: the
+ * boundary only proves each is an object.
+ */
+function checkColumns(
+  scope: Scope,
+  columns: Array<Record<string, unknown>>,
+): Array<{ name: string | null; statusIds: number[] }> {
   const placed = new Map<number, number>()
-  return columns.map((column: BoardColumnInput, index) => {
-    if (column === null || typeof column !== 'object' || !Array.isArray(column.statuses)) {
+  return columns.map((column, index) => {
+    if (!Array.isArray(column.statuses)) {
       throw new TaskError(`Column ${index + 1} needs statuses: a list of status names or ids`)
     }
     // A column is its statuses: one with none would hold no task. (A status deleted later can still empty one.)
@@ -127,7 +132,9 @@ function checkColumns(scope: Scope, columns: unknown): Array<{ name: string | nu
       const status = resolveStatus(scope, ref)
       const other = placed.get(status.id)
       if (other !== undefined) {
-        throw new TaskError(`"${status.name}" is in column ${other + 1} and column ${index + 1}; a status sits in one column of a board`)
+        throw new TaskError(
+          `"${status.name}" is in column ${other + 1} and column ${index + 1}; a status sits in one column of a board`,
+        )
       }
       placed.set(status.id, index)
       return status.id
@@ -143,11 +150,17 @@ function assertNameFree(scope: Scope, name: string, except: string | null): void
   }
 }
 
-function writeColumns(scope: Scope, boardId: string, columns: Array<{ name: string | null; statusIds: number[] }>): void {
+function writeColumns(
+  scope: Scope,
+  boardId: string,
+  columns: Array<{ name: string | null; statusIds: number[] }>,
+): void {
   // Replacing the columns takes their statuses with them.
   scope.db.prepare('DELETE FROM board_column WHERE board_id = ?').run(boardId)
   const insertColumn = scope.db.prepare('INSERT INTO board_column (board_id, position, name) VALUES (?, ?, ?)')
-  const insertStatus = scope.db.prepare('INSERT INTO board_status (board_id, column_position, position, status_id) VALUES (?, ?, ?, ?)')
+  const insertStatus = scope.db.prepare(
+    'INSERT INTO board_status (board_id, column_position, position, status_id) VALUES (?, ?, ?, ?)',
+  )
   columns.forEach((column, position) => {
     insertColumn.run(boardId, position, column.name)
     column.statusIds.forEach((statusId, order) => {
@@ -160,12 +173,15 @@ export function listBoards(scope: Scope): Board[] {
   return boardRows(scope).map((row) => toBoard(scope, row))
 }
 
-export function getBoard(scope: Scope, input: BoardRefInput): BoardDetail {
+export function getBoard(scope: Scope, input: ActionInputs['board_get']): BoardDetail {
   const board = toBoard(scope, resolveBoard(scope, input.board))
-  return { ...board, workflowFit: workflowFit(boardStatusIds(board.columns), listWorkflows(scope.db), listStatuses(scope)) }
+  return {
+    ...board,
+    workflowFit: workflowFit(boardStatusIds(board.columns), listWorkflows(scope.db), listStatuses(scope)),
+  }
 }
 
-export function saveBoard(scope: Scope, input: BoardSaveInput, now: string): Board {
+export function saveBoard(scope: Scope, input: ActionInputs['board_save'], now: string): Board {
   const saved = transaction(scope.db, () => {
     const filter = (value: unknown) => {
       const checked = checkFilter(scope.db, value, BOARD_FILTER_KEYS)
@@ -202,7 +218,7 @@ export function saveBoard(scope: Scope, input: BoardSaveInput, now: string): Boa
   return toBoard(scope, scope.db.prepare('SELECT * FROM board WHERE id = ?').get(saved) as unknown as BoardRow)
 }
 
-export function deleteBoard(scope: Scope, input: BoardRefInput): { deleted: string } {
+export function deleteBoard(scope: Scope, input: ActionInputs['board_delete']): { deleted: string } {
   const row = resolveBoard(scope, input.board)
   scope.db.prepare('DELETE FROM board WHERE id = ?').run(row.id)
   scope.notify([], 'board')
@@ -210,10 +226,12 @@ export function deleteBoard(scope: Scope, input: BoardRefInput): { deleted: stri
 }
 
 /** What `task_list` with `board` narrows to: the board's statuses, and its filter. */
-export function boardRestriction(scope: Scope, ref: unknown): BoardRestriction {
+export function boardRestriction(scope: Scope, ref: string): BoardRestriction {
   const row = resolveBoard(scope, ref)
   const statusIds = (
-    scope.db.prepare('SELECT status_id FROM board_status WHERE board_id = ?').all(row.id) as Array<{ status_id: number }>
+    scope.db.prepare('SELECT status_id FROM board_status WHERE board_id = ?').all(row.id) as Array<{
+      status_id: number
+    }>
   ).map((placement) => placement.status_id)
   return { statusIds, filter: JSON.parse(row.filter) as BoardFilter }
 }

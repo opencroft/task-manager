@@ -64,7 +64,10 @@ export const viewMigrations: Migration[] = [
         db,
         (filter) =>
           filter.status
-            ? compactFilter({ ...filter, status: { include: ids(filter.status.include), exclude: ids(filter.status.exclude) } })
+            ? compactFilter({
+                ...filter,
+                status: { include: ids(filter.status.include), exclude: ids(filter.status.exclude) },
+              })
             : filter,
         ['saved_view'],
       )

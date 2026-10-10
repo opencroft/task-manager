@@ -8,7 +8,7 @@ import type { RelationType } from '../../shared/dependencies.ts'
 import type { OpenProjectRelationsResult, OpenProjectSkipped } from '../../shared/openproject.ts'
 import { transaction } from '../db.ts'
 import { addRelation, relationOf } from '../dependencies/store.ts'
-import { type Scope, TaskError, keyOf } from '../service.ts'
+import { keyOf, type Scope, TaskError } from '../service.ts'
 import type { SourceRelation } from './api.ts'
 import { sourceOf } from './store.ts'
 
@@ -40,19 +40,38 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
  * or among `incoming` (work package ids an import would bring), of a type we
  * have. A loop is only found on import, so this is at most what it adds.
  */
-export function countNewRelations(scope: Scope, base: string, relations: SourceRelation[], incoming: ReadonlySet<number>): number {
+export function countNewRelations(
+  scope: Scope,
+  base: string,
+  relations: SourceRelation[],
+  incoming: ReadonlySet<number>,
+): number {
   const origin = sourceOf(base)
   const here = new Set(
-    (scope.db.prepare('SELECT source_id FROM task_source WHERE source = ?').all(origin) as Array<{ source_id: string }>).map((row) => Number(row.source_id)),
+    (
+      scope.db.prepare('SELECT source_id FROM task_source WHERE source = ?').all(origin) as Array<{ source_id: string }>
+    ).map((row) => Number(row.source_id)),
   )
   const before = new Set(
-    (scope.db.prepare('SELECT source_id FROM relation_source WHERE source = ?').all(origin) as Array<{ source_id: string }>).map((row) => row.source_id),
+    (
+      scope.db.prepare('SELECT source_id FROM relation_source WHERE source = ?').all(origin) as Array<{
+        source_id: string
+      }>
+    ).map((row) => row.source_id),
   )
   const lands = (id: number) => here.has(id) || incoming.has(id)
-  return relations.filter((relation) => TYPE_OF[relation.type] && !before.has(String(relation.id)) && lands(relation.fromId) && lands(relation.toId)).length
+  return relations.filter(
+    (relation) =>
+      TYPE_OF[relation.type] && !before.has(String(relation.id)) && lands(relation.fromId) && lands(relation.toId),
+  ).length
 }
 
-export function applyRelations(scope: Scope, base: string, relations: SourceRelation[], confirm: boolean): OpenProjectRelationsResult {
+export function applyRelations(
+  scope: Scope,
+  base: string,
+  relations: SourceRelation[],
+  confirm: boolean,
+): OpenProjectRelationsResult {
   const origin = sourceOf(base)
   try {
     const result = transaction(scope.db, () => {
@@ -74,16 +93,27 @@ export function applyRelations(scope: Scope, base: string, relations: SourceRela
   }
 }
 
-function writeRelations(scope: Scope, origin: string, relations: SourceRelation[], confirm: boolean): OpenProjectRelationsResult {
+function writeRelations(
+  scope: Scope,
+  origin: string,
+  relations: SourceRelation[],
+  confirm: boolean,
+): OpenProjectRelationsResult {
   const tasks = new Map(
     (
       scope.db
-        .prepare('SELECT ts.source_id, t.id, t.number FROM task_source ts JOIN task t ON t.id = ts.task_id WHERE ts.source = ?')
+        .prepare(
+          'SELECT ts.source_id, t.id, t.number FROM task_source ts JOIN task t ON t.id = ts.task_id WHERE ts.source = ?',
+        )
         .all(origin) as Array<{ source_id: string; id: number; number: number }>
     ).map((row) => [row.source_id, { id: row.id, key: keyOf(scope, row.number) }]),
   )
   const importedBefore = new Set(
-    (scope.db.prepare('SELECT source_id FROM relation_source WHERE source = ?').all(origin) as Array<{ source_id: string }>).map((row) => row.source_id),
+    (
+      scope.db.prepare('SELECT source_id FROM relation_source WHERE source = ?').all(origin) as Array<{
+        source_id: string
+      }>
+    ).map((row) => row.source_id),
   )
   const remember = scope.db.prepare('INSERT INTO relation_source (source, source_id, imported_at) VALUES (?, ?, ?)')
   const now = new Date().toISOString()
@@ -127,7 +157,11 @@ function writeRelations(scope: Scope, origin: string, relations: SourceRelation[
       if (!(error instanceof TaskError)) {
         throw error
       }
-      skipped.push({ source: `${start.key} ${mapped.type} ${end.key}`, summary: `OpenProject relation ${relation.id}`, reason: error.message })
+      skipped.push({
+        source: `${start.key} ${mapped.type} ${end.key}`,
+        summary: `OpenProject relation ${relation.id}`,
+        reason: error.message,
+      })
       continue
     }
     remember.run(origin, String(relation.id), now)
@@ -140,7 +174,11 @@ function writeRelations(scope: Scope, origin: string, relations: SourceRelation[
     })
   }
   for (const [type, count] of unknownTypes) {
-    skipped.push({ source: 'Relations', summary: plural(count, `"${type}" relation`, `"${type}" relations`), reason: 'No such relation here' })
+    skipped.push({
+      source: 'Relations',
+      summary: plural(count, `"${type}" relation`, `"${type}" relations`),
+      reason: 'No such relation here',
+    })
   }
   return { imported: confirm, found, added, importedBefore: before, alreadyHere, skipped }
 }

@@ -3,13 +3,13 @@
 // `usePageShortcuts`, so no page binds keys of its own. It also owns the
 // command palette and the shortcuts dialog, and the selection the keys act on.
 
-import { legacy } from '@opencroft/client'
-import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 import {
   KeyboardShortcutsDialog,
-  TASK_MANAGER_SHORTCUTS,
   resolveShortcutPlatform,
+  TASK_MANAGER_SHORTCUTS,
 } from '@/components/ui/navigation/keyboard-shortcuts-dialog'
 import {
   TaskCommandPalette,
@@ -17,12 +17,11 @@ import {
   type TaskCommandPaletteView,
   type TaskCommandPaletteWorkflow,
 } from '@/components/ui/navigation/task-command-palette'
-
 import type { TaskSummary } from '../../shared/types'
 import { useElsewhereSearch } from '../lib/elsewhere'
-import { listAllTasks } from '../lib/task-list'
 import { useTasksLive } from '../lib/live'
 import { hrefFor, navigate, useTasksLocation } from '../lib/router'
+import { listAllTasks } from '../lib/task-list'
 import { workflowsApi } from '../workflows/api'
 import { chordOf, createKeyMatcher } from './key-sequences'
 import { useProject } from './project'
@@ -81,7 +80,10 @@ function useShortcutsContext(): ShortcutsContextValue {
 
 const PAGE_OF: Record<string, TaskCommandPalettePage> = {
   'go-my-work': 'my-work',
-  'go-tasks': 'tasks', 'go-board': 'board', 'go-timeline': 'timeline', 'go-workflows': 'workflows',
+  'go-tasks': 'tasks',
+  'go-board': 'board',
+  'go-timeline': 'timeline',
+  'go-workflows': 'workflows',
 }
 const VIEW_OF: Record<string, TaskCommandPaletteView> = { status: 'status', assignee: 'assignee', priority: 'priority' }
 const RECENT_LIMIT = 10
@@ -93,7 +95,9 @@ function isTypingTarget(target: EventTarget | null): boolean {
   }
   return (
     target.isContentEditable ||
-    target.closest('input, textarea, select, [role="textbox"], [role="combobox"], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]') !== null
+    target.closest(
+      'input, textarea, select, [role="textbox"], [role="combobox"], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]',
+    ) !== null
   )
 }
 
@@ -216,8 +220,10 @@ export function ShortcutsProvider({ children }: { children: ReactNode }) {
   const createTask = useCallback(
     async (summary: string) => {
       try {
-        const key = page.current?.createTask ? await page.current.createTask(summary) : (await api.task_create({ summary })).result.key
-        legacy.toast.success(`Created ${key}`, { action: { label: 'Open', onClick: () => openTask(key) } })
+        const key = page.current?.createTask
+          ? await page.current.createTask(summary)
+          : (await api.task_create({ summary })).result.key
+        toast.success(`Created ${key}`, { action: { label: 'Open', onClick: () => openTask(key) } })
       } catch (error) {
         fail(error)
       }
@@ -236,7 +242,8 @@ export function ShortcutsProvider({ children }: { children: ReactNode }) {
         return
       }
       const index = onScreen.findIndex((entry) => entry.key === selectedKey)
-      const next = index < 0 ? (step === 1 ? 0 : onScreen.length - 1) : Math.min(onScreen.length - 1, Math.max(0, index + step))
+      const next =
+        index < 0 ? (step === 1 ? 0 : onScreen.length - 1) : Math.min(onScreen.length - 1, Math.max(0, index + step))
       setSelectedKey(onScreen[next].key)
       onScreen[next].element.scrollIntoView({ block: 'nearest' })
     },
@@ -246,7 +253,9 @@ export function ShortcutsProvider({ children }: { children: ReactNode }) {
   const run = useCallback(
     (ids: string[]): boolean => {
       // One key can mean different things on a list and on a task's page (E, S, A, P, Esc).
-      const id = (taskKey && ids.find((candidate) => candidate.startsWith('details-'))) || ids.find((candidate) => !candidate.startsWith('details-'))
+      const id =
+        (taskKey && ids.find((candidate) => candidate.startsWith('details-'))) ||
+        ids.find((candidate) => !candidate.startsWith('details-'))
       const action = id?.replace(/^details-/, '')
       switch (action) {
         case 'command-palette':
@@ -378,7 +387,7 @@ export function ShortcutsProvider({ children }: { children: ReactNode }) {
 
   return (
     <ShortcutsContext.Provider value={context}>
-      <div ref={rootRef} className="contents">
+      <div ref={rootRef} className='contents'>
         {children}
       </div>
       <TaskCommandPalette
@@ -405,14 +414,19 @@ export function ShortcutsProvider({ children }: { children: ReactNode }) {
         onCreateTask={(summary) => void createTask(summary)}
         onNavigate={(target) => navigate(hrefFor([target]))}
         onChangeStatus={menu ? (status) => menu.onStatusChange?.(Number(status.id)) : undefined}
-        onChangeAssignee={menu ? (assignee) => menu.onAssigneeChange?.(assignee && { kind: assignee.kind, name: assignee.name, id: assignee.id }) : undefined}
+        onChangeAssignee={
+          menu
+            ? (assignee) =>
+                menu.onAssigneeChange?.(assignee && { kind: assignee.kind, name: assignee.name, id: assignee.id })
+            : undefined
+        }
         onChangePriority={menu?.onPriorityChange}
         onStartWorkflow={
           currentTask
             ? (workflow) =>
                 void workflowsApi(instanceId)
                   .workflow_start({ task: currentTask.key, workflow: workflow.id })
-                  .then(() => legacy.toast.success(`Started ${workflow.name} on ${currentTask.key}`))
+                  .then(() => toast.success(`Started ${workflow.name} on ${currentTask.key}`))
                   .catch(fail)
             : undefined
         }

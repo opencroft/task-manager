@@ -34,10 +34,18 @@ test('a task takes one version through update, with a history entry, and task_li
   assert.deepEqual(getTask(scope, a).version, { name: '1.0.0', state: 'planned' })
   await updateTask(scope, { key: b, version: 'v1.0.0' })
   await updateTask(scope, { key: a, version: null })
-  const entry = getTask(scope, a).activity.filter((item) => item.field === 'version').at(-1)
+  const entry = getTask(scope, a)
+    .activity.filter((item) => item.field === 'version')
+    .at(-1)
   assert.deepEqual({ from: entry?.from, to: entry?.to }, { from: '1.0.0', to: null })
-  assert.deepEqual(listTasks(scope, { version: ['1.0.0'] }).tasks.map((task) => task.key), [b])
-  assert.deepEqual(listTasks(scope, { version: ['none'] }).tasks.map((task) => task.key), [a])
+  assert.deepEqual(
+    listTasks(scope, { version: ['1.0.0'] }).tasks.map((task) => task.key),
+    [b],
+  )
+  assert.deepEqual(
+    listTasks(scope, { version: ['none'] }).tasks.map((task) => task.key),
+    [a],
+  )
   assert.throws(() => listTasks(scope, { version: ['9.9.9'] }), /No version "9.9.9"/)
 })
 
@@ -45,8 +53,10 @@ test('release dates the version, moves open tasks when asked, and returns notes 
   const scope = makeScope({ kind: 'person', name: 'Alice' })
   createVersion(scope, { name: '1.0.0', description: 'First cut' })
   createVersion(scope, { name: '1.1.0' })
-  const story = (await createTask(scope, { summary: 'Login', type: 'story', status: 'Done', version: '1.0.0' })).result.key
-  const bug = (await createTask(scope, { summary: 'Crash on save', type: 'bug', status: 'Done', version: '1.0.0' })).result.key
+  const story = (await createTask(scope, { summary: 'Login', type: 'story', status: 'Done', version: '1.0.0' })).result
+    .key
+  const bug = (await createTask(scope, { summary: 'Crash on save', type: 'bug', status: 'Done', version: '1.0.0' }))
+    .result.key
   const open = (await createTask(scope, { summary: 'Later', version: '1.0.0' })).result.key
   const { result } = releaseVersion(scope, { version: '1.0.0', date: '2026-09-26', moveOpenTo: '1.1.0' })
   assert.equal(result.version.state, 'released')
@@ -55,7 +65,17 @@ test('release dates the version, moves open tasks when asked, and returns notes 
   assert.deepEqual(getTask(scope, open).version, { name: '1.1.0', state: 'planned' })
   assert.equal(
     result.notes,
-    ['## 1.0.0 (2026-09-26)', '', 'First cut', '', '### Stories', `- ${story} Login`, '', '### Bugs', `- ${bug} Crash on save`].join('\n'),
+    [
+      '## 1.0.0 (2026-09-26)',
+      '',
+      'First cut',
+      '',
+      '### Stories',
+      `- ${story} Login`,
+      '',
+      '### Bugs',
+      `- ${bug} Crash on save`,
+    ].join('\n'),
   )
   assert.throws(() => releaseVersion(scope, { version: '1.0.0' }), /already released on 2026-09-26/)
 })
@@ -65,15 +85,29 @@ test('compact rows: a task names its version, a version row drops what is empty'
   const created = createVersion(scope, { name: '3.0.0', targetDate: '2026-10-01' }).result
   const task = (await createTask(scope, { summary: 'T', version: '3.0.0' })).result
   assert.equal(taskRow(task).version, '3.0.0')
-  assert.deepEqual(versionRow(listVersions(scope).versions[0] ?? created), { name: '3.0.0', state: 'planned', targetDate: '2026-10-01', open: 1 })
+  assert.deepEqual(versionRow(listVersions(scope).versions[0] ?? created), {
+    name: '3.0.0',
+    state: 'planned',
+    targetDate: '2026-10-01',
+    open: 1,
+  })
 })
 
 test('an archived version takes no more tasks; a rename follows into saved views and board filters', async () => {
   const scope = makeScope({ kind: 'person', name: 'Alice' })
   createVersion(scope, { name: '2.0.0' })
   const owner = { key: 'person:Alice', name: 'Alice' }
-  const view = saveView(scope.db, owner, { name: 'Two', page: 'tasks', filter: { version: ['2.0.0'] } }, new Date().toISOString())
-  const board = saveBoard(scope, { name: 'Not two', filter: { version: { exclude: ['2.0.0'] } } }, new Date().toISOString())
+  const view = saveView(
+    scope.db,
+    owner,
+    { name: 'Two', page: 'tasks', filter: { version: ['2.0.0'] } },
+    new Date().toISOString(),
+  )
+  const board = saveBoard(
+    scope,
+    { name: 'Not two', filter: { version: { exclude: ['2.0.0'] } } },
+    new Date().toISOString(),
+  )
   updateVersion(scope, { version: '2.0.0', name: '2.1.0' })
   const task = (await createTask(scope, { summary: 'X' })).result.key
   const saved = scope.db.prepare('SELECT filter FROM saved_view WHERE id = ?').get(view.id) as { filter: string }

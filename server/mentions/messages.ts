@@ -35,10 +35,7 @@ function answerHowTo(input: MentionMessageInput): string {
 
 export function mentionOpeningMessage(input: MentionMessageInput): string {
   const { task } = input
-  const facts = [
-    `**${task.key}: ${task.summary}**`,
-    `Status: ${task.status}. Assignee: ${task.assignee ?? 'nobody'}.`,
-  ]
+  const facts = [`**${task.key}: ${task.summary}**`, `Status: ${task.status}. Assignee: ${task.assignee ?? 'nobody'}.`]
   if (task.description.trim()) {
     facts.push(`Description:\n${quote(task.description)}`)
   }

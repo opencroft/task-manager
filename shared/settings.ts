@@ -2,10 +2,22 @@
 // set (counts, colours, rename, merge, delete). Statuses, workflows and the
 // space's chat keep their own actions; the settings page gathers them.
 
+import type { ActionInputs } from './action-inputs.ts'
 import type { MutationResult } from './types.ts'
 
 /** A label's colour: a named palette entry, so every chip stays readable in light and dark. */
-export const LABEL_COLORS = ['gray', 'red', 'orange', 'amber', 'green', 'teal', 'sky', 'blue', 'violet', 'pink'] as const
+export const LABEL_COLORS = [
+  'gray',
+  'red',
+  'orange',
+  'amber',
+  'green',
+  'teal',
+  'sky',
+  'blue',
+  'violet',
+  'pink',
+] as const
 export type LabelColor = (typeof LABEL_COLORS)[number]
 
 /** One label of the project. Labels are plain strings on tasks, so the name is the identity. */
@@ -35,12 +47,12 @@ export interface LabelChange {
 }
 
 export interface SettingsActionMap {
-  project_info: { input: Record<string, never>; output: ProjectInfo }
-  label_overview: { input: Record<string, never>; output: { labels: ProjectLabel[] } }
-  label_rename: { input: { label: string; to: string }; output: MutationResult<LabelChange> }
-  label_merge: { input: { label: string; into: string }; output: MutationResult<LabelChange> }
-  label_delete: { input: { label: string }; output: MutationResult<LabelChange> }
-  label_color: { input: { label: string; color: LabelColor | null }; output: MutationResult<LabelChange> }
+  project_info: { input: ActionInputs['project_info']; output: ProjectInfo }
+  label_overview: { input: ActionInputs['label_overview']; output: { labels: ProjectLabel[] } }
+  label_rename: { input: ActionInputs['label_rename']; output: MutationResult<LabelChange> }
+  label_merge: { input: ActionInputs['label_merge']; output: MutationResult<LabelChange> }
+  label_delete: { input: ActionInputs['label_delete']; output: MutationResult<LabelChange> }
+  label_color: { input: ActionInputs['label_color']; output: MutationResult<LabelChange> }
 }
 
 export type SettingsActionId = keyof SettingsActionMap

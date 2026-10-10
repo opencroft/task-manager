@@ -3,20 +3,19 @@
 // for the same answer. The kit's `my-work-view` renders it; this file feeds it
 // and keeps it fresh.
 
-import { legacy } from '@opencroft/client'
 import { ExternalLink, Link2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 import { type MyWorkScope, type MyWorkStep, type MyWorkTask, MyWorkView } from '@/components/ui/tasks/my-work-view'
-
 import type { MyWorkResult } from '../../shared/my-work'
 import type { TaskSummary } from '../../shared/types'
 import { useProject } from '../app/project'
 import { usePageShortcuts } from '../app/shortcuts'
 import { isElsewhere, openTaskIn, taskHrefIn } from '../app/task-opener'
 import { inboxRowMenu, openInbox, useInboxLive } from '../inbox/project-inbox'
-import { assigneeInput } from '../lib/assignees'
 import { errorMessage } from '../lib/api'
+import { assigneeInput } from '../lib/assignees'
 import { useTasksLive } from '../lib/live'
 import { absoluteLink } from '../lib/router'
 
@@ -99,7 +98,10 @@ export function MyWorkPage() {
   useTasksLive(watched, () => void load(), refreshMs)
   useInboxLive(watched, () => void load(), refreshMs)
 
-  const statusOrder = useMemo(() => [...statuses].sort((a, b) => a.position - b.position).map((s) => s.name), [statuses])
+  const statusOrder = useMemo(
+    () => [...statuses].sort((a, b) => a.position - b.position).map((s) => s.name),
+    [statuses],
+  )
 
   const create = useCallback(
     async (summary: string) => {
@@ -113,7 +115,7 @@ export function MyWorkPage() {
   )
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col p-3 sm:p-4">
+    <div className='mx-auto flex w-full max-w-6xl flex-col p-3 sm:p-4'>
       <MyWorkView
         viewer={viewer ?? { kind: 'person', name: 'You' }}
         data={data}
@@ -129,7 +131,13 @@ export function MyWorkPage() {
         onCreate={viewer ? create : undefined}
         statusOrder={statusOrder}
         stepMenu={(step: MyWorkStep) => [
-          { id: 'open', label: 'Open task', icon: ExternalLink, group: 'open', onSelect: () => openTaskIn(step.task.key, step.project) },
+          {
+            id: 'open',
+            label: 'Open task',
+            icon: ExternalLink,
+            group: 'open',
+            onSelect: () => openTaskIn(step.task.key, step.project),
+          },
           step.sessionHref && {
             id: 'thread',
             label: 'Open the thread',
@@ -145,12 +153,14 @@ export function MyWorkPage() {
             onSelect: () =>
               void navigator.clipboard
                 .writeText(absoluteLink(taskHrefIn(step.task.key, step.project)))
-                .then(() => legacy.toast.success(`Copied link to ${step.task.key}`))
-                .catch(() => legacy.toast.error('Copying is not allowed here')),
+                .then(() => toast.success(`Copied link to ${step.task.key}`))
+                .catch(() => toast.error('Copying is not allowed here')),
           },
         ]}
         // Read, unread and mute go to the inbox of the App the change is in; the host takes its address as well as its id.
-        recentMenu={(n) => inboxRowMenu((isElsewhere(n.project) && n.project?.app) || instanceId, n, (key) => openTaskIn(key, n.project))}
+        recentMenu={(n) =>
+          inboxRowMenu((isElsewhere(n.project) && n.project?.app) || instanceId, n, (key) => openTaskIn(key, n.project))
+        }
         onShowInbox={() => openInbox(instanceId)}
       />
     </div>

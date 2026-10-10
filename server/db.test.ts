@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 
-import { type Migration, coreMigrations, migrate } from './db.ts'
+import { coreMigrations, type Migration, migrate } from './db.ts'
 
 function fresh(): DatabaseSync {
   const db = new DatabaseSync(':memory:')
@@ -16,7 +16,10 @@ test('migrate applies core migrations once and records them', () => {
   assert.deepEqual(migrate(db, coreMigrations), [])
   const statuses = db.prepare('SELECT name, category FROM status ORDER BY position').all()
   assert.equal(statuses.length, 5)
-  assert.equal((db.prepare("SELECT value FROM project_meta WHERE key = 'next_number'").get() as { value: string }).value, '1')
+  assert.equal(
+    (db.prepare("SELECT value FROM project_meta WHERE key = 'next_number'").get() as { value: string }).value,
+    '1',
+  )
 })
 
 test('a failing migration rolls back and is not recorded', () => {
@@ -54,7 +57,8 @@ test('fts index follows inserts, updates and cascaded deletes', () => {
   )
   const parent = insert.run(1, 'Parent about kanban', null).lastInsertRowid
   insert.run(2, 'Child about timeline', parent)
-  const search = (q: string) => (db.prepare('SELECT count(*) AS n FROM task_fts WHERE task_fts MATCH ?').get(q) as { n: number }).n
+  const search = (q: string) =>
+    (db.prepare('SELECT count(*) AS n FROM task_fts WHERE task_fts MATCH ?').get(q) as { n: number }).n
   assert.equal(search('"imeli"'), 1)
   db.prepare("UPDATE task SET summary = 'Child about board' WHERE number = 2").run()
   assert.equal(search('"imeli"'), 0)
@@ -76,7 +80,10 @@ test('an open instance database picks up migrations added after it was opened', 
   workflowMigrations.push(added)
   try {
     assert.equal(instanceDb('late-migration', dir), db)
-    assert.equal((db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE name = 'late_table'").get() as { n: number }).n, 1)
+    assert.equal(
+      (db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE name = 'late_table'").get() as { n: number }).n,
+      1,
+    )
   } finally {
     workflowMigrations.splice(workflowMigrations.indexOf(added), 1)
     closeInstanceDb('late-migration')

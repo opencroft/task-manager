@@ -4,8 +4,8 @@
 // UI renders from, so the UI asks for those.
 
 import type { TaskNotification } from './inbox.ts'
-import type { RunState, RunStepState, TransitionGate } from './workflows.ts'
 import type { CalendarDate, Priority, TaskKey, TaskType } from './types.ts'
+import type { RunState, RunStepState, TransitionGate } from './workflows.ts'
 
 /** How much of each record an action returns. */
 export type Detail = 'compact' | 'full'

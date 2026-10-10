@@ -2,28 +2,34 @@
 // sorting and the table's columns kept in the URL (so a filtered view is a
 // link), live refresh, and inline create at the end of the list.
 
-import { AppToolbar, legacy } from '@opencroft/client'
+import { AppToolbar } from '@opencroft/client/app'
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, EyeOff, Rows3 } from 'lucide-react'
 import { type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 import { TaskManagerToolbar } from '@/components/ui/navigation/task-manager-toolbar'
 import { TaskManagerEmpty } from '@/components/ui/states/task-manager-empty'
 import { TaskManagerError } from '@/components/ui/states/task-manager-error'
 import { TaskManagerSkeleton } from '@/components/ui/states/task-manager-skeleton'
+import type { ItemMenuEntries } from '@/components/ui/tasks/item-menu'
 import { TaskAssignee } from '@/components/ui/tasks/task-assignee'
 import { TaskBulkBar } from '@/components/ui/tasks/task-bulk-bar'
 import { TaskColumnPicker } from '@/components/ui/tasks/task-column-picker'
 import { TaskElsewhereList } from '@/components/ui/tasks/task-elsewhere-list'
-import type { ItemMenuEntries } from '@/components/ui/tasks/item-menu'
 import { TaskFilterBar } from '@/components/ui/tasks/task-filter-bar'
 import { TaskInlineCreate } from '@/components/ui/tasks/task-inline-create'
-import { TASK_PRIORITIES, TaskPriorityIcon } from '@/components/ui/tasks/task-priority-icon'
 import { taskFieldEntries } from '@/components/ui/tasks/task-menu'
+import { TASK_PRIORITIES, TaskPriorityIcon } from '@/components/ui/tasks/task-priority-icon'
 import { TaskSavedViews } from '@/components/ui/tasks/task-saved-views'
 import { TaskStatusBadge } from '@/components/ui/tasks/task-status-badge'
-import { TASK_TABLE_HEADS, TaskTable, type TaskTableColumn, type TaskTableRow, type TaskTableSort } from '@/components/ui/tasks/task-table'
+import {
+  TASK_TABLE_HEADS,
+  TaskTable,
+  type TaskTableColumn,
+  type TaskTableRow,
+  type TaskTableSort,
+} from '@/components/ui/tasks/task-table'
 import { TASK_TYPES, TaskTypeIcon } from '@/components/ui/tasks/task-type-icon'
-
 import type { TaskListInput, TaskParent, TaskSummary } from '../../shared/types'
 import { DEFAULT_TASK_COLUMNS, REQUIRED_TASK_COLUMNS, type TaskColumn } from '../../shared/views'
 import { PageScrollerContext } from '../app/page-scroll'
@@ -37,8 +43,8 @@ import { useTasksLive } from '../lib/live'
 import { hrefFor, navigate, useTasksLocation } from '../lib/router'
 import { taskFilterDefs } from '../lib/task-filters'
 import { keepUnchanged, listAllTasks } from '../lib/task-list'
-import { useBulkActions } from './use-bulk-actions'
 import { columnsParam } from './task-columns'
+import { useBulkActions } from './use-bulk-actions'
 import { useSavedViews } from './use-saved-views'
 import { sortParam } from './view-state'
 
@@ -50,7 +56,12 @@ const NO_TASKS: TaskSummary[] = []
 
 const GROUPS = ['status', 'assignee', 'priority', 'type'] as const
 type GroupBy = (typeof GROUPS)[number]
-const GROUP_LABELS: Record<GroupBy, string> = { status: 'Status', assignee: 'Assignee', priority: 'Priority', type: 'Type' }
+const GROUP_LABELS: Record<GroupBy, string> = {
+  status: 'Status',
+  assignee: 'Assignee',
+  priority: 'Priority',
+  type: 'Type',
+}
 
 /**
  * The current URL's view state: what the page shows, read against the shown
@@ -66,7 +77,11 @@ function useViewState() {
   const { current, base } = savedViews
   const query = current.filter.query ?? ''
   const values = useMemo(
-    () => Object.fromEntries(FILTER_IDS.map((id) => [id, selectionOf(current.filter[id])])) as Record<FilterId, ReturnType<typeof selectionOf>>,
+    () =>
+      Object.fromEntries(FILTER_IDS.map((id) => [id, selectionOf(current.filter[id])])) as Record<
+        FilterId,
+        ReturnType<typeof selectionOf>
+      >,
     [current.filter],
   )
   const groupParam = location.query.get('group')
@@ -113,7 +128,9 @@ export function TasksPage() {
       return
     }
     const shown = new Set(tasks.map((task) => task.key))
-    setSelection((current) => (current.every((key) => shown.has(key)) ? current : current.filter((key) => shown.has(key))))
+    setSelection((current) =>
+      current.every((key) => shown.has(key)) ? current : current.filter((key) => shown.has(key)),
+    )
   }, [tasks])
   const [loadError, setLoadError] = useState<string | null>(null)
   // Whether anything has loaded yet: a failing first load shows the page's error state, a later one a toast.
@@ -208,7 +225,13 @@ export function TasksPage() {
         group: 'change',
         entries: [
           { id: 'asc', label: 'Ascending', icon: ArrowUp, checked: active === 'asc', onSelect: () => sortTo('asc') },
-          { id: 'desc', label: 'Descending', icon: ArrowDown, checked: active === 'desc', onSelect: () => sortTo('desc') },
+          {
+            id: 'desc',
+            label: 'Descending',
+            icon: ArrowDown,
+            checked: active === 'desc',
+            onSelect: () => sortTo('desc'),
+          },
           { id: 'none', label: 'List order', checked: active === null, onSelect: () => sortTo(null) },
         ],
       },
@@ -219,11 +242,28 @@ export function TasksPage() {
         group: 'change',
         entries: [
           { id: 'none', label: 'No grouping', checked: group === null, onSelect: () => write({ group: null }) },
-          ...GROUPS.map((by) => ({ id: by, label: GROUP_LABELS[by], checked: group === by, onSelect: () => write({ group: by }) })),
+          ...GROUPS.map((by) => ({
+            id: by,
+            label: GROUP_LABELS[by],
+            checked: group === by,
+            onSelect: () => write({ group: by }),
+          })),
         ],
       },
-      at > 0 && { id: 'left', label: 'Move left', icon: ArrowLeft, group: 'act', onSelect: () => moveColumn(column, -1) },
-      at < columns.length - 1 && { id: 'right', label: 'Move right', icon: ArrowRight, group: 'act', onSelect: () => moveColumn(column, 1) },
+      at > 0 && {
+        id: 'left',
+        label: 'Move left',
+        icon: ArrowLeft,
+        group: 'act',
+        onSelect: () => moveColumn(column, -1),
+      },
+      at < columns.length - 1 && {
+        id: 'right',
+        label: 'Move right',
+        icon: ArrowRight,
+        group: 'act',
+        onSelect: () => moveColumn(column, 1),
+      },
       !REQUIRED_TASK_COLUMNS.includes(column) && {
         id: 'hide',
         label: `Hide ${TASK_TABLE_HEADS[column].label}`,
@@ -237,7 +277,9 @@ export function TasksPage() {
   // Status, assignee and priority cells change in place; one function for the table's life.
   const cellMenu = useCallback(
     (row: TaskTableRow, column: TaskTableColumn): ItemMenuEntries =>
-      column === 'status' || column === 'assignee' || column === 'priority' ? taskFieldEntries(menuFor(row as TaskSummary), column) : [],
+      column === 'status' || column === 'assignee' || column === 'priority'
+        ? taskFieldEntries(menuFor(row as TaskSummary), column)
+        : [],
     [menuFor],
   )
 
@@ -253,17 +295,28 @@ export function TasksPage() {
         case 'status':
           return {
             id: String(row.status.id),
-            label: <TaskStatusBadge name={row.status.name} category={row.status.category} color={row.status.color} size="sm" />,
+            label: (
+              <TaskStatusBadge
+                name={row.status.name}
+                category={row.status.category}
+                color={row.status.color}
+                size='sm'
+              />
+            ),
             rank: statusIndex.get(row.status.id) ?? 0,
           }
         case 'assignee':
           return {
             id: row.assignee ? `${row.assignee.kind}:${row.assignee.name}` : 'none',
-            label: <TaskAssignee assignee={row.assignee} withName size="sm" />,
+            label: <TaskAssignee assignee={row.assignee} withName size='sm' />,
             rank: row.assignee ? row.assignee.name.toLowerCase() : '\uffff',
           }
         case 'priority':
-          return { id: row.priority, label: <TaskPriorityIcon priority={row.priority} withLabel />, rank: TASK_PRIORITIES.indexOf(row.priority) }
+          return {
+            id: row.priority,
+            label: <TaskPriorityIcon priority={row.priority} withLabel />,
+            rank: TASK_PRIORITIES.indexOf(row.priority),
+          }
         case 'type':
           return { id: row.type, label: <TaskTypeIcon type={row.type} withLabel />, rank: TASK_TYPES.indexOf(row.type) }
       }
@@ -299,7 +352,7 @@ export function TasksPage() {
   const create = async (summary: string) => {
     const { result } = await api.task_create({ summary, parent: parentFilter })
     if (filtered && !tasks?.some((task) => task.key === result.key)) {
-      legacy.toast.success(`Created ${result.key}`, {
+      toast.success(`Created ${result.key}`, {
         description: 'It is hidden by the current filters.',
         action: { label: 'Open', onClick: () => openTask(result.key) },
       })
@@ -317,30 +370,30 @@ export function TasksPage() {
         }}
       />
     ) : (
-      <TaskManagerSkeleton page="tasks" />
+      <TaskManagerSkeleton page='tasks' />
     )
   }
 
   // A project with no tasks at all: the first screen, with the create field open.
   if (tasks.length === 0 && !filtered) {
-    return <TaskManagerEmpty kind="no-tasks" onCreateTask={create} />
+    return <TaskManagerEmpty kind='no-tasks' onCreateTask={create} />
   }
 
   return (
     // Fills the pane: the table takes the height left and scrolls its rows inside it, heads and create row staying put.
-    <div className="flex min-h-0 flex-1 flex-col gap-3 p-3 sm:p-4">
+    <div className='flex min-h-0 flex-1 flex-col gap-3 p-3 sm:p-4'>
       {/* The filter panel sits in the host's toolbar. */}
       <AppToolbar>
         <TaskManagerToolbar
-          label="Tasks controls"
+          label='Tasks controls'
           end={
-            <span className="text-xs text-muted-foreground tabular-nums">
+            <span className='text-xs text-muted-foreground tabular-nums'>
               {`${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'}`}
             </span>
           }
         >
           <TaskFilterBar
-            layout="row"
+            layout='row'
             query={searchDraft}
             onQueryChange={setSearchDraft}
             searchRef={searchRef}
@@ -351,7 +404,12 @@ export function TasksPage() {
           >
             <TaskSavedViews {...savedViews.picker} />
           </TaskFilterBar>
-          <TaskColumnPicker columns={columns} onColumnsChange={setColumns} required={REQUIRED_TASK_COLUMNS} defaultColumns={DEFAULT_TASK_COLUMNS} />
+          <TaskColumnPicker
+            columns={columns}
+            onColumnsChange={setColumns}
+            required={REQUIRED_TASK_COLUMNS}
+            defaultColumns={DEFAULT_TASK_COLUMNS}
+          />
         </TaskManagerToolbar>
       </AppToolbar>
       {query ? (
@@ -365,27 +423,27 @@ export function TasksPage() {
           }}
         />
       ) : null}
-      <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border">
-          <TaskTable
-            scrollRef={pageScroller}
-            rows={rows}
-            columns={columns}
-            sort={sort}
-            selectedKey={selectedKey}
-            selection={selection}
-            onSelectionChange={setSelection}
-            onSortChange={(next) => writeSort(next ? `${next.field}.${next.dir}` : '')}
-            onOpen={openTask}
-            hrefFor={taskHref}
-            menuFor={rowMenu}
-            headerMenu={headerMenu}
-            cellMenu={cellMenu}
-            groupOf={groupOf}
-            empty={<TaskManagerEmpty kind="no-results" size="compact" onClearFilters={clearFilters} />}
-            footer={<TaskInlineCreate onCreate={create} />}
-          />
-        </div>
-      <TaskBulkBar {...bulk} className="sticky bottom-3" />
+      <div className='flex min-h-0 flex-col overflow-hidden rounded-lg border'>
+        <TaskTable
+          scrollRef={pageScroller}
+          rows={rows}
+          columns={columns}
+          sort={sort}
+          selectedKey={selectedKey}
+          selection={selection}
+          onSelectionChange={setSelection}
+          onSortChange={(next) => writeSort(next ? `${next.field}.${next.dir}` : '')}
+          onOpen={openTask}
+          hrefFor={taskHref}
+          menuFor={rowMenu}
+          headerMenu={headerMenu}
+          cellMenu={cellMenu}
+          groupOf={groupOf}
+          empty={<TaskManagerEmpty kind='no-results' size='compact' onClearFilters={clearFilters} />}
+          footer={<TaskInlineCreate onCreate={create} />}
+        />
+      </div>
+      <TaskBulkBar {...bulk} className='sticky bottom-3' />
     </div>
   )
 }

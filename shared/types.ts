@@ -1,10 +1,11 @@
 // The task manager's shared contract: the shapes the server
-// stores and returns, the inputs every action takes, and the live-refresh
+// stores and returns, the actions the pages call, and the live-refresh
 // payload. Isomorphic and free of runtime imports, so the server, the client
 // and every page (Tasks, Timeline, Board, Workflows) read the same definitions.
 
+import type { ActionInputs } from './action-inputs.ts'
 import type { CommentRow } from './compact.ts'
-import type { FieldFilterInput } from './filters.ts'
+import type { FieldFilterInput, FieldFilterList } from './filters.ts'
 import type { ProjectRef, ProjectScope, ProjectsRead } from './projects.ts'
 
 /** `<project id>-<number>`, e.g. `TASK-12`. Numbers are never reused within a project. */
@@ -193,28 +194,30 @@ export type TaskSortField =
   | 'createdAt'
   | 'updatedAt'
 
-export interface TaskSort {
+/** A type rather than an interface, so it is assignable to the `Record<string, unknown>` of `task_list`'s generated input. */
+export type TaskSort = {
   field: TaskSortField
   dir: 'asc' | 'desc'
 }
 
 /**
- * The filters combine with AND. Each list-valued one is a `FieldFilterInput`:
+ * The filters combine with AND. Each list-valued one is a `FieldFilterList`:
  * a plain list matches any of its values, and `{ include, exclude }` also
- * hides a task with any excluded value, whatever it includes.
+ * hides a task with any excluded value, whatever it includes. `parent` also
+ * takes a single key.
  */
 export interface TaskListInput {
   /** Full-text substring search over key, summary and description. */
   query?: string
-  status?: FieldFilterInput<StatusRef>
-  statusCategory?: FieldFilterInput<StatusCategory>
+  status?: FieldFilterList<StatusRef>
+  statusCategory?: FieldFilterList<StatusCategory>
   /** Assignee names; `'me'` is the caller, `'none'` matches unassigned. */
-  assignee?: FieldFilterInput<string>
-  type?: FieldFilterInput<TaskType>
-  priority?: FieldFilterInput<Priority>
-  label?: FieldFilterInput<string>
+  assignee?: FieldFilterList<string>
+  type?: FieldFilterList<TaskType>
+  priority?: FieldFilterList<Priority>
+  label?: FieldFilterList<string>
   /** Version names; `'none'` matches tasks in no version. */
-  version?: FieldFilterInput<string>
+  version?: FieldFilterList<string>
   /** Direct children of these keys; `'none'` matches top-level tasks. */
   parent?: FieldFilterInput<TaskKey | 'none'>
   /** true: only tasks with dates; false: only tasks without. */
@@ -248,20 +251,6 @@ export interface TaskListResult {
 export interface TaskParent {
   key: TaskKey
   summary: string
-}
-
-export interface TaskGetInput {
-  key: TaskKey
-  /** How many of the latest comments the compact answer holds, 1–50. Default 5. */
-  commentsLimit?: number
-}
-
-export interface TaskCommentsInput {
-  key: TaskKey
-  /** The `next` of the page before: the comments older than that page. Omitted: the newest. */
-  before?: string
-  /** 1–50. Default 10. */
-  limit?: number
 }
 
 /** One page of a task's comments, newest first. */
@@ -311,66 +300,6 @@ export interface TaskUpdateInput {
   endDate?: CalendarDate | null
 }
 
-export interface TaskChangeStatusInput {
-  key: TaskKey
-  status: StatusRef
-  /** Optional markdown comment recorded with the transition. */
-  comment?: string
-}
-
-export interface TaskMoveInput extends Position {
-  key: TaskKey
-  /** New parent; null makes it top-level; omitted keeps the current parent. */
-  parent?: TaskKey | null
-}
-
-export interface TaskDeleteInput {
-  key: TaskKey
-  /** Required when the task has subtasks; deletes the whole subtree. */
-  withSubtasks?: boolean
-}
-
-export interface TaskCommentInput {
-  key: TaskKey
-  body: string
-}
-
-export interface TaskCommentUpdateInput {
-  key: TaskKey
-  /** The comment's id, from `task_get`. */
-  id: number
-  body: string
-}
-
-export interface TaskCommentDeleteInput {
-  key: TaskKey
-  id: number
-}
-
-export interface StatusCreateInput {
-  name: string
-  category: StatusCategory
-  color?: string | null
-}
-
-export interface StatusUpdateInput {
-  status: StatusRef
-  name?: string
-  category?: StatusCategory
-  color?: string | null
-}
-
-export interface StatusReorderInput {
-  /** Every status, by id or name, in the new order. */
-  order: StatusRef[]
-}
-
-export interface StatusDeleteInput {
-  status: StatusRef
-  /** Tasks in the deleted status move here. */
-  moveTo: StatusRef
-}
-
 export interface AssigneeOption {
   assignee: Assignee
   /** For agents: the space the agent node lives in, when known. */
@@ -395,27 +324,32 @@ export interface MutationResult<T> {
 
 // ─── Actions ───────────────────────────────────────────────────────────────
 
+// Each action map's input is the action's generated `ActionInputs` entry,
+// unless a page builds a nested shape the schema leaves to the handler. That
+// input stays a hand type, which must still be assignable to the entry: the
+// typed client the pages call through refuses to compile otherwise.
+
 export interface TasksActionMap {
   task_list: { input: TaskListInput; output: TaskListResult }
-  task_get: { input: TaskGetInput; output: Task }
-  task_comments: { input: TaskCommentsInput; output: TaskCommentsResult }
+  task_get: { input: ActionInputs['task_get']; output: Task }
+  task_comments: { input: ActionInputs['task_comments']; output: TaskCommentsResult }
   task_create: { input: TaskCreateInput; output: MutationResult<Task> }
   task_update: { input: TaskUpdateInput; output: MutationResult<Task> }
-  task_change_status: { input: TaskChangeStatusInput; output: MutationResult<Task> }
-  task_move: { input: TaskMoveInput; output: MutationResult<TaskSummary> }
-  task_delete: { input: TaskDeleteInput; output: MutationResult<{ deleted: TaskKey[] }> }
-  task_comment: { input: TaskCommentInput; output: MutationResult<Comment> }
-  task_comment_update: { input: TaskCommentUpdateInput; output: MutationResult<Comment> }
-  task_comment_delete: { input: TaskCommentDeleteInput; output: MutationResult<{ deleted: number }> }
-  status_list: { input: Record<string, never>; output: Status[] }
-  status_create: { input: StatusCreateInput; output: MutationResult<Status> }
-  status_update: { input: StatusUpdateInput; output: MutationResult<Status> }
-  status_reorder: { input: StatusReorderInput; output: MutationResult<Status[]> }
-  status_delete: { input: StatusDeleteInput; output: MutationResult<{ moved: number }> }
-  assignee_list: { input: Record<string, never>; output: AssigneeOption[] }
-  avatar_list: { input: Record<string, never>; output: PersonAvatar[] }
-  label_list: { input: Record<string, never>; output: string[] }
-  task_parents: { input: Record<string, never>; output: TaskParent[] }
+  task_change_status: { input: ActionInputs['task_change_status']; output: MutationResult<Task> }
+  task_move: { input: ActionInputs['task_move']; output: MutationResult<TaskSummary> }
+  task_delete: { input: ActionInputs['task_delete']; output: MutationResult<{ deleted: TaskKey[] }> }
+  task_comment: { input: ActionInputs['task_comment']; output: MutationResult<Comment> }
+  task_comment_update: { input: ActionInputs['task_comment_update']; output: MutationResult<Comment> }
+  task_comment_delete: { input: ActionInputs['task_comment_delete']; output: MutationResult<{ deleted: number }> }
+  status_list: { input: ActionInputs['status_list']; output: Status[] }
+  status_create: { input: ActionInputs['status_create']; output: MutationResult<Status> }
+  status_update: { input: ActionInputs['status_update']; output: MutationResult<Status> }
+  status_reorder: { input: ActionInputs['status_reorder']; output: MutationResult<Status[]> }
+  status_delete: { input: ActionInputs['status_delete']; output: MutationResult<{ moved: number }> }
+  assignee_list: { input: ActionInputs['assignee_list']; output: AssigneeOption[] }
+  avatar_list: { input: ActionInputs['avatar_list']; output: PersonAvatar[] }
+  label_list: { input: ActionInputs['label_list']; output: string[] }
+  task_parents: { input: ActionInputs['task_parents']; output: TaskParent[] }
 }
 
 export type TasksActionId = keyof TasksActionMap

@@ -39,8 +39,8 @@ function setup() {
     ),
     NOW,
   )
-  const dev = wf.steps[0]!
-  const review = wf.steps[1]!
+  const dev = wf.steps[0]
+  const review = wf.steps[1]
   let n = 0
   /** A run of the workflow on task 1, started at `start`, ended `minutes` later unless still active. */
   const run = (start: string, state: 'active' | 'finished' | 'cancelled', minutes = 0) => {
@@ -67,21 +67,49 @@ function setup() {
         `INSERT INTO workflow_run_round (run_id, step_id, round_no, worker_kind, worker_name, started_at, ended_at, ended_by, outcome, attention)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(runId, stepId, no, worker?.[0] ?? null, worker?.[1] ?? null, start, end ? after(start, end.minutes) : null, end?.by ?? null, end ? 'x' : null, attention)
+      .run(
+        runId,
+        stepId,
+        no,
+        worker?.[0] ?? null,
+        worker?.[1] ?? null,
+        start,
+        end ? after(start, end.minutes) : null,
+        end?.by ?? null,
+        end ? 'x' : null,
+        attention,
+      )
   return { db: db as Db, wf, dev: dev.id, review: review.id, run, round }
 }
 
-const times = (steps: StepStats[]) => steps.map((s) => [s.name, s.entered, s.reworked, s.couldntStart.total, s.time.samples, s.time.median, s.time.p90])
+const times = (steps: StepStats[]) =>
+  steps.map((s) => [s.name, s.entered, s.reworked, s.couldntStart.total, s.time.samples, s.time.median, s.time.p90])
 
 const NO_USAGE = { pending: 0, shared: 0, tokens: { samples: 0, median: null, p90: null, sum: 0 }, cost: [] }
 
 /** Record a round's usage the way the engine does: tokens in total, cost per currency. */
-function spent(db: Db, runId: string, stepId: string, no: number, state: 'pending' | 'settled', tokens: number, cost: Array<[number, string]>) {
+function spent(
+  db: Db,
+  runId: string,
+  stepId: string,
+  no: number,
+  state: 'pending' | 'settled',
+  tokens: number,
+  cost: Array<[number, string]>,
+) {
   db.prepare(
     `UPDATE workflow_run_round SET thread_ref = 't', usage_state = ?, usage_turns = 1, tokens_input = ?, tokens_output = 0,
        tokens_cache_read = 0, tokens_cache_write = 0, tokens_total = ?, cost = ?
      WHERE run_id = ? AND step_id = ? AND round_no = ?`,
-  ).run(state, tokens, tokens, JSON.stringify(cost.map(([amount, currency]) => ({ amount, currency }))), runId, stepId, no)
+  ).run(
+    state,
+    tokens,
+    tokens,
+    JSON.stringify(cost.map(([amount, currency]) => ({ amount, currency }))),
+    runId,
+    stepId,
+    no,
+  )
 }
 
 test('usage per step, per agent and overall: settled rounds the task left are measured, pending ones counted, the rest left out', () => {
@@ -107,21 +135,31 @@ test('usage per step, per agent and overall: settled rounds the task left are me
   spent(db, byPerson, dev, 1, 'settled', 50, [[2, 'EUR']])
 
   const stats = workflowStats(db, wf, 'all', NOW)
-  const development = stats.steps.find((s) => s.name === 'Development')!.usage
+  const developmentStep = stats.steps.find((s) => s.name === 'Development')
+  assert.ok(developmentStep)
+  const development = developmentStep.usage
   assert.equal(development.pending, 1)
   assert.deepEqual(development.tokens, { samples: 6, median: 200, p90: null, sum: 1_550 })
   assert.deepEqual(development.cost, [
     { currency: 'EUR', samples: 1, median: null, p90: null, sum: 2 },
     { currency: 'USD', samples: 5, median: 0.3, p90: null, sum: 1.5 },
   ])
-  assert.deepEqual(stats.steps.find((s) => s.name === 'Review')!.usage, NO_USAGE, 'cancelled and person rounds are not measured')
+  const reviewStep = stats.steps.find((s) => s.name === 'Review')
+  assert.ok(reviewStep)
+  assert.deepEqual(reviewStep.usage, NO_USAGE, 'cancelled and person rounds are not measured')
   assert.equal(stats.usage.pending, 1)
   assert.equal(stats.usage.tokens.sum, 1_550)
 
-  const dev_ = stats.agents.find((a) => a.agent.name === 'Dev')!
-  assert.equal(dev_.steps.find((s) => s.name === 'Development')!.usage.tokens.sum, 1_550)
-  const sam = stats.agents.find((a) => a.agent.name === 'Sam')!
-  assert.deepEqual(sam.steps.find((s) => s.name === 'Review')!.usage, NO_USAGE)
+  const dev_ = stats.agents.find((a) => a.agent.name === 'Dev')
+  assert.ok(dev_)
+  const devAgentStep = dev_.steps.find((s) => s.name === 'Development')
+  assert.ok(devAgentStep)
+  assert.equal(devAgentStep.usage.tokens.sum, 1_550)
+  const sam = stats.agents.find((a) => a.agent.name === 'Sam')
+  assert.ok(sam)
+  const samReviewStep = sam.steps.find((s) => s.name === 'Review')
+  assert.ok(samReviewStep)
+  assert.deepEqual(samReviewStep.usage, NO_USAGE)
 })
 
 test('a round that shared a turn with an earlier step is counted as shared, never as a zero sample', () => {
@@ -131,13 +169,21 @@ test('a round that shared a turn with an earlier step is counted as shared, neve
   spent(db, id, dev, 1, 'settled', 400, [[0.4, 'USD']])
   round(id, review, 1, ['agent', 'Dev'], ago(1, 9), { minutes: 1, by: 'transition' })
   spent(db, id, review, 1, 'settled', 0, [])
-  db.prepare("UPDATE workflow_run_round SET usage_shared_with = 'Development' WHERE run_id = ? AND step_id = ?").run(id, review)
+  db.prepare("UPDATE workflow_run_round SET usage_shared_with = 'Development' WHERE run_id = ? AND step_id = ?").run(
+    id,
+    review,
+  )
 
   const stats = workflowStats(db, wf, 'all', NOW)
-  assert.deepEqual(stats.steps.find((s) => s.name === 'Review')!.usage, { ...NO_USAGE, shared: 1 })
+  const reviewStep = stats.steps.find((s) => s.name === 'Review')
+  assert.ok(reviewStep)
+  assert.deepEqual(reviewStep.usage, { ...NO_USAGE, shared: 1 })
   assert.deepEqual([stats.usage.shared, stats.usage.tokens.samples, stats.usage.tokens.sum], [1, 1, 400])
-  const byDev = stats.agents.find((a) => a.agent.name === 'Dev')!
-  assert.deepEqual(byDev.steps.find((s) => s.name === 'Review')!.usage, { ...NO_USAGE, shared: 1 })
+  const byDev = stats.agents.find((a) => a.agent.name === 'Dev')
+  assert.ok(byDev)
+  const byDevReviewStep = byDev.steps.find((s) => s.name === 'Review')
+  assert.ok(byDevReviewStep)
+  assert.deepEqual(byDevReviewStep.usage, { ...NO_USAGE, shared: 1 })
 })
 
 test('the range counts runs started inside it, with every round of them, and all counts everything', () => {
@@ -184,7 +230,7 @@ test('nearest rank over ten rounds: the median is the 5th, the 90th percentile t
   assert.deepEqual(workflowStats(db, wf, '30d', NOW).steps[0]?.time, { samples: 10, median: 5 * MIN, p90: 9 * MIN })
 })
 
-test('a step counts runs that reached it and came back, the times it couldn\'t start, and times only rounds the task left', () => {
+test("a step counts runs that reached it and came back, the times it couldn't start, and times only rounds the task left", () => {
   const { db, wf, dev, review, run, round } = setup()
   const a = run(ago(3), 'finished', 200)
   round(a, dev, 1, ['agent', 'Tom'], ago(3), { minutes: 40, by: 'transition' })
@@ -223,7 +269,11 @@ test('agents repeat the step figures over their own rounds, agents before people
       ['person', 'Sam', [['Review', 1, 0, 0, 1, null, null]]],
     ],
   )
-  assert.deepEqual(stats.steps.map((s) => s.name), ['Development', 'Review'], 'the removed step is not a row')
+  assert.deepEqual(
+    stats.steps.map((s) => s.name),
+    ['Development', 'Review'],
+    'the removed step is not a row',
+  )
 })
 
 test('a workflow that never ran answers zeros for counts and nothing measured', () => {
@@ -290,24 +340,40 @@ test('runs from before rounds were recorded keep one round per reached step, num
 
   migrate(db, allMigrations())
   const rounds = db
-    .prepare('SELECT run_id, step_id, round_no, worker_kind, worker_name, ended_by, outcome, attention FROM workflow_run_round ORDER BY run_id')
+    .prepare(
+      'SELECT run_id, step_id, round_no, worker_kind, worker_name, ended_by, outcome, attention FROM workflow_run_round ORDER BY run_id',
+    )
     .all()
     .map((r) => ({ ...r }))
   assert.deepEqual(rounds, [
-    { run_id: 'done', step_id: 'dev', round_no: 3, worker_kind: 'agent', worker_name: 'Dev', ended_by: 'transition', outcome: 'In Review', attention: 0 },
-    { run_id: 'stopped', step_id: 'dev', round_no: 1, worker_kind: null, worker_name: null, ended_by: 'cancel', outcome: 'Cancelled', attention: 1 },
+    {
+      run_id: 'done',
+      step_id: 'dev',
+      round_no: 3,
+      worker_kind: 'agent',
+      worker_name: 'Dev',
+      ended_by: 'transition',
+      outcome: 'In Review',
+      attention: 0,
+    },
+    {
+      run_id: 'stopped',
+      step_id: 'dev',
+      round_no: 1,
+      worker_kind: null,
+      worker_name: null,
+      ended_by: 'cancel',
+      outcome: 'Cancelled',
+      attention: 1,
+    },
   ])
 })
 
 /** A round left by a transition, as the engine records it: its label and gate. */
 function leftBy(db: Db, runId: string, stepId: string, no: number, label: string, gate: 'pass' | 'fail') {
-  db.prepare('UPDATE workflow_run_round SET transition_label = ?, gate = ? WHERE run_id = ? AND step_id = ? AND round_no = ?').run(
-    label,
-    gate,
-    runId,
-    stepId,
-    no,
-  )
+  db.prepare(
+    'UPDATE workflow_run_round SET transition_label = ?, gate = ? WHERE run_id = ? AND step_id = ? AND round_no = ?',
+  ).run(label, gate, runId, stepId, no)
 }
 
 /**
@@ -342,14 +408,19 @@ function closingScenario() {
   return { ...s, runs: { a, b, c, d, e } }
 }
 
-test('how a step\'s rounds ended, the rounds runs took there, and first-pass runs', () => {
+test("how a step's rounds ended, the rounds runs took there, and first-pass runs", () => {
   const { db, wf } = closingScenario()
   const stats = workflowStats(db, wf, '30d', NOW)
   assert.deepEqual(
     stats.steps.map((s) => [s.name, s.rounds, s.exits, s.roundsPerRun]),
     [
       ['Development', 6, { movedOn: 3, sentBack: [], other: 1, cancelled: 1, open: 1 }, [4, 1, 0, 0]],
-      ['Review', 3, { movedOn: 2, sentBack: [{ transition: 'Back to Development', count: 1 }], other: 0, cancelled: 0, open: 0 }, [1, 1, 0, 0]],
+      [
+        'Review',
+        3,
+        { movedOn: 2, sentBack: [{ transition: 'Back to Development', count: 1 }], other: 0, cancelled: 0, open: 0 },
+        [1, 1, 0, 0],
+      ],
     ],
   )
   assert.deepEqual(stats.firstPass, { finished: 3, firstPass: 2 }, 'a went through Development twice')
@@ -372,12 +443,21 @@ test('spend splits settled rounds into first rounds and rework, per currency', (
   const { db, wf, dev, runs } = closingScenario()
   spent(db, runs.a, dev, 1, 'settled', 1000, [[0.5, 'USD']])
   spent(db, runs.a, dev, 2, 'settled', 400, [[0.25, 'USD']])
-  spent(db, runs.b, dev, 1, 'settled', 600, [[0.3, 'USD'], [0.2, 'EUR']])
+  spent(db, runs.b, dev, 1, 'settled', 600, [
+    [0.3, 'USD'],
+    [0.2, 'EUR'],
+  ])
   // Pending usage is no figure yet.
   spent(db, runs.e, dev, 1, 'pending', 9999, [[9, 'USD']])
-  const devStats = workflowStats(db, wf, '30d', NOW).steps[0]!
+  const devStats = workflowStats(db, wf, '30d', NOW).steps[0]
   assert.deepEqual(devStats.spend, {
-    first: { tokens: 1600, cost: [{ currency: 'EUR', amount: 0.2 }, { currency: 'USD', amount: 0.8 }] },
+    first: {
+      tokens: 1600,
+      cost: [
+        { currency: 'EUR', amount: 0.2 },
+        { currency: 'USD', amount: 0.8 },
+      ],
+    },
     rework: { tokens: 400, cost: [{ currency: 'USD', amount: 0.25 }] },
   })
 })

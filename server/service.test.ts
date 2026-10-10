@@ -6,7 +6,6 @@ import type { Actor, TasksEvent } from '../shared/types.ts'
 import { migrate } from './db.ts'
 import { type StatusChangeEvent, statusHooks } from './hooks.ts'
 import {
-  type Scope,
   addComment,
   changeStatus,
   createStatus,
@@ -22,6 +21,7 @@ import {
   listTasks,
   moveTask,
   reorderStatuses,
+  type Scope,
   updateComment,
   updateStatus,
   updateTask,
@@ -228,8 +228,15 @@ test('delete refuses a parent unless withSubtasks, then removes the subtree', as
 test('update records field activity and applies partial dates', async () => {
   const s = makeScope()
   await createTask(s, { summary: 'plan', startDate: '2026-10-01', endDate: '2026-10-05' })
-  const t = (await updateTask(s, { key: 'TASK-1', summary: 'Plan it', endDate: '2026-10-09', priority: 'high', labels: ['ui', 'ui', ' api '] }))
-    .result
+  const t = (
+    await updateTask(s, {
+      key: 'TASK-1',
+      summary: 'Plan it',
+      endDate: '2026-10-09',
+      priority: 'high',
+      labels: ['ui', 'ui', ' api '],
+    })
+  ).result
   assert.equal(t.summary, 'Plan it')
   assert.equal(t.startDate, '2026-10-01')
   assert.equal(t.endDate, '2026-10-09')
@@ -255,7 +262,11 @@ test('listParents lists exactly the tasks with subtasks, in key order', async ()
     { key: 'TASK-3', summary: 'Story' },
   ])
   await deleteTask(s, { key: 'TASK-4' })
-  assert.deepEqual(listParents(s), [{ key: 'TASK-1', summary: 'Epic' }], 'a task whose last subtask is gone is no longer a parent')
+  assert.deepEqual(
+    listParents(s),
+    [{ key: 'TASK-1', summary: 'Epic' }],
+    'a task whose last subtask is gone is no longer a parent',
+  )
 })
 
 test('status changes run before (veto, in transaction) and after hooks', async () => {
@@ -307,7 +318,12 @@ test('a failing after hook is a warning, not a rollback', async () => {
 test('list filters, search and sort', async () => {
   const s = makeScope()
   await createTask(s, { summary: 'Fix login bug', type: 'bug', priority: 'high', labels: ['auth'], assignee: 'Bob' })
-  await createTask(s, { summary: 'Timeline zoom', description: 'ctrl + wheel', startDate: '2026-10-01', endDate: '2026-10-02' })
+  await createTask(s, {
+    summary: 'Timeline zoom',
+    description: 'ctrl + wheel',
+    startDate: '2026-10-01',
+    endDate: '2026-10-02',
+  })
   await createTask(s, { summary: 'Board columns', parent: 'TASK-2' })
   await changeStatus(s, { key: 'TASK-3', status: 'Done' })
   const titles = (input: Parameters<typeof listTasks>[1]) => listTasks(s, input).tasks.map((t) => t.key)
@@ -349,7 +365,11 @@ test('a search finds a task by its key however the key was copied', async () => 
   assert.deepEqual(keys('login'), ['TASK-1'], 'summary words still match')
 
   await createTask(s, { summary: 'Follow-up', description: 'Blocked until TASK-3 and OTHER-9 land.' })
-  assert.deepEqual(keys('TASK\u{2011}3:'), ['TASK-3', 'TASK-4'], 'a mention of the key is found as for the key typed plainly')
+  assert.deepEqual(
+    keys('TASK\u{2011}3:'),
+    ['TASK-3', 'TASK-4'],
+    'a mention of the key is found as for the key typed plainly',
+  )
   assert.deepEqual(keys('OTHER\u{2011}9'), ['TASK-4'], "another project's key is found where it is mentioned")
 })
 
@@ -363,21 +383,48 @@ test('a list filter excludes as well as includes, and an exclude wins over an in
   const keys = (input: Parameters<typeof listTasks>[1]) => listTasks(s, input).tasks.map((t) => t.key)
 
   assert.deepEqual(keys({ label: { include: ['ui'] } }), ['TASK-1', 'TASK-2'], 'include only')
-  assert.deepEqual(keys({ label: { exclude: ['auth'] } }), ['TASK-2', 'TASK-3'], 'exclude only keeps a task with no labels')
+  assert.deepEqual(
+    keys({ label: { exclude: ['auth'] } }),
+    ['TASK-2', 'TASK-3'],
+    'exclude only keeps a task with no labels',
+  )
   assert.deepEqual(keys({ label: { include: ['ui'], exclude: ['auth'] } }), ['TASK-2'], 'TASK-1 has ui but also auth')
-  assert.deepEqual(keys({ label: { include: ['ui'], exclude: ['ui'] } }), ['TASK-3'], 'a value in both lists is excluded')
-  assert.deepEqual(keys({ type: { include: ['task'] }, assignee: { exclude: ['none'] } }), ['TASK-3'], 'two fields combine with AND')
-  assert.deepEqual(keys({ assignee: { exclude: ['bob'] } }), ['TASK-2', 'TASK-3'], 'an unassigned task is not an excluded assignee')
+  assert.deepEqual(
+    keys({ label: { include: ['ui'], exclude: ['ui'] } }),
+    ['TASK-3'],
+    'a value in both lists is excluded',
+  )
+  assert.deepEqual(
+    keys({ type: { include: ['task'] }, assignee: { exclude: ['none'] } }),
+    ['TASK-3'],
+    'two fields combine with AND',
+  )
+  assert.deepEqual(
+    keys({ assignee: { exclude: ['bob'] } }),
+    ['TASK-2', 'TASK-3'],
+    'an unassigned task is not an excluded assignee',
+  )
   assert.deepEqual(keys({ assignee: { exclude: ['me'] } }), ['TASK-2', 'TASK-3'], '"me" is the caller')
-  assert.deepEqual(keys({ parent: { exclude: ['TASK-2'] } }), ['TASK-1', 'TASK-2'], 'a top-level task is not under an excluded parent')
+  assert.deepEqual(
+    keys({ parent: { exclude: ['TASK-2'] } }),
+    ['TASK-1', 'TASK-2'],
+    'a top-level task is not under an excluded parent',
+  )
   assert.deepEqual(keys({ parent: { exclude: ['none'] } }), ['TASK-3'])
   assert.deepEqual(keys({ version: { exclude: ['none'] } }), [], 'no task is in a version')
   assert.deepEqual(keys({ statusCategory: { exclude: ['done'] } }), ['TASK-1', 'TASK-2'])
   assert.deepEqual(keys({ status: { exclude: ['Done'] }, priority: { exclude: ['high'] } }), ['TASK-1', 'TASK-2'])
   assert.equal(listTasks(s, { label: { exclude: ['auth'] } }).total, 2, 'the total counts with the same filter')
 
-  assert.throws(() => listTasks(s, { label: { only: ['ui'] } as never }), /label takes a list, or \{ include, exclude \}/)
-  assert.throws(() => listTasks(s, { type: { exclude: ['chore'] } as never }), /Type must be one of/, 'an excluded value is checked like an included one')
+  assert.throws(
+    () => listTasks(s, { label: { only: ['ui'] } as never }),
+    /label takes a list, or \{ include, exclude \}/,
+  )
+  assert.throws(
+    () => listTasks(s, { type: { exclude: ['chore'] } as never }),
+    /Type must be one of/,
+    'an excluded value is checked like an included one',
+  )
 })
 
 test('comments and live notifications', async () => {
@@ -398,8 +445,14 @@ test("only a comment's author edits or deletes it, and reads it as theirs", asyn
   const bob = { ...makeScope({ kind: 'agent', name: 'Bob' }), db: ada.db }
   const theirs = (await addComment(bob, { key: 'TASK-1', body: 'second' })).result
 
-  assert.deepEqual(getTask(ada, 'TASK-1').comments.map((c) => c.mine), [true, false])
-  assert.deepEqual(getTask(bob, 'TASK-1').comments.map((c) => c.mine), [false, true])
+  assert.deepEqual(
+    getTask(ada, 'TASK-1').comments.map((c) => c.mine),
+    [true, false],
+  )
+  assert.deepEqual(
+    getTask(bob, 'TASK-1').comments.map((c) => c.mine),
+    [false, true],
+  )
 
   const edited = updateComment(ada, { key: 'TASK-1', id: mine.id, body: ' first, edited ' }).result
   assert.equal(edited.body, 'first, edited')
@@ -411,7 +464,10 @@ test("only a comment's author edits or deletes it, and reads it as theirs", asyn
 
   assert.throws(() => deleteComment(bob, { key: 'TASK-1', id: mine.id }), /Only its author \(Ada Lovelace\) can delete/)
   assert.equal(deleteComment(bob, { key: 'TASK-1', id: theirs.id }).result.deleted, theirs.id)
-  assert.deepEqual(getTask(ada, 'TASK-1').comments.map((c) => c.body), ['first, edited'])
+  assert.deepEqual(
+    getTask(ada, 'TASK-1').comments.map((c) => c.body),
+    ['first, edited'],
+  )
 })
 
 test('status CRUD keeps a to-do status and moves tasks through the status path', async () => {
@@ -431,7 +487,9 @@ test('status CRUD keeps a to-do status and moves tasks through the status path',
   const ids = reorderStatuses(s, { order: [5, 4, 3, 2, 1] }).result.map((st) => st.name)
   assert.deepEqual(ids, ['Cancelled', 'Done', 'In Review', 'In Progress', 'To Do'])
   assert.throws(() => reorderStatuses(s, { order: [1, 2] }), /every status/)
-  const byName = reorderStatuses(s, { order: ['to do', 'In Progress', 3, 'done', 'Cancelled'] }).result.map((st) => st.name)
+  const byName = reorderStatuses(s, { order: ['to do', 'In Progress', 3, 'done', 'Cancelled'] }).result.map(
+    (st) => st.name,
+  )
   assert.deepEqual(byName, ['To Do', 'In Progress', 'In Review', 'Done', 'Cancelled'])
   assert.throws(() => reorderStatuses(s, { order: ['To Do', 'Doing'] }), /No status "Doing"\. Statuses: /)
 })
@@ -445,10 +503,16 @@ test('ranks stay short: long runs of appends and inserts at one spot respace the
     await createTask(s, { summary: `before-${i}`, before: 'TASK-2' })
   }
   const { tasks } = listTasks(s, { limit: 1000 })
-  assert.ok(tasks.every((task) => task.rank.length <= 12), `longest ${Math.max(...tasks.map((t) => t.rank.length))}`)
+  assert.ok(
+    tasks.every((task) => task.rank.length <= 12),
+    `longest ${Math.max(...tasks.map((t) => t.rank.length))}`,
+  )
   const order = tasks.map((task) => task.summary)
   assert.equal(order[0], 't1')
-  assert.deepEqual(order.slice(1, 151), Array.from({ length: 150 }, (_, i) => `before-${i}`))
+  assert.deepEqual(
+    order.slice(1, 151),
+    Array.from({ length: 150 }, (_, i) => `before-${i}`),
+  )
   assert.equal(order[151], 't2')
   assert.equal(order.at(-1), 't300')
 })

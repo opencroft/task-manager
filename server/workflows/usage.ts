@@ -79,9 +79,7 @@ export function roundCost(amount: number): number {
 }
 
 function usageOfTurns(turns: ThreadUsage['turns']): Usage {
-  return sumUsage(
-    turns.map((turn) => ({ turns: 1, tokens: turn.tokens, cost: turn.cost ? [turn.cost] : [] })),
-  )
+  return sumUsage(turns.map((turn) => ({ turns: 1, tokens: turn.tokens, cost: turn.cost ? [turn.cost] : [] })))
 }
 
 /**
@@ -122,7 +120,9 @@ export interface Attributed {
  */
 export function attribute(usage: ThreadUsage, round: RoundWindow): Attributed {
   const { claim } = round
-  const inWindow = usage.turns.filter((turn) => turn.endedAt >= round.startedAt && (claim === null || turn.endedAt > claim.until))
+  const inWindow = usage.turns.filter(
+    (turn) => turn.endedAt >= round.startedAt && (claim === null || turn.endedAt > claim.until),
+  )
   if (round.endedAt === null) {
     return { usage: usageOfTurns(inWindow), state: 'live', until: null, sharedWith: null }
   }
@@ -135,7 +135,7 @@ export function attribute(usage: ThreadUsage, round: RoundWindow): Attributed {
     return {
       usage: usageOfTurns(inWindow.slice(0, finishing + 1)),
       state: 'settled',
-      until: inWindow[finishing]!.endedAt,
+      until: inWindow[finishing].endedAt,
       sharedWith: null,
     }
   }
@@ -169,7 +169,9 @@ export function storedUsage(row: RoundUsageColumns): (Usage & { state: RoundUsag
     return null
   }
   return {
-    ...(row.usage_shared_with !== null ? { state: 'shared' as const, sharedWith: row.usage_shared_with } : { state: row.usage_state }),
+    ...(row.usage_shared_with !== null
+      ? { state: 'shared' as const, sharedWith: row.usage_shared_with }
+      : { state: row.usage_state }),
     turns: row.usage_turns ?? 0,
     tokens: {
       input: row.tokens_input ?? 0,
@@ -245,7 +247,11 @@ async function readWindow(
     | undefined
   const waiting = previous?.usage_state === 'pending' ? previous.ended_at : null
   // Read from the previous round's end when it waits: its finishing turn may have ended before this round began.
-  const usage = await readThread(chats, round.threadRef, waiting !== null && waiting < round.startedAt ? waiting : round.startedAt)
+  const usage = await readThread(
+    chats,
+    round.threadRef,
+    waiting !== null && waiting < round.startedAt ? waiting : round.startedAt,
+  )
   if (!usage) {
     return null
   }
@@ -303,10 +309,14 @@ export async function recordRoundUsage(
     .get(input.runId, input.stepId) as
     | { round_no: number; worker_kind: string | null; started_at: string; ended_at: string }
     | undefined
-  if (!round || round.worker_kind !== 'agent') {
+  if (round?.worker_kind !== 'agent') {
     return
   }
-  const read = await readWindow(db, chats, { threadRef: input.threadRef, startedAt: round.started_at, endedAt: round.ended_at })
+  const read = await readWindow(db, chats, {
+    threadRef: input.threadRef,
+    startedAt: round.started_at,
+    endedAt: round.ended_at,
+  })
   if (!read) {
     return
   }
@@ -361,7 +371,11 @@ export async function settlePendingUsage(db: Db, chats: UsagePort | null, runIds
     ended_at: string
   }>
   for (const row of pending) {
-    const read = await readWindow(db, chats, { threadRef: row.thread_ref, startedAt: row.started_at, endedAt: row.ended_at })
+    const read = await readWindow(db, chats, {
+      threadRef: row.thread_ref,
+      startedAt: row.started_at,
+      endedAt: row.ended_at,
+    })
     if (!read) {
       continue
     }
@@ -383,7 +397,11 @@ export async function settlePendingUsage(db: Db, chats: UsagePort | null, runIds
 export function spentOf(rounds: RunRound[]): Spent {
   const withUsage = rounds.flatMap((round) => (round.usage && round.usage.state !== 'shared' ? [round.usage] : []))
   const sharedWith = [
-    ...new Set(rounds.flatMap((round) => (round.usage?.state === 'shared' && round.usage.sharedWith ? [round.usage.sharedWith] : []))),
+    ...new Set(
+      rounds.flatMap((round) =>
+        round.usage?.state === 'shared' && round.usage.sharedWith ? [round.usage.sharedWith] : [],
+      ),
+    ),
   ]
   return {
     timeMs: rounds.reduce((sum, round) => sum + round.timeMs, 0),

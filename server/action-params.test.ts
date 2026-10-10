@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
-import type { AppActionContext, AppActionHandler } from '@opencroft/server'
+import type { AppActionContext, AppActionHandler } from '@opencroft/server/apps'
 
-import { inputSchemas, withParamChecks } from './action-params.ts'
+import { ACTION_INPUTS_FILE, renderActionInputs } from '../scripts/action-inputs.ts'
+import type { ActionId } from '../shared/action-inputs.ts'
+import { parseParams, withParamChecks } from './action-params.ts'
+import { inputSchemas } from './input-schemas.ts'
 
 /** The real schemas of `ids`, each wrapped around a handler that records what reached it. */
 function checked(...ids: string[]) {
@@ -12,7 +16,7 @@ function checked(...ids: string[]) {
     ids.map((id) => [id, (_ctx: AppActionContext, params: Record<string, unknown>) => reached.push([id, params])]),
   )
   const actions = withParamChecks(handlers)
-  const call = (id: string, params: Record<string, unknown>) => actions[id]!({} as AppActionContext, params)
+  const call = (id: string, params: Record<string, unknown>) => actions[id]({} as AppActionContext, params)
   return { call, reached }
 }
 
@@ -31,7 +35,8 @@ test('a guessed parameter name is refused with what is missing, the closest real
 test('a missing required parameter is named on its own', () => {
   const { call } = checked('task_change_status')
   assert.throws(() => call('task_change_status', { key: 'TASK-1', comment: 'Done' }), {
-    message: 'Missing parameter "status". Parameters of task_change_status: detail, key (required), status (required), comment.',
+    message:
+      'Missing parameter "status". Parameters of task_change_status: detail, key (required), status (required), comment.',
   })
   assert.throws(
     () => call('task_change_status', { key: 'TASK-1', status: undefined }),
@@ -84,8 +89,12 @@ test('an integer is a whole number, and a whole number is a number too', () => {
   call('import_openproject_sync', { minutes: 15 })
   call('import_openproject_sync', { minutes: null })
   call('task_list', { limit: 10 })
-  assert.throws(() => call('import_openproject_sync', { minutes: 7.5 }), { message: /^"minutes" must be an integer or null, not a number\. / })
-  assert.throws(() => call('import_openproject_sync', { minutes: '15' }), { message: /^"minutes" must be an integer or null, not a string\. / })
+  assert.throws(() => call('import_openproject_sync', { minutes: 7.5 }), {
+    message: /^"minutes" must be an integer or null, not a number\. /,
+  })
+  assert.throws(() => call('import_openproject_sync', { minutes: '15' }), {
+    message: /^"minutes" must be an integer or null, not a string\. /,
+  })
   assert.deepEqual(reached, [
     ['import_openproject_sync', { minutes: 15 }],
     ['import_openproject_sync', { minutes: null }],
@@ -93,19 +102,105 @@ test('an integer is a whole number, and a whole number is a number too', () => {
   ])
 })
 
+test('a value outside its enum is refused with the values allowed, null included where the enum lists it', () => {
+  const { call, reached } = checked('task_create', 'label_color')
+  assert.throws(() => call('task_create', { summary: 'Ship it', type: 'feature', priority: 'High' }), {
+    name: 'TaskError',
+    message:
+      '"type" must be one of "task", "bug", "story" or "epic", not "feature". ' +
+      '"priority" must be one of "lowest", "low", "medium", "high" or "highest", not "High". ' +
+      `Parameters of task_create: ${Object.keys(inputSchemas.task_create?.properties ?? {})
+        .map((name) => (name === 'summary' ? `${name} (required)` : name))
+        .join(', ')}.`,
+  })
+  assert.throws(() => call('label_color', { label: 'ui', color: 'purple' }), {
+    message: /^"color" must be one of "gray", .* "pink" or null, not "purple"\. /,
+  })
+  call('task_create', { summary: 'Ship it', type: 'bug', priority: 'high' })
+  call('label_color', { label: 'ui', color: null })
+  assert.deepEqual(reached, [
+    ['task_create', { summary: 'Ship it', type: 'bug', priority: 'high' }],
+    ['label_color', { label: 'ui', color: null }],
+  ])
+})
+
+test('parseParams hands back parameters that fit their schema and refuses the rest', () => {
+  const input = { key: 'TASK-1', body: 'Looks good' }
+  assert.equal(parseParams('task_comment', input), input)
+  assert.throws(() => parseParams('task_comment', { key: 'TASK-1', body: 5 }), {
+    name: 'TaskError',
+    message: /^"body" must be a string, not a number\. /,
+  })
+  assert.throws(() => parseParams('task_frobnicate' as ActionId, {}), {
+    message: 'Action task_frobnicate has no input schema in extension.json',
+  })
+})
+
+test('the generated parameter types are rendered from the input schemas as they stand', () => {
+  assert.equal(
+    readFileSync(ACTION_INPUTS_FILE, 'utf8'),
+    renderActionInputs(inputSchemas),
+    'shared/action-inputs.ts is stale: run `npm run action-inputs`',
+  )
+})
+
+test('the parameter types say what the check proves: required, item types, enums, nested objects unknown', () => {
+  const rendered = renderActionInputs({
+    demo: {
+      properties: {
+        name: { type: 'string' },
+        mode: { type: ['string', 'null'], enum: ['fast', "it's", null] },
+        refs: { type: 'array', items: { type: ['string', 'number'] } },
+        tags: { type: 'array', items: { type: 'string' } },
+        rows: { type: 'array' },
+        options: { type: 'object', properties: { depth: { type: 'number' } } },
+        count: { type: 'integer' },
+        anything: {},
+      },
+      required: ['name'],
+    },
+    none: { type: 'object', properties: {} },
+  })
+  assert.match(
+    rendered,
+    new RegExp(
+      [
+        '  demo: \\{',
+        '    name: string',
+        "    mode\\?: 'fast' \\| 'it\\\\'s' \\| null",
+        '    refs\\?: Array<string \\| number>',
+        '    tags\\?: string\\[\\]',
+        '    rows\\?: unknown\\[\\]',
+        '    options\\?: Record<string, unknown>',
+        '    count\\?: number',
+        '    anything\\?: unknown',
+        '  \\}',
+        '  none: Record<string, never>',
+      ].join('\\n'),
+    ),
+  )
+})
+
 test('every declared action has a schema whose required parameters it declares, and an undeclared one fails the load', () => {
   const ids = Object.keys(inputSchemas)
   assert.ok(ids.includes('task_link') && ids.includes('workflow_start'), 'the schemas were read from the manifest')
   for (const id of ids) {
-    const schema = inputSchemas[id]!
+    const schema = inputSchemas[id]
     for (const name of schema.required ?? []) {
       assert.ok(Object.hasOwn(schema.properties ?? {}, name), `${id} requires "${name}" but does not declare it`)
     }
   }
   // Every manifest schema names only types the checks know: wrapping them all loads.
   assert.equal(Object.keys(withParamChecks(Object.fromEntries(ids.map((id) => [id, () => null])))).length, ids.length)
-  assert.throws(() => withParamChecks({ task_frobnicate: () => null }), { message: 'Action task_frobnicate has no input schema in extension.json' })
-  assert.throws(() => withParamChecks({ task_frobnicate: () => null }, { task_frobnicate: { properties: { count: { type: 'int' } } } }), {
-    message: /^Action task_frobnicate: parameter "count" has type "int"; the checks know "string", "number", "integer"/,
+  assert.throws(() => withParamChecks({ task_frobnicate: () => null }), {
+    message: 'Action task_frobnicate has no input schema in extension.json',
   })
+  assert.throws(
+    () =>
+      withParamChecks({ task_frobnicate: () => null }, { task_frobnicate: { properties: { count: { type: 'int' } } } }),
+    {
+      message:
+        /^Action task_frobnicate: parameter "count" has type "int"; the checks know "string", "number", "integer"/,
+    },
+  )
 })

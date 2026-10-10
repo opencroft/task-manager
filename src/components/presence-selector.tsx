@@ -1,10 +1,10 @@
+import { cn } from 'cn'
 import { Activity } from 'lucide-react'
 import { useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { cn } from 'cn'
 
 // How often an agent reads what has been sent to it.
 //
@@ -204,7 +204,14 @@ export function PresenceSelector({ presence, onSelect, onUnset, steering = true,
             aria-label='Custom reading interval, in minutes'
           />
           <span className='text-sm text-muted-foreground'>min</span>
-          <Button type='button' size='sm' variant='secondary' className='h-7' disabled={!customValid} onClick={applyCustom}>
+          <Button
+            type='button'
+            size='sm'
+            variant='secondary'
+            className='h-7'
+            disabled={!customValid}
+            onClick={applyCustom}
+          >
             Set
           </Button>
         </div>

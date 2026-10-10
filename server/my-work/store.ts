@@ -2,13 +2,14 @@
 // workflow runs and the inbox. Pure: a scope and a viewer in, sections out —
 // the host is reached only through ./index.ts, so this runs under `node --test`.
 
-import { type MyWorkInput, type MyWorkResult, type MyWorkStep, STARTING_SOON_DAYS } from '../../shared/my-work.ts'
+import type { ActionInputs } from '../../shared/action-inputs.ts'
+import { type MyWorkResult, type MyWorkStep, STARTING_SOON_DAYS } from '../../shared/my-work.ts'
 import type { ProjectRef } from '../../shared/projects.ts'
 import type { CalendarDate, TaskType } from '../../shared/types.ts'
 import type { StepKind } from '../../shared/workflows.ts'
 import { listInbox } from '../inbox/store.ts'
 import { tagged } from '../projects/across.ts'
-import { type Scope, TaskError, keyOf, summariesWhere } from '../service.ts'
+import { keyOf, type Scope, summariesWhere, TaskError } from '../service.ts'
 
 /** Who asks. `id` is the agent node id or directory user id; null for an agent no directory lists. */
 export interface Viewer {
@@ -23,22 +24,20 @@ const DAY_MS = 24 * 60 * 60 * 1000
 
 const same = (a: string | null, b: string) => a !== null && a.trim().toLowerCase() === b.trim().toLowerCase()
 
-function cleanToday(value: unknown, now: Date): CalendarDate {
-  if (value === undefined || value === null || value === '') {
+function cleanToday(value: string | undefined, now: Date): CalendarDate {
+  if (value === undefined || value === '') {
     return now.toISOString().slice(0, 10)
   }
-  const text = String(value)
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || Number.isNaN(Date.parse(`${text}T00:00:00Z`))) {
-    throw new TaskError(`today "${text}" is not a date: use YYYY-MM-DD`)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`))) {
+    throw new TaskError(`today "${value}" is not a date: use YYYY-MM-DD`)
   }
-  return text
+  return value
 }
 
-function cleanRecentLimit(value: unknown): number {
-  if (value === undefined || value === null) {
+function cleanRecentLimit(limit: number | undefined): number {
+  if (limit === undefined) {
     return RECENT_DEFAULT
   }
-  const limit = Number(value)
   if (!Number.isInteger(limit) || limit < 1 || limit > RECENT_MAX) {
     throw new TaskError(`recentLimit is a whole number, 1–${RECENT_MAX}`)
   }
@@ -62,7 +61,10 @@ function assignedCondition(viewer: Viewer): { sql: string; args: string[] } {
       args: [viewer.kind, viewer.id, viewer.name],
     }
   }
-  return { sql: `${open} AND t.assignee_kind = ? AND t.assignee_name = ? COLLATE NOCASE`, args: [viewer.kind, viewer.name] }
+  return {
+    sql: `${open} AND t.assignee_kind = ? AND t.assignee_name = ? COLLATE NOCASE`,
+    args: [viewer.kind, viewer.name],
+  }
 }
 
 interface OpenStepRow {
@@ -144,7 +146,10 @@ export function waitingSteps(scope: Scope, viewer: Viewer): MyWorkStep[] {
       state = row.viewer_approves && !row.viewer_decided ? 'waiting' : null
     } else if (row.round_worker === 'person') {
       state = row.assignee_kind && isViewer(row.assignee_kind, row.assignee_id, row.assignee_name) ? 'waiting' : null
-    } else if (isViewer(row.started_by_kind, null, row.started_by_name) || isViewer(row.reporter_kind, null, row.reporter_name)) {
+    } else if (
+      isViewer(row.started_by_kind, null, row.started_by_name) ||
+      isViewer(row.reporter_kind, null, row.reporter_name)
+    ) {
       state = 'attention'
     }
     if (!state) {
@@ -165,7 +170,10 @@ export function waitingSteps(scope: Scope, viewer: Viewer): MyWorkStep[] {
 }
 
 /** The input's day and recent limit, checked; the defaults where it gives none. */
-export function cleanMyWorkInput(input: MyWorkInput, now = new Date()): { today: CalendarDate; recentLimit: number } {
+export function cleanMyWorkInput(
+  input: ActionInputs['my_work'],
+  now = new Date(),
+): { today: CalendarDate; recentLimit: number } {
   return { today: cleanToday(input.today, now), recentLimit: cleanRecentLimit(input.recentLimit) }
 }
 
@@ -174,7 +182,12 @@ function viewerOut(viewer: Viewer): MyWorkResult['viewer'] {
 }
 
 /** Everything the "My work" page shows for the viewer. */
-export function myWork(scope: Scope, viewer: Viewer, input: MyWorkInput = {}, now = new Date()): MyWorkResult {
+export function myWork(
+  scope: Scope,
+  viewer: Viewer,
+  input: ActionInputs['my_work'] = {},
+  now = new Date(),
+): MyWorkResult {
   const { today, recentLimit } = cleanMyWorkInput(input, now)
   const mine = assignedCondition(viewer)
   const assigned = summariesWhere(scope, mine.sql, mine.args, 't.end_date IS NULL, t.end_date, t.rank')
@@ -185,7 +198,9 @@ export function myWork(scope: Scope, viewer: Viewer, input: MyWorkInput = {}, no
     't.start_date, t.rank',
   )
   // An inbox is keyed by id; an agent no directory lists has none.
-  const recent = viewer.id ? listInbox(scope.db, scope.projectKey, `${viewer.kind}:${viewer.id}`, { limit: recentLimit }).items : []
+  const recent = viewer.id
+    ? listInbox(scope.db, scope.projectKey, `${viewer.kind}:${viewer.id}`, { limit: recentLimit }).items
+    : []
   return {
     viewer: viewerOut(viewer),
     today,
@@ -204,7 +219,7 @@ export function myWork(scope: Scope, viewer: Viewer, input: MyWorkInput = {}, no
  */
 export function mergeMyWork(
   viewer: Viewer,
-  input: MyWorkInput,
+  input: ActionInputs['my_work'],
   parts: Array<{ project: ProjectRef; value: MyWorkResult }>,
   now = new Date(),
 ): MyWorkResult {
@@ -217,7 +232,9 @@ export function mergeMyWork(
     today,
     waiting: section('waiting').sort((a, b) => a.since.localeCompare(b.since)),
     assigned: section('assigned').sort((a, b) => undatedLast(a.endDate).localeCompare(undatedLast(b.endDate))),
-    startingSoon: section('startingSoon').sort((a, b) => undatedLast(a.startDate).localeCompare(undatedLast(b.startDate))),
+    startingSoon: section('startingSoon').sort((a, b) =>
+      undatedLast(a.startDate).localeCompare(undatedLast(b.startDate)),
+    ),
     recent: section('recent')
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, recentLimit),

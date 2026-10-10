@@ -4,6 +4,7 @@
 // has at most one. The actions' shapes, shared by the server seam
 // (server/versions) and the UI.
 
+import type { ActionInputs } from './action-inputs.ts'
 import type { CalendarDate, MutationResult, TaskKey } from './types.ts'
 
 export type VersionState = 'planned' | 'released' | 'archived'
@@ -49,34 +50,6 @@ export interface VersionRow {
 /** A version as an input: its name, or its id. */
 export type VersionRef = string | number
 
-export interface VersionListInput {
-  /** Only versions in these states; every state when omitted. */
-  state?: VersionState[]
-}
-
-export interface VersionCreateInput {
-  name: string
-  targetDate?: CalendarDate | null
-  description?: string
-}
-
-export interface VersionUpdateInput {
-  version: VersionRef
-  name?: string
-  targetDate?: CalendarDate | null
-  description?: string
-  /** `planned` or `archived`; releasing goes through `version_release`, which writes the release date. */
-  state?: Exclude<VersionState, 'released'>
-}
-
-export interface VersionReleaseInput {
-  version: VersionRef
-  /** The release date; today (UTC) when omitted. */
-  date?: CalendarDate
-  /** Another planned version to move the open tasks to, or `"none"` to take them out of any version; omitted, they stay. */
-  moveOpenTo?: VersionRef
-}
-
 export interface VersionReleaseResult {
   version: Version
   /** The open tasks moved off it, and where to (null: out of any version). */
@@ -86,10 +59,10 @@ export interface VersionReleaseResult {
 }
 
 export interface VersionActionMap {
-  version_list: { input: VersionListInput; output: { versions: Version[] } }
-  version_create: { input: VersionCreateInput; output: MutationResult<Version> }
-  version_update: { input: VersionUpdateInput; output: MutationResult<Version> }
-  version_release: { input: VersionReleaseInput; output: MutationResult<VersionReleaseResult> }
+  version_list: { input: ActionInputs['version_list']; output: { versions: Version[] } }
+  version_create: { input: ActionInputs['version_create']; output: MutationResult<Version> }
+  version_update: { input: ActionInputs['version_update']; output: MutationResult<Version> }
+  version_release: { input: ActionInputs['version_release']; output: MutationResult<VersionReleaseResult> }
 }
 
 export type VersionActionId = keyof VersionActionMap

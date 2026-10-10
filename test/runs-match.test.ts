@@ -27,7 +27,14 @@ test('writing a match clears what an earlier one set, and null clears them all',
     rounds: '2',
     couldntStart: null,
   })
-  assert.deepEqual(runsMatchParams(null), { range: null, step: null, exit: null, transition: null, rounds: null, couldntStart: null })
+  assert.deepEqual(runsMatchParams(null), {
+    range: null,
+    step: null,
+    exit: null,
+    transition: null,
+    rounds: null,
+    couldntStart: null,
+  })
 })
 
 test('an address without a step carries no match, whatever else it has', () => {
@@ -40,5 +47,9 @@ test('values the page does not know are left out, and a missing range is the 30-
 })
 
 test('a transition narrows only a sent-back match', () => {
-  assert.deepEqual(runsMatchOf(new URLSearchParams('step=step-1&exit=moved_on&transition=Approved')), { range: '30d', step: 'step-1', exit: 'moved_on' })
+  assert.deepEqual(runsMatchOf(new URLSearchParams('step=step-1&exit=moved_on&transition=Approved')), {
+    range: '30d',
+    step: 'step-1',
+    exit: 'moved_on',
+  })
 })

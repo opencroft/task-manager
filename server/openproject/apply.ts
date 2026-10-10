@@ -11,13 +11,28 @@
 // that same field too, the task is a conflict: listed in the result, and
 // given OpenProject's values only when the caller names it in `overwrite`.
 
-import type { OpenProjectConflict, OpenProjectField, OpenProjectImportResult, OpenProjectMapping, OpenProjectSkipped } from '../../shared/openproject.ts'
+import type {
+  OpenProjectConflict,
+  OpenProjectField,
+  OpenProjectImportResult,
+  OpenProjectMapping,
+  OpenProjectSkipped,
+} from '../../shared/openproject.ts'
 import type { Actor, Assignee } from '../../shared/types.ts'
 import { transaction } from '../db.ts'
 import { evenRanks } from '../rank.ts'
-import { type Scope, TaskError, keyOf, listStatuses, record } from '../service.ts'
+import { keyOf, listStatuses, record, type Scope, TaskError } from '../service.ts'
 import type { SourceComment, SourceProject } from './api.ts'
-import { type SourceData, isAutomaticNote, mapDates, mapMarkdown, mapPriority, mapSummary, sourceLabel, sourceNumber } from './mapping.ts'
+import {
+  isAutomaticNote,
+  mapDates,
+  mapMarkdown,
+  mapPriority,
+  mapSummary,
+  type SourceData,
+  sourceLabel,
+  sourceNumber,
+} from './mapping.ts'
 import { sourceOf } from './store.ts'
 
 export interface ImportInput {
@@ -58,7 +73,8 @@ const COMPARED: Record<TaskField, (value: Imported) => unknown> = {
   status: (value) => value.status,
   type: (value) => value.type,
   priority: (value) => value.priority,
-  assignee: (value) => (value.assignee ? `${value.assignee.kind}:${value.assignee.id ?? ''}:${value.assignee.name}` : null),
+  assignee: (value) =>
+    value.assignee ? `${value.assignee.kind}:${value.assignee.id ?? ''}:${value.assignee.name}` : null,
   dates: (value) => `${value.start}|${value.end}`,
 }
 const TASK_FIELDS = Object.keys(COMPARED) as TaskField[]
@@ -109,7 +125,10 @@ function currentOf(row: ExistingRow): Imported {
     status: row.status_id,
     type: row.type,
     priority: row.priority,
-    assignee: row.assignee_name === null ? null : { kind: row.assignee_kind ?? 'person', id: row.assignee_id, name: row.assignee_name },
+    assignee:
+      row.assignee_name === null
+        ? null
+        : { kind: row.assignee_kind ?? 'person', id: row.assignee_id, name: row.assignee_name },
     start: row.start_date,
     end: row.end_date,
     parent: row.parent_id,
@@ -143,7 +162,9 @@ export function peopleOf(source: SourceData, mapping: OpenProjectMapping) {
       return null
     }
     const target = mapping.people[id]
-    return target === undefined ? { kind: 'person', name: source.people.get(id) ?? fallback ?? `OpenProject user ${id}` } : target
+    return target === undefined
+      ? { kind: 'person', name: source.people.get(id) ?? fallback ?? `OpenProject user ${id}` }
+      : target
   }
   const actor = (id: string | null, fallback: string | null): Actor => {
     const mapped = person(id, fallback)
@@ -194,12 +215,16 @@ function writeImport(scope: Scope, input: ImportInput): OpenProjectImportResult 
       statusIdFor.set(sourceId, target.status)
       continue
     }
-    const sameName = listStatuses(scope).find((status) => status.name.toLowerCase() === target.create.name.toLowerCase())
+    const sameName = listStatuses(scope).find(
+      (status) => status.name.toLowerCase() === target.create.name.toLowerCase(),
+    )
     if (sameName) {
       statusIdFor.set(sourceId, sameName.id)
       continue
     }
-    const position = (scope.db.prepare('SELECT coalesce(max(position), -1) + 1 AS next FROM status').get() as { next: number }).next
+    const position = (
+      scope.db.prepare('SELECT coalesce(max(position), -1) + 1 AS next FROM status').get() as { next: number }
+    ).next
     const inserted = scope.db
       .prepare('INSERT INTO status (name, category, color, position) VALUES (?, ?, ?, ?)')
       .run(target.create.name, target.create.category, target.create.color, position)
@@ -226,8 +251,12 @@ function writeImport(scope: Scope, input: ImportInput): OpenProjectImportResult 
   // project's next number (numbers of deleted tasks are never reused).
   const meta = scope.db.prepare("SELECT value FROM project_meta WHERE key = 'next_number'").get() as { value: string }
   const firstFree = Number(meta.value)
-  const used = new Set((scope.db.prepare('SELECT number FROM task').all() as Array<{ number: number }>).map((row) => row.number))
-  const wanted = new Set(input.keepNumbers ? source.workPackages.filter((wp) => !existing.has(String(wp.id))).map(sourceNumber) : [])
+  const used = new Set(
+    (scope.db.prepare('SELECT number FROM task').all() as Array<{ number: number }>).map((row) => row.number),
+  )
+  const wanted = new Set(
+    input.keepNumbers ? source.workPackages.filter((wp) => !existing.has(String(wp.id))).map(sourceNumber) : [],
+  )
   let next = firstFree
   const allocate = (preferred: number | null): number => {
     if (preferred !== null && preferred >= firstFree && !used.has(preferred)) {
@@ -243,7 +272,11 @@ function writeImport(scope: Scope, input: ImportInput): OpenProjectImportResult 
 
   const overwrite = new Set((input.overwrite ?? []).map((key) => key.trim().toUpperCase()))
   const overwritten = (number: number) => overwrite.has(keyOf(scope, number).toUpperCase())
-  const describe = (field: OpenProjectField, value: Imported, keyOfTask: (id: number) => string | null): string | null => {
+  const describe = (
+    field: OpenProjectField,
+    value: Imported,
+    keyOfTask: (id: number) => string | null,
+  ): string | null => {
     switch (field) {
       case 'summary':
         return value.summary
@@ -274,7 +307,9 @@ function writeImport(scope: Scope, input: ImportInput): OpenProjectImportResult 
     `UPDATE task SET summary = ?, description = ?, status_id = ?, type = ?, priority = ?, assignee_kind = ?, assignee_id = ?,
        assignee_name = ?, start_date = ?, end_date = ?, updated_at = ? WHERE id = ?`,
   )
-  const insertSource = scope.db.prepare('INSERT INTO task_source (task_id, source, source_id, source_updated_at) VALUES (?, ?, ?, ?)')
+  const insertSource = scope.db.prepare(
+    'INSERT INTO task_source (task_id, source, source_id, source_updated_at) VALUES (?, ?, ?, ?)',
+  )
   const taskIdOf = new Map<number, number>()
   const numberOf = new Map<number, number>()
   const placed: number[] = []
@@ -326,7 +361,11 @@ function writeImport(scope: Scope, input: ImportInput): OpenProjectImportResult 
       const force = clash.length > 0 && overwritten(before.number)
       if (clash.length > 0) {
         clashes.set(before.id, {
-          fields: clash.map((field) => ({ field, here: describe(field, here, noKeys), openProject: describe(field, theirs, noKeys) })),
+          fields: clash.map((field) => ({
+            field,
+            here: describe(field, here, noKeys),
+            openProject: describe(field, theirs, noKeys),
+          })),
           overwritten: force,
         })
       }
@@ -356,7 +395,8 @@ function writeImport(scope: Scope, input: ImportInput): OpenProjectImportResult 
           before.id,
         )
         for (const field of changed) {
-          const shown = field === 'description' ? [null, null] : [describe(field, here, noKeys), describe(field, next, noKeys)]
+          const shown =
+            field === 'description' ? [null, null] : [describe(field, here, noKeys), describe(field, next, noKeys)]
           record(scope, before.id, 'field', field, shown[0] ?? null, shown[1] ?? null)
         }
         changedIds.add(before.id)
@@ -405,10 +445,16 @@ function writeImport(scope: Scope, input: ImportInput): OpenProjectImportResult 
   // here since the last import stays, like any other field edited here.
   const sourceById = new Map(source.workPackages.map((wp) => [wp.id, wp]))
   const parentOf = new Map(
-    (scope.db.prepare('SELECT id, parent_id FROM task').all() as Array<{ id: number; parent_id: number | null }>).map((row) => [row.id, row.parent_id]),
+    (scope.db.prepare('SELECT id, parent_id FROM task').all() as Array<{ id: number; parent_id: number | null }>).map(
+      (row) => [row.id, row.parent_id],
+    ),
   )
   const isAncestorOrSelf = (candidate: number, of: number) => {
-    for (let at: number | null | undefined = of, steps = 0; at != null && steps < 10_000; at = parentOf.get(at), steps++) {
+    for (
+      let at: number | null | undefined = of, steps = 0;
+      at != null && steps < 10_000;
+      at = parentOf.get(at), steps++
+    ) {
       if (at === candidate) {
         return true
       }
@@ -416,7 +462,9 @@ function writeImport(scope: Scope, input: ImportInput): OpenProjectImportResult 
     return false
   }
   const keyOfTask = (id: number) => {
-    const number = numberOf.get(id) ?? (scope.db.prepare('SELECT number FROM task WHERE id = ?').get(id) as { number: number } | undefined)?.number
+    const number =
+      numberOf.get(id) ??
+      (scope.db.prepare('SELECT number FROM task WHERE id = ?').get(id) as { number: number } | undefined)?.number
     return number === undefined ? null : keyOf(scope, number)
   }
   const setParent = scope.db.prepare('UPDATE task SET parent_id = ? WHERE id = ?')
@@ -450,7 +498,11 @@ function writeImport(scope: Scope, input: ImportInput): OpenProjectImportResult 
       // Moved here and in OpenProject, to different parents.
       const force = overwritten(numberOf.get(taskId) as number)
       const clash = clashes.get(taskId) ?? { fields: [], overwritten: force }
-      clash.fields.push({ field: 'parent', here: describe('parent', { ...theirs, parent: current }, keyOfTask), openProject: describe('parent', theirs, keyOfTask) })
+      clash.fields.push({
+        field: 'parent',
+        here: describe('parent', { ...theirs, parent: current }, keyOfTask),
+        openProject: describe('parent', theirs, keyOfTask),
+      })
       clashes.set(taskId, clash)
       if (!force) {
         continue
@@ -463,15 +515,26 @@ function writeImport(scope: Scope, input: ImportInput): OpenProjectImportResult 
     setParent.run(parentTask, taskId)
     parentOf.set(taskId, parentTask)
     if (last) {
-      record(scope, taskId, 'field', 'parent', current === null ? null : keyOfTask(current), parentTask === null ? null : keyOfTask(parentTask))
+      record(
+        scope,
+        taskId,
+        'field',
+        'parent',
+        current === null ? null : keyOfTask(current),
+        parentTask === null ? null : keyOfTask(parentTask),
+      )
       changedIds.add(taskId)
     }
   }
   if (outside > 0) {
-    notes.push(`${plural(outside, 'work package has its parent', 'work packages have their parent')} outside the project: imported as top-level tasks.`)
+    notes.push(
+      `${plural(outside, 'work package has its parent', 'work packages have their parent')} outside the project: imported as top-level tasks.`,
+    )
   }
   if (refused > 0) {
-    notes.push(`${plural(refused, 'task keeps its parent', 'tasks keep their parent')} here: OpenProject's would put a task under its own subtask.`)
+    notes.push(
+      `${plural(refused, 'task keeps its parent', 'tasks keep their parent')} here: OpenProject's would put a task under its own subtask.`,
+    )
   }
 
   // What OpenProject had, as the next run's point of comparison.
@@ -490,17 +553,29 @@ function writeImport(scope: Scope, input: ImportInput): OpenProjectImportResult 
     const order = [...kept, ...fresh]
     const ranks = evenRanks(order.length)
     const setRank = scope.db.prepare('UPDATE task SET rank = ? WHERE id = ?')
-    order.forEach((id, index) => setRank.run(ranks[index] as string, id))
+    for (const [index, id] of order.entries()) {
+      setRank.run(ranks[index] as string, id)
+    }
   }
   const highest = (scope.db.prepare('SELECT coalesce(max(number), 0) AS n FROM task').get() as { n: number }).n
-  scope.db.prepare("UPDATE project_meta SET value = ? WHERE key = 'next_number'").run(String(Math.max(firstFree, highest + 1)))
+  scope.db
+    .prepare("UPDATE project_meta SET value = ? WHERE key = 'next_number'")
+    .run(String(Math.max(firstFree, highest + 1)))
 
   // Comments not imported before, with their author and date.
   const knownComments = new Set(
-    (scope.db.prepare('SELECT source_id FROM comment_source WHERE source = ?').all(origin) as Array<{ source_id: string }>).map((row) => row.source_id),
+    (
+      scope.db.prepare('SELECT source_id FROM comment_source WHERE source = ?').all(origin) as Array<{
+        source_id: string
+      }>
+    ).map((row) => row.source_id),
   )
-  const insertComment = scope.db.prepare('INSERT INTO comment (task_id, author_kind, author_name, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
-  const insertCommentSource = scope.db.prepare('INSERT INTO comment_source (comment_id, source, source_id) VALUES (?, ?, ?)')
+  const insertComment = scope.db.prepare(
+    'INSERT INTO comment (task_id, author_kind, author_name, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+  )
+  const insertCommentSource = scope.db.prepare(
+    'INSERT INTO comment_source (comment_id, source, source_id) VALUES (?, ?, ?)',
+  )
   let internal = 0
   let automatic = 0
   for (const wp of source.workPackages) {
@@ -521,16 +596,29 @@ function writeImport(scope: Scope, input: ImportInput): OpenProjectImportResult 
         continue
       }
       const author = actor(comment.userId, null)
-      const inserted = insertComment.run(taskId, author.kind, author.name, mapMarkdown(comment.body, base, input.copies), comment.createdAt || now(), comment.updatedAt || now())
+      const inserted = insertComment.run(
+        taskId,
+        author.kind,
+        author.name,
+        mapMarkdown(comment.body, base, input.copies),
+        comment.createdAt || now(),
+        comment.updatedAt || now(),
+      )
       insertCommentSource.run(Number(inserted.lastInsertRowid), origin, String(comment.id))
       comments++
     }
   }
   if (internal > 0) {
-    skipped.push({ source: 'Comments', summary: plural(internal, 'internal comment', 'internal comments'), reason: 'Internal in OpenProject: only some members may read them there' })
+    skipped.push({
+      source: 'Comments',
+      summary: plural(internal, 'internal comment', 'internal comments'),
+      reason: 'Internal in OpenProject: only some members may read them there',
+    })
   }
   if (automatic > 0) {
-    notes.push(`${plural(automatic, 'automatic note', 'automatic notes')} ("Updated automatically by changing values within child work package") left out.`)
+    notes.push(
+      `${plural(automatic, 'automatic note', 'automatic notes')} ("Updated automatically by changing values within child work package") left out.`,
+    )
   }
 
   const conflicts: OpenProjectConflict[] = [...clashes]
@@ -545,11 +633,15 @@ function writeImport(scope: Scope, input: ImportInput): OpenProjectImportResult 
   const conflictKeys = new Set(conflicts.map((conflict) => conflict.key.toUpperCase()))
   const strays = [...overwrite].filter((key) => !conflictKeys.has(key))
   if (strays.length > 0) {
-    notes.push(`Nothing to overwrite on ${strays.join(', ')}: ${strays.length === 1 ? 'it has' : 'they have'} no conflict with OpenProject.`)
+    notes.push(
+      `Nothing to overwrite on ${strays.join(', ')}: ${strays.length === 1 ? 'it has' : 'they have'} no conflict with OpenProject.`,
+    )
   }
   const kept = conflicts.filter((conflict) => !conflict.overwritten).length
   if (kept > 0) {
-    notes.push(`${plural(kept, 'task keeps', 'tasks keep')} the edits made here where OpenProject changed the same fields: see the conflicts.`)
+    notes.push(
+      `${plural(kept, 'task keeps', 'tasks keep')} the edits made here where OpenProject changed the same fields: see the conflicts.`,
+    )
   }
 
   const outcome: OpenProjectImportResult = {
@@ -563,7 +655,9 @@ function writeImport(scope: Scope, input: ImportInput): OpenProjectImportResult 
     notes,
   }
   scope.db
-    .prepare('UPDATE openproject_import SET mapping = ?, keep_numbers = ?, last_at = ?, last_by = ?, last_result = ? WHERE id = 1')
+    .prepare(
+      'UPDATE openproject_import SET mapping = ?, keep_numbers = ?, last_at = ?, last_by = ?, last_result = ? WHERE id = 1',
+    )
     .run(JSON.stringify(mapping), input.keepNumbers ? 1 : 0, now(), scope.inv.actor.name, JSON.stringify(outcome))
   return outcome
 }

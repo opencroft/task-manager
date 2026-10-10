@@ -40,10 +40,14 @@ test('the key pattern names only the listed projects', () => {
 
 test('keys are resolved with one read per project that owns any, and unknown ones answer null', async () => {
   const reads: Array<[string, number[]]> = []
-  const answer = await resolveReferences(INSTANCES, ['DEMO-1', 'WEB-5', 'DEMO-2', 'NOPE-1', 'not a key', 'DEMO-1'], (inst, numbers) => {
-    reads.push([inst.instanceId, numbers])
-    return inst.instanceId === 'i1' ? [summary('DEMO-1', 'Fix login')] : []
-  })
+  const answer = await resolveReferences(
+    INSTANCES,
+    ['DEMO-1', 'WEB-5', 'DEMO-2', 'NOPE-1', 'not a key', 'DEMO-1'],
+    (inst, numbers) => {
+      reads.push([inst.instanceId, numbers])
+      return inst.instanceId === 'i1' ? [summary('DEMO-1', 'Fix login')] : []
+    },
+  )
   assert.deepEqual(reads, [
     ['i1', [1, 2]],
     ['i2', [5]],
@@ -73,7 +77,10 @@ test('a project that cannot be read fails the answer rather than reporting its t
 })
 
 test('keys must be a list of strings', async () => {
-  await assert.rejects(resolveReferences(INSTANCES, 'DEMO-1', () => []), /list of task keys/)
+  await assert.rejects(
+    resolveReferences(INSTANCES, 'DEMO-1', () => []),
+    /list of task keys/,
+  )
   assert.equal(projectOfKey('DEMO-12')?.number, 12)
   assert.equal(projectOfKey('demo-12'), null)
 })

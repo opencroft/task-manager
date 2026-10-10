@@ -115,7 +115,9 @@ function agentRounds(db: Db, taskId: number, now: string): number {
     .get(taskId) as { at: string | null }
   const since = lastPerson.at && lastPerson.at > windowStart ? lastPerson.at : windowStart
   const row = db
-    .prepare('SELECT count(DISTINCT comment_id) AS n FROM mention_delivery WHERE task_id = ? AND by_agent = 1 AND at > ?')
+    .prepare(
+      'SELECT count(DISTINCT comment_id) AS n FROM mention_delivery WHERE task_id = ? AND by_agent = 1 AND at > ?',
+    )
     .get(taskId, since) as { n: number }
   return row.n
 }
@@ -149,13 +151,25 @@ export function planMentions(
     db.prepare(
       `INSERT INTO activity (task_id, actor_kind, actor_name, kind, field, from_value, to_value, at)
        VALUES (?, ?, ?, 'field', 'agent mentions', 'on', ?, ?)`,
-    ).run(taskId, event.actor.kind, event.actor.name, `paused (${LOOP_ROUNDS} agent rounds in ${LOOP_WINDOW_MS / 60000} minutes)`, at)
+    ).run(
+      taskId,
+      event.actor.kind,
+      event.actor.name,
+      `paused (${LOOP_ROUNDS} agent rounds in ${LOOP_WINDOW_MS / 60000} minutes)`,
+      at,
+    )
     env.changed([event.task.key])
     return []
   }
 
-  const input: MentionMessageInput = { app: env.app, task, comment: { author: event.comment.author.name, body: event.comment.body } }
-  const record = db.prepare('INSERT INTO mention_delivery (task_id, comment_id, agent_id, by_agent, at) VALUES (?, ?, ?, ?, ?)')
+  const input: MentionMessageInput = {
+    app: env.app,
+    task,
+    comment: { author: event.comment.author.name, body: event.comment.body },
+  }
+  const record = db.prepare(
+    'INSERT INTO mention_delivery (task_id, comment_id, agent_id, by_agent, at) VALUES (?, ?, ?, ?, ?)',
+  )
   for (const agent of agents) {
     record.run(taskId, event.comment.id, agent.id, byAgent ? 1 : 0, at)
     touchSession(db, taskId, agent, at, null)
@@ -174,9 +188,17 @@ export function deliverMentions(env: MentionEnv, planned: PlannedDelivery[]): Pr
     planned.map((delivery) =>
       oneThreadAtATime({ app: env.app, taskId: delivery.taskId, agentId: delivery.agent.id }, async () => {
         const { db } = env
-        const where = await spaceChatFor(env.chats, env.spaceSlug, { nodeId: delivery.agent.id, name: delivery.agent.name }).catch((error) => ({ problem: reason(error) }))
+        const where = await spaceChatFor(env.chats, env.spaceSlug, {
+          nodeId: delivery.agent.id,
+          name: delivery.agent.name,
+        }).catch((error) => ({ problem: reason(error) }))
         if ('problem' in where || !env.chats) {
-          setNote(db, delivery.taskId, delivery.agent.id, `Not sent: ${'problem' in where ? where.problem : 'this host offers no group chats'}`)
+          setNote(
+            db,
+            delivery.taskId,
+            delivery.agent.id,
+            `Not sent: ${'problem' in where ? where.problem : 'this host offers no group chats'}`,
+          )
           env.changed([delivery.taskKey])
           return
         }
@@ -191,7 +213,14 @@ export function deliverMentions(env: MentionEnv, planned: PlannedDelivery[]): Pr
             // A thread archived when the task closed takes no messages until it is back.
             await env.chats.unarchive?.(reuse.ref)
             await env.chats.send({ thread: reuse.ref, message: mentionFollowUpMessage(delivery.input), queue: 'wait' })
-            saveThread.run(reuse.chatRef ?? chat.ref, chat.slug, reuse.threadId, reuse.ref, delivery.taskId, delivery.agent.id)
+            saveThread.run(
+              reuse.chatRef ?? chat.ref,
+              chat.slug,
+              reuse.threadId,
+              reuse.ref,
+              delivery.taskId,
+              delivery.agent.id,
+            )
           } else {
             const chats = env.chats
             const { thread } = await openTaskThread(delivery.taskKey, (title) =>
@@ -202,7 +231,14 @@ export function deliverMentions(env: MentionEnv, planned: PlannedDelivery[]): Pr
                 message: mentionOpeningMessage(delivery.input),
               }),
             )
-            saveThread.run(thread.chat.ref, thread.chat.slug, thread.threadId, thread.ref, delivery.taskId, delivery.agent.id)
+            saveThread.run(
+              thread.chat.ref,
+              thread.chat.slug,
+              thread.threadId,
+              thread.ref,
+              delivery.taskId,
+              delivery.agent.id,
+            )
           }
           setNote(db, delivery.taskId, delivery.agent.id, null)
         } catch (error) {

@@ -3,8 +3,8 @@
 // imports this module once, so status hooks registered here (see
 // ../hooks.ts) are live for every instance.
 
-import type { AppActionContext, AppActionHandler, AppInstanceContext } from '@opencroft/server'
-import host from '@opencroft/server'
+import type { AppActionContext, AppActionHandler, AppInstanceContext } from '@opencroft/server/apps'
+import { groupChats } from '@opencroft/server/chat'
 
 import { invocationOf, scopeFor } from '../actions.ts'
 import { type StatusChangeEvent, statusHooks } from '../hooks.ts'
@@ -12,17 +12,23 @@ import { inboxPort } from '../inbox/index.ts'
 import { broadcastTasksChanged } from '../live.ts'
 import { changeStatus, getTask } from '../service.ts'
 import { makeWorkflowActions, type PersonChatsPort } from './actions.ts'
-import { afterStatusChange, beforeStatusChange, type ChatsPort, type EngineEnv, recoverInterruptedCompactions } from './engine.ts'
+import {
+  afterStatusChange,
+  beforeStatusChange,
+  type ChatsPort,
+  type EngineEnv,
+  recoverInterruptedCompactions,
+} from './engine.ts'
 
 const now = () => new Date().toISOString()
 
 /**
  * The group chats the workflow opens sessions in, as the extension's own
- * identity. Null on a host that does not offer them; steps then record why
- * they could not open.
+ * identity. The engine's env also takes null, for tests and for a host
+ * that offers none; steps then record why they could not open.
  */
-function chats(): ChatsPort | null {
-  return (host as unknown as { groupChats?: ChatsPort }).groupChats ?? null
+function chats(): ChatsPort {
+  return groupChats
 }
 
 // `<space>.<app>`, the address an agent passes to app_call. The host builds
@@ -71,7 +77,9 @@ export const workflowActions: Record<string, AppActionHandler> = makeWorkflowAct
   getTask: (ctx, key) => getTask(scopeFor(ctx), key),
   actor: (ctx) => invocationOf(ctx).actor,
   person: (ctx) =>
-    !ctx.callerAgent && ctx.callerPerson?.id ? { id: ctx.callerPerson.id, name: ctx.callerPerson.name?.trim() || 'user' } : null,
+    !ctx.callerAgent && ctx.callerPerson?.id
+      ? { id: ctx.callerPerson.id, name: ctx.callerPerson.name?.trim() || 'user' }
+      : null,
   people: (ctx) => scopeFor(ctx).people(),
   tasks: (ctx) => ({ changeStatus: (input) => changeStatus(scopeFor(ctx), input) }),
   chats,

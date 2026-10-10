@@ -19,12 +19,13 @@ import path from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
-import type { ExtensionRouteContext, HostUser } from '@opencroft/server'
+import type { HostUser } from '@opencroft/server/people'
+import type { ExtensionRouteContext } from '@opencroft/server/routes'
 
 import { ATTACHMENT_MAX_BYTES, type TaskAttachment } from '../../shared/attachments.ts'
 import { type Scope, TaskError } from '../service.ts'
 import { incomingDir } from './files.ts'
-import { TYPE_HEAD_BYTES, attachReceived, attachmentWithFile, cleanName, tooLarge } from './store.ts'
+import { attachmentWithFile, attachReceived, cleanName, TYPE_HEAD_BYTES, tooLarge } from './store.ts'
 
 /**
  * The scope a request acts in: the `tasks` instance with id `appId`, as
@@ -42,7 +43,10 @@ export function contentDisposition(kind: 'inline' | 'attachment', name: string):
 }
 
 /** The one range asked for, as inclusive offsets; null for the whole file; 'unsatisfiable' for a range outside it. */
-export function parseRange(header: string | null, size: number): { start: number; end: number } | null | 'unsatisfiable' {
+export function parseRange(
+  header: string | null,
+  size: number,
+): { start: number; end: number } | null | 'unsatisfiable' {
   // Only a single range is served; several (rare, and only ever an
   // optimisation) get the whole file, which RFC 9110 allows.
   const match = header?.trim().match(/^bytes=(\d*)-(\d*)$/)
@@ -153,7 +157,10 @@ async function receive(request: Request, scope: Scope, url: URL): Promise<Respon
       ? Readable.fromWeb(request.body as unknown as import('node:stream/web').ReadableStream)
       : Readable.from([])
     await pipeline(source, counter, createWriteStream(file))
-    return json(201, attachReceived(scope, { key: url.searchParams.get('key'), name, file, size, head: Buffer.concat(head) }))
+    return json(
+      201,
+      attachReceived(scope, { key: url.searchParams.get('key'), name, file, size, head: Buffer.concat(head) }),
+    )
   } catch (error) {
     if (error instanceof TooLarge) {
       return json(413, { error: tooLarge(name).message })
@@ -166,26 +173,28 @@ async function receive(request: Request, scope: Scope, url: URL): Promise<Respon
 }
 
 /** The session route's handler: GET or HEAD reads a file, POST adds one. */
-export const attachmentsRoute = (scopeOf: RouteScope) => async (request: Request, { person }: ExtensionRouteContext): Promise<Response> => {
-  const url = new URL(request.url)
-  try {
-    const scope = await scopeOf(url.searchParams.get('app'), person)
-    if (!scope) {
-      return json(404, { error: 'No tasks App with that id; pass the App instance as "app"' })
+export const attachmentsRoute =
+  (scopeOf: RouteScope) =>
+  async (request: Request, { person }: ExtensionRouteContext): Promise<Response> => {
+    const url = new URL(request.url)
+    try {
+      const scope = await scopeOf(url.searchParams.get('app'), person)
+      if (!scope) {
+        return json(404, { error: 'No tasks App with that id; pass the App instance as "app"' })
+      }
+      switch (request.method) {
+        case 'GET':
+        case 'HEAD':
+          return await serve(request, scope, url)
+        case 'POST':
+          return await receive(request, scope, url)
+        default:
+          return json(405, { error: 'Use GET to read an attachment and POST to add one' }, { Allow: 'GET, HEAD, POST' })
+      }
+    } catch (error) {
+      if (error instanceof TaskError) {
+        return json(400, { error: error.message })
+      }
+      throw error
     }
-    switch (request.method) {
-      case 'GET':
-      case 'HEAD':
-        return await serve(request, scope, url)
-      case 'POST':
-        return await receive(request, scope, url)
-      default:
-        return json(405, { error: 'Use GET to read an attachment and POST to add one' }, { Allow: 'GET, HEAD, POST' })
-    }
-  } catch (error) {
-    if (error instanceof TaskError) {
-      return json(400, { error: error.message })
-    }
-    throw error
   }
-}

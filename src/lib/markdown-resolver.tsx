@@ -2,11 +2,14 @@
 // (see shared/references.ts). Recognises only the keys of projects that exist,
 // so `UTF-8` or `GPT-4` stay text.
 
-import { legacy, type MarkdownReference, type MarkdownResolver } from '@opencroft/client'
+import { invoke } from '@opencroft/client/actions'
+import { extensionId } from '@opencroft/client/extension'
+import type { MarkdownReference, MarkdownResolver } from '@opencroft/client/markdown'
+import { getStream } from '@opencroft/client/streams'
+import { toast } from 'sonner'
 
 import { TaskStatusBadge } from '@/components/ui/tasks/task-status-badge'
 import { TaskTypeIcon } from '@/components/ui/tasks/task-type-icon'
-
 import {
   REFERENCE_ACTIONS,
   REFERENCE_RESOLVE_MAX,
@@ -16,8 +19,10 @@ import {
 } from '../../shared/references'
 import { TASKS_EVENT, type TasksEvent } from '../../shared/types'
 
-interface EventStream {
-  subscribe(fn: (chunk: { name?: string; payload?: Record<string, unknown> }) => void): () => void
+/** One chunk of the extension's `events` stream, as the server broadcasts it. */
+interface TasksEventChunk {
+  name?: string
+  payload?: TasksEvent
 }
 
 const taskHref = (app: string, key: string) => {
@@ -32,17 +37,19 @@ function toReference(task: TaskReference): MarkdownReference {
     label: task.key,
     detail: task.summary,
     icon: <TaskTypeIcon type={task.type} />,
-    state: <TaskStatusBadge size="sm" name={task.status.name} category={task.status.category} color={task.status.color} />,
+    state: (
+      <TaskStatusBadge size='sm' name={task.status.name} category={task.status.category} color={task.status.color} />
+    ),
     href: taskHref(task.app, task.key),
   }
 }
 
-const events = () => legacy.getStream(legacy.extensionId, 'events') as unknown as EventStream
+const events = () => getStream<TasksEventChunk>(extensionId, 'events')
 
 function onTasksEvent(listener: (event: TasksEvent) => void): () => void {
   return events().subscribe((chunk) => {
     if (chunk?.name === TASKS_EVENT && chunk.payload) {
-      listener(chunk.payload as unknown as TasksEvent)
+      listener(chunk.payload)
     }
   })
 }
@@ -58,8 +65,7 @@ function watchPattern(set: (pattern: string | null) => void): () => void {
       return
     }
     reading = true
-    legacy
-      .invoke<ReferenceProject[]>(REFERENCE_ACTIONS.projects)
+    invoke<ReferenceProject[]>(REFERENCE_ACTIONS.projects)
       .then((projects) => {
         known = new Set(projects.map((project) => project.instanceId))
         set(taskKeyPattern(projects))
@@ -85,7 +91,7 @@ export const taskKeyResolver: MarkdownResolver = {
   resolve: async (keys) => {
     const answers: Record<string, MarkdownReference | null> = {}
     for (let at = 0; at < keys.length; at += REFERENCE_RESOLVE_MAX) {
-      const tasks = await legacy.invoke<Record<string, TaskReference | null>>(
+      const tasks = await invoke<Record<string, TaskReference | null>>(
         REFERENCE_ACTIONS.resolve,
         keys.slice(at, at + REFERENCE_RESOLVE_MAX),
       )
@@ -104,8 +110,8 @@ export const taskKeyResolver: MarkdownResolver = {
       icon: 'Copy',
       onSelect: () => {
         navigator.clipboard.writeText(key).then(
-          () => legacy.toast.success('Copied', { duration: 1500 }),
-          () => legacy.toast.error('Could not copy to the clipboard'),
+          () => toast.success('Copied', { duration: 1500 }),
+          () => toast.error('Could not copy to the clipboard'),
         )
       },
     },

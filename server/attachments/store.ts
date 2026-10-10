@@ -6,14 +6,10 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 
-import {
-  ATTACHMENT_MAX_BYTES,
-  type TaskAttachInput,
-  type TaskAttachment,
-  type TaskAttachmentRenameInput,
-} from '../../shared/attachments.ts'
+import type { ActionInputs } from '../../shared/action-inputs.ts'
+import { ATTACHMENT_MAX_BYTES, type TaskAttachment } from '../../shared/attachments.ts'
 import { transaction } from '../db.ts'
-import { type Scope, TaskError, keyOf, record, requireRow, touch } from '../service.ts'
+import { keyOf, record, requireRow, type Scope, TaskError, touch } from '../service.ts'
 import { decideType } from './content-type.ts'
 import { attachmentFile, attachmentsDir, incomingDir, removeGoneFiles } from './files.ts'
 
@@ -51,8 +47,11 @@ export function cleanName(name: unknown): string {
   const base = String(name ?? '')
     .split(/[\\/]/)
     .pop()
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this removes
-  const clean = (base ?? '').replace(/\s+/g, ' ').replace(/[\u0000-\u001f\u007f]/g, '').trim()
+  const clean = (base ?? '')
+    .replace(/\s+/g, ' ')
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this removes
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
   if (!clean || clean === '.' || clean === '..') {
     throw new TaskError('"name" must be a file name, e.g. "screenshot.png"')
   }
@@ -65,10 +64,8 @@ export function cleanName(name: unknown): string {
 }
 
 /** The bytes of `contentBase64`, refused when it is not base64 or decodes past the limit. */
-export function decodeContent(name: string, contentBase64: unknown): Buffer {
-  const text = String(contentBase64 ?? '')
-    .replace(/^data:[^,]*;base64,/, '')
-    .replace(/\s+/g, '')
+export function decodeContent(name: string, contentBase64: string): Buffer {
+  const text = contentBase64.replace(/^data:[^,]*;base64,/, '').replace(/\s+/g, '')
   if (text.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(text)) {
     throw new TaskError('"contentBase64" must be the file\'s bytes in base64 (a data: URL prefix is fine)')
   }
@@ -108,7 +105,9 @@ function requireDataDir(scope: Scope): string {
  */
 export function tooLarge(name: string, size?: number): TaskError {
   const limit = megabytes(ATTACHMENT_MAX_BYTES)
-  return new TaskError(`${name} is ${size === undefined ? `over ${limit}` : megabytes(size)}; the limit per file is ${limit}`)
+  return new TaskError(
+    `${name} is ${size === undefined ? `over ${limit}` : megabytes(size)}; the limit per file is ${limit}`,
+  )
 }
 
 /**
@@ -129,7 +128,14 @@ function recordFile(
   let target: string | undefined
   try {
     transaction(scope.db, () => {
-      ;({ attachment, file: target } = placeFile(scope, task.id, { name, file, size, head, uploader: scope.inv.actor, createdAt: new Date().toISOString() }))
+      ;({ attachment, file: target } = placeFile(scope, task.id, {
+        name,
+        file,
+        size,
+        head,
+        uploader: scope.inv.actor,
+        createdAt: new Date().toISOString(),
+      }))
     })
   } catch (error) {
     if (target) {
@@ -156,7 +162,11 @@ export interface IncomingFile {
  * write its row and the task's history. The caller holds the transaction;
  * if it rolls back, the caller removes the returned `file`.
  */
-export function placeFile(scope: Scope, taskId: number, incoming: IncomingFile): { attachment: TaskAttachment; file: string } {
+export function placeFile(
+  scope: Scope,
+  taskId: number,
+  incoming: IncomingFile,
+): { attachment: TaskAttachment; file: string } {
   const dataDir = requireDataDir(scope)
   const { contentType, previewable } = decideType(incoming.head, incoming.name)
   const row: AttachmentRow = {
@@ -175,7 +185,17 @@ export function placeFile(scope: Scope, taskId: number, incoming: IncomingFile):
       `INSERT INTO task_attachment (id, task_id, name, size, content_type, previewable, uploader_kind, uploader_name, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(row.id, row.task_id, row.name, row.size, row.content_type, row.previewable, row.uploader_kind, row.uploader_name, row.created_at)
+    .run(
+      row.id,
+      row.task_id,
+      row.name,
+      row.size,
+      row.content_type,
+      row.previewable,
+      row.uploader_kind,
+      row.uploader_name,
+      row.created_at,
+    )
   record(scope, taskId, 'attachment_added', null, null, incoming.name)
   touch(scope, taskId)
   const target = attachmentFile(dataDir, row.id)
@@ -185,7 +205,7 @@ export function placeFile(scope: Scope, taskId: number, incoming: IncomingFile):
 }
 
 /** Attach base64 bytes: how an agent attaches, through `task_attach`. */
-export function attach(scope: Scope, input: TaskAttachInput): TaskAttachment {
+export function attach(scope: Scope, input: ActionInputs['task_attach']): TaskAttachment {
   const task = requireRow(scope, input.key)
   const name = cleanName(input.name)
   const bytes = decodeContent(name, input.contentBase64)
@@ -222,7 +242,7 @@ export function attachReceived(
 }
 
 /** A task's attachments, oldest first. */
-export function listAttachments(scope: Scope, key: unknown): TaskAttachment[] {
+export function listAttachments(scope: Scope, key: string): TaskAttachment[] {
   const task = requireRow(scope, key)
   const rows = scope.db
     .prepare('SELECT * FROM task_attachment WHERE task_id = ? ORDER BY created_at, rowid')
@@ -231,7 +251,7 @@ export function listAttachments(scope: Scope, key: unknown): TaskAttachment[] {
 }
 
 /** One attachment with its bytes in base64: how an agent reads a file, through `task_attachment_get`. */
-export function readAttachment(scope: Scope, id: unknown): { attachment: TaskAttachment; contentBase64: string } {
+export function readAttachment(scope: Scope, id: string): { attachment: TaskAttachment; contentBase64: string } {
   const { attachment, file } = attachmentWithFile(scope, id)
   return { attachment, contentBase64: fs.readFileSync(file).toString('base64') }
 }
@@ -242,7 +262,7 @@ export function attachmentWithFile(scope: Scope, id: unknown): { attachment: Tas
   return { attachment: toAttachment(row), file: attachmentFile(requireDataDir(scope), row.id) }
 }
 
-export function renameAttachment(scope: Scope, input: TaskAttachmentRenameInput): TaskAttachment {
+export function renameAttachment(scope: Scope, input: ActionInputs['task_attachment_rename']): TaskAttachment {
   const row = requireAttachment(scope, input.id)
   const name = cleanName(input.name)
   if (name === row.name) {
@@ -257,7 +277,7 @@ export function renameAttachment(scope: Scope, input: TaskAttachmentRenameInput)
   return toAttachment({ ...row, name })
 }
 
-export function deleteAttachment(scope: Scope, id: unknown): { deleted: string } {
+export function deleteAttachment(scope: Scope, id: string): { deleted: string } {
   const row = requireAttachment(scope, id)
   transaction(scope.db, () => {
     scope.db.prepare('DELETE FROM task_attachment WHERE id = ?').run(row.id)

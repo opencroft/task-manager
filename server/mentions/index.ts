@@ -3,22 +3,22 @@
 // listener registered here is live for every instance. Sessions open in the
 // space's chat, like workflow steps, as the extension's own identity.
 
-import type { AppActionContext, AppActionHandler } from '@opencroft/server'
-import host from '@opencroft/server'
+import type { AppActionContext } from '@opencroft/server/apps'
+import { groupChats } from '@opencroft/server/chat'
 
 import type { MentionActionId } from '../../shared/mentions.ts'
-import { scopeFor } from '../actions.ts'
+import { scopedActions, scopeFor } from '../actions.ts'
 import { onTaskEvent } from '../hooks.ts'
-import { mentionedIn } from '../inbox/store.ts'
 import { broadcastTasksChanged } from '../live.ts'
 import { getTask } from '../service.ts'
 import type { ChatsPort } from '../workflows/engine.ts'
-import { type MentionEnv, deliverMentions, listMentionSessions, planMentions } from './engine.ts'
+import { deliverMentions, listMentionSessions, type MentionEnv, planMentions } from './engine.ts'
+import { mentionedIn } from './mentioned.ts'
 
 const now = () => new Date().toISOString()
 
-function chats(): ChatsPort | null {
-  return (host as unknown as { groupChats?: ChatsPort }).groupChats ?? null
+function chats(): ChatsPort {
+  return groupChats
 }
 
 function envFor(ctx: AppActionContext): MentionEnv {
@@ -32,18 +32,13 @@ function envFor(ctx: AppActionContext): MentionEnv {
   }
 }
 
-const handlers: Record<MentionActionId, (ctx: AppActionContext, params: Record<string, unknown>) => unknown> = {
-  mention_sessions: (ctx, params) => {
-    const scope = scopeFor(ctx)
-    const task = getTask(scope, params.key)
+export const mentionActions = scopedActions<MentionActionId>({
+  mention_sessions: (scope, input) => {
+    const task = getTask(scope, input.key)
     const { id } = scope.db.prepare('SELECT id FROM task WHERE number = ?').get(task.number) as { id: number }
     return { sessions: listMentionSessions(scope.db, id) }
   },
-}
-
-export const mentionActions: Record<string, AppActionHandler> = Object.fromEntries(
-  Object.entries(handlers).map(([id, handler]) => [id, (ctx: AppActionContext, params: Record<string, unknown>) => handler(ctx, params ?? {})]),
-)
+})
 
 // Registered once per process; a hot-reloaded copy drops the previous copy's
 // listener first, or every mention would be sent twice.
@@ -57,8 +52,10 @@ globalForMentions.__taskPipelinesMentionHooks = [
       return
     }
     const scope = scopeFor(event.inv.ctx, event.inv)
-    const mentioned = await mentionedIn(event.comment.body, { agents: scope.agents, people: scope.people })
-    const agents = mentioned.filter((party) => party.kind === 'agent' && party.id).map((party) => ({ id: party.id!, name: party.name }))
+    const mentioned = await mentionedIn(event.comment.body)
+    const agents = mentioned.flatMap((party) =>
+      party.kind === 'agent' && party.id ? [{ id: party.id, name: party.name }] : [],
+    )
     if (agents.length === 0) {
       return
     }

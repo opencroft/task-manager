@@ -25,7 +25,9 @@ export function tempDataDir(): string {
 
 /** The files in `attachments/`, not counting the `incoming/` directory. */
 export function storedFiles(dataDir: string): string[] {
-  return fs.existsSync(attachmentsDir(dataDir)) ? fs.readdirSync(attachmentsDir(dataDir)).filter((name) => name !== 'incoming') : []
+  return fs.existsSync(attachmentsDir(dataDir))
+    ? fs.readdirSync(attachmentsDir(dataDir)).filter((name) => name !== 'incoming')
+    : []
 }
 
 export function makeScope(actor: Scope['inv']['actor'] = { kind: 'agent', name: 'Ace (QA)' }): TestScope {

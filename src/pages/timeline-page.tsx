@@ -4,7 +4,7 @@
 // actions, and refreshes on every change — this tab's, another tab's or an
 // agent's.
 
-import { AppToolbar } from '@opencroft/client'
+import { AppToolbar } from '@opencroft/client/app'
 import { ExternalLink, Unlink } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
@@ -18,7 +18,6 @@ import type { TimelineLink } from '@/components/ui/timeline/timeline-links-model
 import type { TimelineTask } from '@/components/ui/timeline/timeline-model'
 import type { TimelineVersionMarker } from '@/components/ui/timeline/timeline-version-markers'
 import { TimelineView } from '@/components/ui/timeline/timeline-view'
-
 import type { TaskSummary } from '../../shared/types'
 import { useProject } from '../app/project'
 import { usePageShortcuts } from '../app/shortcuts'
@@ -60,8 +59,11 @@ export function TimelinePage() {
   const versionMarkers = useMemo<TimelineVersionMarker[]>(
     () =>
       versions.flatMap((version) => {
-        const date = version.state === 'planned' ? version.targetDate : version.state === 'released' ? version.releasedAt : null
-        return date && version.state !== 'archived' ? [{ id: String(version.id), name: version.name, date, state: version.state }] : []
+        const date =
+          version.state === 'planned' ? version.targetDate : version.state === 'released' ? version.releasedAt : null
+        return date && version.state !== 'archived'
+          ? [{ id: String(version.id), name: version.name, date, state: version.state }]
+          : []
       }),
     [versions],
   )
@@ -120,7 +122,9 @@ export function TimelinePage() {
     (change: TimelineChange) => {
       // Dates show at once; the live refresh then confirms them. A move waits
       // for the server, since only the server computes rank.
-      setTasks((current) => current?.map((task) => (task.key === change.key ? withChange(task, change) : task)) ?? current)
+      setTasks(
+        (current) => current?.map((task) => (task.key === change.key ? withChange(task, change) : task)) ?? current,
+      )
       const request =
         change.type === 'schedule'
           ? api.task_update({ key: change.key, startDate: change.start, endDate: change.end })
@@ -167,7 +171,9 @@ export function TimelinePage() {
   const onLink = useCallback(
     (link: TimelineLink) => {
       // A refusal (a loop) is worth reading, so it shows above the timeline like a refused move.
-      api.task_link({ type: 'blocks', from: link.from, to: link.to }).catch((error) => setChangeError(errorMessage(error)))
+      api
+        .task_link({ type: 'blocks', from: link.from, to: link.to })
+        .catch((error) => setChangeError(errorMessage(error)))
     },
     [api],
   )
@@ -185,8 +191,20 @@ export function TimelinePage() {
 
   const linkMenu = useCallback(
     (link: TimelineLink): ItemMenuEntries => [
-      { id: 'open-blocker', label: `Open ${link.from}`, icon: ExternalLink, group: 'open', onSelect: () => openTask(link.from) },
-      { id: 'open-blocked', label: `Open ${link.to}`, icon: ExternalLink, group: 'open', onSelect: () => openTask(link.to) },
+      {
+        id: 'open-blocker',
+        label: `Open ${link.from}`,
+        icon: ExternalLink,
+        group: 'open',
+        onSelect: () => openTask(link.from),
+      },
+      {
+        id: 'open-blocked',
+        label: `Open ${link.to}`,
+        icon: ExternalLink,
+        group: 'open',
+        onSelect: () => openTask(link.to),
+      },
       { id: 'remove', label: 'Remove link…', icon: Unlink, destructive: true, onSelect: () => onLinkClick(link) },
     ],
     [onLinkClick],

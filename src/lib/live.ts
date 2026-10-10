@@ -3,18 +3,16 @@
 // subscribes and refetches what it shows; calls are debounced so a burst of
 // changes (a status deletion moving twenty tasks) costs one refetch.
 
-import { legacy } from '@opencroft/client'
+import { extensionId } from '@opencroft/client/extension'
+import { getStream } from '@opencroft/client/streams'
 import { useEffect, useRef } from 'react'
 
 import { TASKS_EVENT, type TasksEvent } from '../../shared/types'
 
-interface EventChunk {
+/** One chunk of the extension's `events` stream, as the server broadcasts it. */
+interface TasksEventChunk {
   name?: string
-  payload?: Record<string, unknown>
-}
-
-interface EventStream {
-  subscribe(fn: (chunk: EventChunk) => void): () => void
+  payload?: TasksEvent
 }
 
 /**
@@ -27,14 +25,14 @@ export function useTasksLive(instanceId: string | null, onChange: (events: Tasks
   callback.current = onChange
 
   useEffect(() => {
-    const stream = legacy.getStream(legacy.extensionId, 'events') as unknown as EventStream
+    const stream = getStream<TasksEventChunk>(extensionId, 'events')
     let pending: TasksEvent[] = []
     let timer: ReturnType<typeof setTimeout> | undefined
     const unsubscribe = stream.subscribe((chunk) => {
       if (chunk?.name !== TASKS_EVENT) {
         return
       }
-      const event = chunk.payload as unknown as TasksEvent
+      const event = chunk.payload
       if (!event || (instanceId !== null && event.instanceId !== instanceId)) {
         return
       }

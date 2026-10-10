@@ -3,10 +3,11 @@ import { DatabaseSync } from 'node:sqlite'
 import { afterEach, test } from 'node:test'
 
 import type { Actor } from '../../shared/types.ts'
+import { parseParams } from '../action-params.ts'
 import { allMigrations, migrate } from '../db.ts'
-import { type TaskEvent, onTaskEvent } from '../hooks.ts'
-import { type Scope, addComment, changeStatus, createTask, deleteTask, updateTask } from '../service.ts'
-import { type Directory, deliver, excerptOf, listInbox, markRead, markUnread, mentionedIn, recipientKey, setMuted } from './store.ts'
+import { onTaskEvent, type TaskEvent } from '../hooks.ts'
+import { addComment, changeStatus, createTask, deleteTask, type Scope, updateTask } from '../service.ts'
+import { type Directory, deliver, excerptOf, listInbox, markRead, markUnread, recipientKey, setMuted } from './store.ts'
 
 const dir: Directory = {
   agents: async () => [
@@ -50,21 +51,19 @@ test('a recipient is keyed by id; a name resolves only when exactly one has it',
   assert.equal(await recipientKey(dir, { kind: 'person', name: 'Someone Else' }), null, 'free text has no inbox')
 })
 
-test('mentions: full names longest first, a first name only one has, never an e-mail address', async () => {
-  const names = async (body: string) => (await mentionedIn(body, dir)).map((p) => p.name)
-  assert.deepEqual(await names('@Ace (QA) please check, and @ace too'), ['Ace (QA)', 'Ace'])
-  assert.deepEqual(await names('thanks @Ada! cc @grace hopper.'), ['Ada Lovelace', 'Grace Hopper'])
-  assert.deepEqual(await names('@Alan is ambiguous; mail ada@example.com; @Boba is nobody'), [])
-  assert.deepEqual(await names('@Bob, @Bob'), ['Bob'])
-})
-
 test('delivery skips the actor, resolves roles, and lists newest first with the unread total', async () => {
   const s = makeScope()
   await createTask(as(s, { kind: 'agent', name: 'Bob' }), { summary: 'Fix login', type: 'bug' })
   await createTask(s, { summary: 'Other' })
-  const draft = { kind: 'status_changed' as const, taskNumber: 1, recipients: ['reporter' as const, 'assignee' as const] }
+  const draft = {
+    kind: 'status_changed' as const,
+    taskNumber: 1,
+    recipients: ['reporter' as const, 'assignee' as const],
+  }
   // Reporter Bob (agent); no assignee yet.
-  assert.deepEqual(await deliver(s.db, dir, { ...draft, actor: { kind: 'person', name: 'Ada Lovelace' } }, NOW), ['agent:agent_bob'])
+  assert.deepEqual(await deliver(s.db, dir, { ...draft, actor: { kind: 'person', name: 'Ada Lovelace' } }, NOW), [
+    'agent:agent_bob',
+  ])
   // Bob moving their own task is not news to them.
   assert.deepEqual(await deliver(s.db, dir, { ...draft, actor: { kind: 'agent', name: 'Bob' } }, NOW), [])
   await deliver(
@@ -100,29 +99,50 @@ test('filter, paging, mark read: ids of someone else are ignored; a deleted task
   for (const kind of ['assigned', 'mentioned', 'step_open', 'status_changed', 'workflow_finished'] as const) {
     await deliver(s.db, dir, { kind, taskNumber: kind === 'assigned' ? 2 : 1, recipients: [bob], actor: null }, NOW)
   }
-  await deliver(s.db, dir, { kind: 'assigned', taskNumber: 1, recipients: [{ kind: 'person', id: 'u_grace', name: 'Grace' }], actor: null }, NOW)
+  await deliver(
+    s.db,
+    dir,
+    { kind: 'assigned', taskNumber: 1, recipients: [{ kind: 'person', id: 'u_grace', name: 'Grace' }], actor: null },
+    NOW,
+  )
 
-  const kinds = (filter: Parameters<typeof listInbox>[3]) => listInbox(s.db, 'TASK', 'agent:agent_bob', filter).items.map((n) => n.kind)
+  const kinds = (filter: Parameters<typeof listInbox>[3]) =>
+    listInbox(s.db, 'TASK', 'agent:agent_bob', filter).items.map((n) => n.kind)
   assert.deepEqual(kinds({ filter: 'workflows' }), ['workflow_finished', 'step_open'])
   assert.deepEqual(kinds({ filter: 'mentions' }), ['mentioned'])
-  assert.throws(() => kinds({ filter: 'bogus' as never }), /Filters: all, assigned, mentions, workflows, status/)
+  // A filter outside the set is refused at the action boundary, before listInbox runs.
+  assert.throws(
+    () => parseParams('inbox_list', { filter: 'bogus' }),
+    /"filter" must be one of "all", "assigned", "mentions", "workflows" or "status", not "bogus"/,
+  )
 
   const first = listInbox(s.db, 'TASK', 'agent:agent_bob', { limit: 2 })
-  assert.deepEqual(first.items.map((n) => n.kind), ['workflow_finished', 'status_changed'])
-  const second = listInbox(s.db, 'TASK', 'agent:agent_bob', { limit: 2, before: first.nextBefore! })
-  assert.deepEqual(second.items.map((n) => n.kind), ['step_open', 'mentioned'])
-  const last = listInbox(s.db, 'TASK', 'agent:agent_bob', { limit: 2, before: second.nextBefore! })
+  assert.deepEqual(
+    first.items.map((n) => n.kind),
+    ['workflow_finished', 'status_changed'],
+  )
+  assert.ok(first.nextBefore)
+  const second = listInbox(s.db, 'TASK', 'agent:agent_bob', { limit: 2, before: first.nextBefore })
+  assert.deepEqual(
+    second.items.map((n) => n.kind),
+    ['step_open', 'mentioned'],
+  )
+  assert.ok(second.nextBefore)
+  const last = listInbox(s.db, 'TASK', 'agent:agent_bob', { limit: 2, before: second.nextBefore })
   assert.deepEqual([last.items.map((n) => n.kind), last.nextBefore], [['assigned'], null])
 
   const graces = listInbox(s.db, 'TASK', 'person:u_grace').items.map((n) => n.id)
-  assert.deepEqual(markRead(s.db, 'agent:agent_bob', { ids: [first.items[0]!.id, ...graces] }, NOW), { unread: 4 })
+  assert.deepEqual(markRead(s.db, 'agent:agent_bob', { ids: [first.items[0].id, ...graces] }, NOW), { unread: 4 })
   assert.equal(listInbox(s.db, 'TASK', 'person:u_grace').unread, 1, "Grace's stays unread")
   assert.equal(listInbox(s.db, 'TASK', 'agent:agent_bob').items[0]?.read, true)
   assert.throws(() => markRead(s.db, 'agent:agent_bob', { ids: [] }, NOW), /ids \(from inbox_list\)|all: true/)
   assert.deepEqual(markRead(s.db, 'agent:agent_bob', { all: true }, NOW), { unread: 0 })
 
   deleteTask(s, { key: 'TASK-1' })
-  assert.deepEqual(listInbox(s.db, 'TASK', 'agent:agent_bob').items.map((n) => n.task.key), ['TASK-2'])
+  assert.deepEqual(
+    listInbox(s.db, 'TASK', 'agent:agent_bob').items.map((n) => n.task.key),
+    ['TASK-2'],
+  )
 })
 
 test('mark unread: only your own; a muted task sends you nothing new until unmuted', async () => {
@@ -135,30 +155,60 @@ test('mark unread: only your own; a muted task sends you nothing new until unmut
   const [hers] = listInbox(s.db, 'TASK', 'person:u_grace').items
   markRead(s.db, 'agent:agent_bob', { all: true }, NOW)
   markRead(s.db, 'person:u_grace', { all: true }, NOW)
-  assert.deepEqual(markUnread(s.db, 'agent:agent_bob', { ids: [mine!.id, hers!.id] }), { unread: 1 })
+  assert.ok(mine)
+  assert.ok(hers)
+  assert.deepEqual(markUnread(s.db, 'agent:agent_bob', { ids: [mine.id, hers.id] }), { unread: 1 })
   assert.equal(listInbox(s.db, 'TASK', 'person:u_grace').unread, 0, "Grace's stays read")
   assert.throws(() => markUnread(s.db, 'agent:agent_bob', { ids: [] }), /ids/)
 
-  assert.deepEqual(setMuted(s.db, 'TASK', 'agent:agent_bob', { task: 'task-1', muted: true }, NOW), { task: 'TASK-1', muted: true })
+  assert.deepEqual(setMuted(s.db, 'TASK', 'agent:agent_bob', { task: 'task-1', muted: true }, NOW), {
+    task: 'TASK-1',
+    muted: true,
+  })
   // Muting twice is the same as once.
   setMuted(s.db, 'TASK', 'agent:agent_bob', { task: 'TASK-1', muted: true }, NOW)
   assert.equal(listInbox(s.db, 'TASK', 'agent:agent_bob').items[0]?.muted, true)
   assert.equal(listInbox(s.db, 'TASK', 'person:u_grace').items[0]?.muted, undefined, 'a mute is per recipient')
-  assert.deepEqual(await deliver(s.db, dir, { kind: 'status_changed', taskNumber: 1, recipients: [bob, grace], actor: null }, NOW), ['person:u_grace'])
+  assert.deepEqual(
+    await deliver(s.db, dir, { kind: 'status_changed', taskNumber: 1, recipients: [bob, grace], actor: null }, NOW),
+    ['person:u_grace'],
+  )
 
   setMuted(s.db, 'TASK', 'agent:agent_bob', { task: 'TASK-1', muted: false }, NOW)
-  assert.deepEqual(await deliver(s.db, dir, { kind: 'status_changed', taskNumber: 1, recipients: [bob], actor: null }, NOW), ['agent:agent_bob'])
-  assert.throws(() => setMuted(s.db, 'TASK', 'agent:agent_bob', { task: 'TASK-9', muted: true }, NOW), /No task "TASK-9"/)
-  assert.throws(() => setMuted(s.db, 'TASK', 'agent:agent_bob', { task: 'TASK-1', muted: 'yes' as never }, NOW), /muted: true/)
+  assert.deepEqual(
+    await deliver(s.db, dir, { kind: 'status_changed', taskNumber: 1, recipients: [bob], actor: null }, NOW),
+    ['agent:agent_bob'],
+  )
+  assert.throws(
+    () => setMuted(s.db, 'TASK', 'agent:agent_bob', { task: 'TASK-9', muted: true }, NOW),
+    /No task "TASK-9"/,
+  )
+  // A muted that is not true or false is refused at the action boundary, before setMuted runs.
+  assert.throws(
+    () => parseParams('inbox_mute', { task: 'TASK-1', muted: 'yes' }),
+    /"muted" must be a boolean, not a string/,
+  )
 })
 
 test('read notifications older than 90 days go when the recipient gets a new one', async () => {
   const s = makeScope()
   await createTask(s, { summary: 'A' })
   const bob = { kind: 'agent' as const, id: 'agent_bob', name: 'Bob' }
-  await deliver(s.db, dir, { kind: 'assigned', taskNumber: 1, recipients: [bob], actor: null }, '2026-01-01T00:00:00.000Z')
-  await deliver(s.db, dir, { kind: 'mentioned', taskNumber: 1, recipients: [bob], actor: null }, '2026-01-02T00:00:00.000Z')
-  markRead(s.db, 'agent:agent_bob', { ids: [listInbox(s.db, 'TASK', 'agent:agent_bob').items.at(-1)!.id] }, NOW)
+  await deliver(
+    s.db,
+    dir,
+    { kind: 'assigned', taskNumber: 1, recipients: [bob], actor: null },
+    '2026-01-01T00:00:00.000Z',
+  )
+  await deliver(
+    s.db,
+    dir,
+    { kind: 'mentioned', taskNumber: 1, recipients: [bob], actor: null },
+    '2026-01-02T00:00:00.000Z',
+  )
+  const oldest = listInbox(s.db, 'TASK', 'agent:agent_bob').items.at(-1)
+  assert.ok(oldest)
+  markRead(s.db, 'agent:agent_bob', { ids: [oldest.id] }, NOW)
   await deliver(s.db, dir, { kind: 'step_open', taskNumber: 1, recipients: [bob], actor: null }, NOW)
   assert.deepEqual(
     listInbox(s.db, 'TASK', 'agent:agent_bob').items.map((n) => n.kind),

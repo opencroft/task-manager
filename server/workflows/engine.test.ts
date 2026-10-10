@@ -12,8 +12,8 @@ import { normalizeDraft } from './definition.ts'
 import {
   afterStatusChange,
   beforeStatusChange,
-  cancelRun,
   type ChatsPort,
+  cancelRun,
   decideStep,
   type EngineEnv,
   finishStep,
@@ -147,7 +147,9 @@ function fakeChats(
       }
       const named = `${input.chat} ${input.agentNodeId} ${input.title}`
       if (titles.has(named)) {
-        throw Object.assign(new Error(`This agent already has a thread named "${input.title}" here`), { code: 'slug-taken' })
+        throw Object.assign(new Error(`This agent already has a thread named "${input.title}" here`), {
+          code: 'slug-taken',
+        })
       }
       titles.add(named)
       n += 1
@@ -236,8 +238,13 @@ function setup(
   )
   const chats = fakeChats(opts)
   const env: EngineEnv = { db, projectKey: 'TASK', app: 'dev.tasks', chats, spaceSlug: 'dev', now: () => now }
-  const status = (id: number) => all.find((s) => s.id === id)!
-  const assignee = opts.assignee === undefined ? ({ kind: 'agent', id: 'agent_dev', name: 'Dev' } as const) : opts.assignee
+  const status = (id: number) => {
+    const found = all.find((s) => s.id === id)
+    assert.ok(found)
+    return found
+  }
+  const assignee =
+    opts.assignee === undefined ? ({ kind: 'agent', id: 'agent_dev', name: 'Dev' } as const) : opts.assignee
   const task = (): TaskSummary => {
     const row = db.prepare('SELECT status_id FROM task WHERE number = 1').get() as { status_id: number }
     return {
@@ -315,14 +322,25 @@ test('starting moves the task to the first step, whose session opens with its re
 })
 
 test('a step with empty instructions opens with only how to finish it', () => {
-  const message = openingMessage({ app: 'dev.tasks', taskKey: 'TASK-1', stepName: 'Development', instructions: '  \n', transitions: ['In Review'] })
+  const message = openingMessage({
+    app: 'dev.tasks',
+    taskKey: 'TASK-1',
+    stepName: 'Development',
+    instructions: '  \n',
+    transitions: ['In Review'],
+  })
   assert.ok(message.startsWith('**When you are done**, finish this step'), message)
 })
 
 test("an agent's finish moves the task on; the next step opens for its fixed agent and quotes the summary", async () => {
   const { env, chats, task, changeAs } = setup()
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
-  await finishStep(env, changeAs(DEV), { task: task(), transition: 'in review', summary: 'Patched the handler', actor: DEV })
+  await finishStep(env, changeAs(DEV), {
+    task: task(),
+    transition: 'in review',
+    summary: 'Patched the handler',
+    actor: DEV,
+  })
   assert.equal(task().status.name, 'In Review')
   const steps = activeRunForTask(env.db, 'TASK', 1)?.steps ?? []
   assert.deepEqual(
@@ -447,20 +465,17 @@ function holding(chats: ReturnType<typeof fakeChats>, thread: string, tokens: nu
   chats.threads.set(thread, { ...usage, context: { usedTokens: tokens, contextLimit: 1_000_000 } })
 }
 
-/** Development done, then Review sends the task back: Development's rework round. */
-async function sendBack(s: ReturnType<typeof setup>): Promise<void> {
-  const { env, task, changeAs } = s
-  await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
-  await finishStep(env, changeAs(DEV), { task: task(), transition: 'In Review', summary: 'done', actor: DEV })
-  await finishStep(env, changeAs(REV), { task: task(), transition: 'In Progress', summary: 'Missing a test', actor: REV })
-}
-
 test('a rework into a session over the default threshold compacts it first, then gives the instructions again', async () => {
   const s = setup()
   await startWorkflow(s.env, s.changeAs(PERSON), { task: s.task(), actor: PERSON })
   await finishStep(s.env, s.changeAs(DEV), { task: s.task(), transition: 'In Review', summary: 'done', actor: DEV })
   holding(s.chats, 'dev.agent.t1', 350_000)
-  await finishStep(s.env, s.changeAs(REV), { task: s.task(), transition: 'In Progress', summary: 'Missing a test', actor: REV })
+  await finishStep(s.env, s.changeAs(REV), {
+    task: s.task(),
+    transition: 'In Progress',
+    summary: 'Missing a test',
+    actor: REV,
+  })
   await devLaneSettled()
 
   assert.deepEqual(
@@ -473,7 +488,10 @@ test('a rework into a session over the default threshold compacts it first, then
   )
   const rework = s.chats.sent[3]?.message ?? ''
   assert.match(rework, /back at Development\*\* \(round 2\)/)
-  assert.match(rework, /This session was compacted before this round\. Re-read the task and the run before you continue\./)
+  assert.match(
+    rework,
+    /This session was compacted before this round\. Re-read the task and the run before you continue\./,
+  )
   assert.match(rework, /The step's instructions:\n\nImplement TASK-1: It returns 500/)
   const dev = activeRunForTask(s.env.db, 'TASK', 1)?.steps[0]
   assert.equal(dev?.state, 'active')
@@ -483,7 +501,7 @@ test('a rework into a session over the default threshold compacts it first, then
   )
 })
 
-test("the finishing call does not wait for the compaction: the round shows it running until it ends", async () => {
+test('the finishing call does not wait for the compaction: the round shows it running until it ends', async () => {
   let release: (result: CompactResult) => void = () => {}
   const s = setup({ compact: () => new Promise((resolve) => (release = resolve)) })
   await startWorkflow(s.env, s.changeAs(PERSON), { task: s.task(), actor: PERSON })
@@ -492,7 +510,13 @@ test("the finishing call does not wait for the compaction: the round shows it ru
   await finishStep(s.env, s.changeAs(REV), { task: s.task(), transition: 'In Progress', summary: 'again', actor: REV })
 
   const round = () => activeRunForTask(s.env.db, 'TASK', 1)?.steps[0]?.rounds.at(-1)
-  assert.deepEqual(round()?.compaction, { outcome: 'running', threshold: 200_000, before: 350_000, after: null, error: null })
+  assert.deepEqual(round()?.compaction, {
+    outcome: 'running',
+    threshold: 200_000,
+    before: 350_000,
+    after: null,
+    error: null,
+  })
   assert.deepEqual(
     s.chats.sent.slice(2).map((m) => m.kind),
     ['compact'],
@@ -501,7 +525,13 @@ test("the finishing call does not wait for the compaction: the round shows it ru
 
   release({ outcome: 'compacted', contextBefore: 351_000, contextAfter: 30_000 })
   await devLaneSettled()
-  assert.deepEqual(round()?.compaction, { outcome: 'compacted', threshold: 200_000, before: 351_000, after: 30_000, error: null })
+  assert.deepEqual(round()?.compaction, {
+    outcome: 'compacted',
+    threshold: 200_000,
+    before: 351_000,
+    after: 30_000,
+    error: null,
+  })
   assert.deepEqual(
     s.chats.sent.slice(2).map((m) => m.kind),
     ['compact', 'send'],
@@ -539,7 +569,7 @@ test("a failed compaction still sends the round's message, without the re-read n
   })
 })
 
-test("a session that cannot be messaged after its compaction leaves the step waiting, and the compaction records its message unsent", async () => {
+test('a session that cannot be messaged after its compaction leaves the step waiting, and the compaction records its message unsent', async () => {
   const s = setup({
     compact: async (thread) => {
       s.chats.archived.add(thread)
@@ -589,7 +619,12 @@ test("a session at the step's threshold, a step that never compacts, and a sessi
     if (tokens !== null) {
       holding(s.chats, 'dev.agent.t1', tokens)
     }
-    await finishStep(s.env, s.changeAs(REV), { task: s.task(), transition: 'In Progress', summary: 'again', actor: REV })
+    await finishStep(s.env, s.changeAs(REV), {
+      task: s.task(),
+      transition: 'In Progress',
+      summary: 'again',
+      actor: REV,
+    })
     await devLaneSettled()
     assert.deepEqual(
       s.chats.sent.slice(2).map((m) => m.kind),
@@ -627,7 +662,9 @@ test('a round that ended while its session compacted records how the compaction 
   await finishStep(s.env, s.changeAs(DEV), { task: s.task(), transition: 'In Review', summary: 'done', actor: DEV })
   holding(s.chats, 'dev.agent.t1', 350_000)
   await finishStep(s.env, s.changeAs(REV), { task: s.task(), transition: 'In Progress', summary: 'again', actor: REV })
-  const runId = activeRunForTask(s.env.db, 'TASK', 1)!.id
+  const startedRun = activeRunForTask(s.env.db, 'TASK', 1)
+  assert.ok(startedRun)
+  const runId = startedRun.id
   await cancelRun(s.env, { task: s.task(), actor: PERSON })
   const sentAtCancel = s.chats.sent.length
 
@@ -635,7 +672,10 @@ test('a round that ended while its session compacted records how the compaction 
   await devLaneSettled()
   assert.equal(s.chats.sent.length, sentAtCancel, 'no rework message after the cancel')
   const round = getRun(s.env.db, 'TASK', runId)?.steps[0]?.rounds.at(-1)
-  assert.deepEqual([round?.endedBy, round?.compaction?.outcome, round?.compaction?.after], ['cancel', 'compacted', 25_000])
+  assert.deepEqual(
+    [round?.endedBy, round?.compaction?.outcome, round?.compaction?.after],
+    ['cancel', 'compacted', 25_000],
+  )
 })
 
 /** Run `body` as if the process had restarted: compactions it starts or finds carry another process's mark. */
@@ -686,10 +726,13 @@ test('a compaction a restart cut off is recorded as failed with its message unse
     error: 'The server restarted while the session was compacting',
     unsent: true,
   })
-  assert.deepEqual([dev?.state, dev?.error], [
-    'waiting',
-    "The server restarted while this step's session was compacting, so the round's message was never sent. Restart the step to send it.",
-  ])
+  assert.deepEqual(
+    [dev?.state, dev?.error],
+    [
+      'waiting',
+      "The server restarted while this step's session was compacting, so the round's message was never sent. Restart the step to send it.",
+    ],
+  )
   assert.deepEqual(s.told(), [['step_attention', 'Development', [{ kind: 'person', name: 'user' }, 'reporter'], null]])
 
   // The cut-off job is gone in a real restart; should it end after all, it sends nothing.
@@ -725,7 +768,9 @@ test('a cut-off compaction of a round that has ended is recorded as failed, and 
   const held = heldCompaction()
   const s = withInbox({ compact: held.compact })
   await compactingRework(s)
-  const runId = activeRunForTask(s.env.db, 'TASK', 1)!.id
+  const startedRun = activeRunForTask(s.env.db, 'TASK', 1)
+  assert.ok(startedRun)
+  const runId = startedRun.id
   await cancelRun(s.env, { task: s.task(), actor: PERSON })
   s.drafts.length = 0
 
@@ -749,13 +794,14 @@ test("a step's first entry opens a new session and never compacts", async () => 
   )
 })
 
-test("a round records the context its session held as it ended, and an open round reads it live", async () => {
+test('a round records the context its session held as it ended, and an open round reads it live', async () => {
   const s = setup()
   await startWorkflow(s.env, s.changeAs(PERSON), { task: s.task(), actor: PERSON })
   holding(s.chats, 'dev.agent.t1', 123_000)
   await finishStep(s.env, s.changeAs(DEV), { task: s.task(), transition: 'In Review', summary: 'done', actor: DEV })
   holding(s.chats, 'dev.agent.t2', 45_000)
-  const run = activeRunForTask(s.env.db, 'TASK', 1)!
+  const run = activeRunForTask(s.env.db, 'TASK', 1)
+  assert.ok(run)
   assert.deepEqual(
     run.steps.map((step) => step.rounds.map((r) => r.contextTokens)),
     [[123_000], [null]],
@@ -771,8 +817,14 @@ test("a round that ends inside its session's first turn, before any context is r
   env.now = () => clock
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
   await finishStep(env, changeAs(DEV), { task: task(), transition: 'In Review', actor: DEV })
-  const runId = activeRunForTask(env.db, 'TASK', 1)!.id
-  const reviewRound = () => getRun(env.db, 'TASK', runId)!.steps[1]!.rounds[0]!
+  const startedRun = activeRunForTask(env.db, 'TASK', 1)
+  assert.ok(startedRun)
+  const runId = startedRun.id
+  const reviewRound = () => {
+    const current = getRun(env.db, 'TASK', runId)
+    assert.ok(current)
+    return current.steps[1].rounds[0]
+  }
 
   // Review sends the task back from inside its session's first turn: nothing reported yet.
   chats.threads.set('dev.agent.t2', { turns: [], busy: true })
@@ -796,8 +848,14 @@ test("a round that ends mid-turn keeps no in-turn reading, even 0, and takes the
   env.now = () => clock
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
   await finishStep(env, changeAs(DEV), { task: task(), transition: 'In Review', actor: DEV })
-  const runId = activeRunForTask(env.db, 'TASK', 1)!.id
-  const reviewRound = () => getRun(env.db, 'TASK', runId)!.steps[1]!.rounds[0]!
+  const startedRun = activeRunForTask(env.db, 'TASK', 1)
+  assert.ok(startedRun)
+  const runId = startedRun.id
+  const reviewRound = () => {
+    const current = getRun(env.db, 'TASK', runId)
+    assert.ok(current)
+    return current.steps[1].rounds[0]
+  }
 
   // Inside its session's first turn the harness reports a count it has not built up yet.
   chats.threads.set('dev.agent.t2', { turns: [], busy: true, context: { usedTokens: 0, contextLimit: 1_000_000 } })
@@ -819,7 +877,9 @@ test('a round whose thread has started another round by the time it settles keep
   let clock = at('10:00')
   env.now = () => clock
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
-  const runId = activeRunForTask(env.db, 'TASK', 1)!.id
+  const startedRun = activeRunForTask(env.db, 'TASK', 1)
+  assert.ok(startedRun)
+  const runId = startedRun.id
 
   // Development ends inside the session's first turn, and Review opens in the same thread.
   chats.threads.set('dev.agent.t1', { turns: [], busy: true })
@@ -831,7 +891,9 @@ test('a round whose thread has started another round by the time it settles keep
     context: { usedTokens: 90_000, contextLimit: 1_000_000 },
   })
   await settlePendingUsage(env.db, chats, [runId])
-  const dev = getRun(env.db, 'TASK', runId)!.steps[0]!.rounds[0]!
+  const devRun = getRun(env.db, 'TASK', runId)
+  assert.ok(devRun)
+  const dev = devRun.steps[0].rounds[0]
   assert.deepEqual([dev.usage?.state, dev.contextTokens], ['settled', null])
 })
 
@@ -840,13 +902,19 @@ test("each round records what its session spent; one that ended mid-turn settles
   let clock = at('10:00')
   env.now = () => clock
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
-  const runId = activeRunForTask(env.db, 'TASK', 1)!.id
+  const startedRun = activeRunForTask(env.db, 'TASK', 1)
+  assert.ok(startedRun)
+  const runId = startedRun.id
 
   // Dev worked a turn, and finishes from inside the next one: the round ends mid-turn.
   chats.threads.set('dev.agent.t1', { turns: [turn('10:04', 100)], busy: true })
   clock = at('10:10')
   await finishStep(env, changeAs(DEV), { task: task(), transition: 'In Review', actor: DEV })
-  const devRound = () => getRun(env.db, 'TASK', runId)!.steps[0]!.rounds[0]!
+  const devRound = () => {
+    const current = getRun(env.db, 'TASK', runId)
+    assert.ok(current)
+    return current.steps[0].rounds[0]
+  }
   assert.deepEqual([devRound().usage?.state, devRound().usage?.tokens.total], ['pending', 100])
 
   // The finishing turn ends a minute later; Rev reviews and sends it back, idle when it does.
@@ -854,7 +922,9 @@ test("each round records what its session spent; one that ended mid-turn settles
   chats.threads.set('dev.agent.t2', { turns: [turn('10:15', 50)], busy: false })
   clock = at('10:20')
   await finishStep(env, changeAs(REV), { task: task(), transition: 'In Progress', summary: 'Add a test', actor: REV })
-  const review = getRun(env.db, 'TASK', runId)!.steps[1]!
+  const reviewRun = getRun(env.db, 'TASK', runId)
+  assert.ok(reviewRun)
+  const review = reviewRun.steps[1]
   assert.deepEqual(
     [review.rounds[0]?.usage?.state, review.rounds[0]?.usage?.tokens.total],
     ['settled', 50],
@@ -864,7 +934,9 @@ test("each round records what its session spent; one that ended mid-turn settles
   // Round 2 of Development reuses the thread; its turns are not round 1's.
   chats.threads.set('dev.agent.t1', { turns: [turn('10:04', 100), turn('10:11', 20), turn('10:30', 300)], busy: true })
   await settlePendingUsage(env.db, chats, [runId])
-  const dev = getRun(env.db, 'TASK', runId)!.steps[0]!
+  const devRun = getRun(env.db, 'TASK', runId)
+  assert.ok(devRun)
+  const dev = devRun.steps[0]
   assert.deepEqual(
     dev.rounds.map((r) => [r.roundNo, r.usage?.state ?? null, r.usage?.turns ?? null, r.usage?.tokens.total ?? null]),
     [
@@ -875,7 +947,8 @@ test("each round records what its session spent; one that ended mid-turn settles
   )
   assert.deepEqual(dev.spent.usage?.cost, [{ amount: 0.12, currency: 'USD' }])
   assert.equal(dev.rounds[0]?.timeMs, 10 * 60_000)
-  const run = getRun(env.db, 'TASK', runId)!
+  const run = getRun(env.db, 'TASK', runId)
+  assert.ok(run)
   assert.deepEqual([run.spent.usage?.tokens.total, run.spent.pending], [170, 0])
 })
 
@@ -883,7 +956,10 @@ test("a space chat the task manager isn't in leaves the step waiting with the re
   const { env, task, changeAs, warnings, chats } = setup({ outsider: true })
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
   assert.equal(task().status.name, 'In Progress', 'the status change stands')
-  assert.match(warnings[0] ?? '', /The task manager isn't in this space's chat \("dev"\) yet: a person grants it in the task manager's Settings → Chat/)
+  assert.match(
+    warnings[0] ?? '',
+    /The task manager isn't in this space's chat \("dev"\) yet: a person grants it in the task manager's Settings → Chat/,
+  )
   const dev = activeRunForTask(env.db, 'TASK', 1)?.steps[0]
   assert.equal(dev?.state, 'waiting')
   assert.match(dev?.error ?? '', /isn't in this space's chat/)
@@ -909,11 +985,17 @@ test("an agent who isn't in the space's chat leaves the step waiting, named in t
 test("a fixed agent who isn't in the space's chat is named from the directory, not by its node id", async () => {
   const { env, task, changeAs } = setup()
   env.agents = async () => [{ id: 'agent_rev', name: 'Reviewer (Code)' }]
-  env.chats = { ...fakeChats(), list: async () => [{ ref: 'chat-1', slug: 'dev', name: 'Dev', agents: [{ nodeId: 'agent_dev', name: 'Dev' }] }] }
+  env.chats = {
+    ...fakeChats(),
+    list: async () => [{ ref: 'chat-1', slug: 'dev', name: 'Dev', agents: [{ nodeId: 'agent_dev', name: 'Dev' }] }],
+  }
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
   await changeAs(PERSON).changeStatus({ key: 'TASK-1', status: 3 })
   const review = activeRunForTask(env.db, 'TASK', 1)?.steps[1]
-  assert.deepEqual([review?.state, review?.agentName, review?.error], ['waiting', 'Reviewer (Code)', "Reviewer (Code) isn't in this space's chat"])
+  assert.deepEqual(
+    [review?.state, review?.agentName, review?.error],
+    ['waiting', 'Reviewer (Code)', "Reviewer (Code) isn't in this space's chat"],
+  )
 })
 
 test('the host refusing a thread in the space chat reads as the task manager not being in it', async () => {
@@ -933,7 +1015,9 @@ test("each time a step couldn't start, its round records the reason and the mess
     const { env, task, changeAs } = setup(options)
     await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
     const dev = activeRunForTask(env.db, 'TASK', 1)?.steps[0]
-    const rows = env.db.prepare('SELECT round_no, reason, message FROM workflow_run_attention').all() as Array<Record<string, unknown>>
+    const rows = env.db.prepare('SELECT round_no, reason, message FROM workflow_run_attention').all() as Array<
+      Record<string, unknown>
+    >
     assert.deepEqual(
       rows.map((row) => ({ ...row })),
       [{ round_no: 1, reason, message: dev?.error }],
@@ -1008,7 +1092,12 @@ const DES: Actor = { kind: 'agent', name: 'Des' }
 
 /** Code and Design both start on In Progress; QA sends the task back to either, or passes it to the end. */
 const twoTracks: WorkflowStepDraft[] = [
-  { name: 'Code', triggerStatus: 2, worker: { kind: 'assignee' }, transitions: [{ label: 'Ready for design', toStep: 'Design', status: 2 }] },
+  {
+    name: 'Code',
+    triggerStatus: 2,
+    worker: { kind: 'assignee' },
+    transitions: [{ label: 'Ready for design', toStep: 'Design', status: 2 }],
+  },
   {
     name: 'Design',
     triggerStatus: 2,
@@ -1029,14 +1118,21 @@ const twoTracks: WorkflowStepDraft[] = [
 
 /** Each step's rounds as `<transition> <gate>`, open ones as `open`. */
 function gates(run: ReturnType<typeof activeRunForTask>) {
-  return Object.fromEntries((run?.steps ?? []).map((s) => [s.name, s.rounds.map((r) => (r.endedAt ? `${r.transition} ${r.gate}` : 'open'))]))
+  return Object.fromEntries(
+    (run?.steps ?? []).map((s) => [s.name, s.rounds.map((r) => (r.endedAt ? `${r.transition} ${r.gate}` : 'open'))]),
+  )
 }
 
 test('each round records the transition it left by and its gate: forward passes, back fails', async () => {
   const { env, task, changeAs } = setup()
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
   await finishStep(env, changeAs(DEV), { task: task(), transition: 'On to Review', summary: 'done', actor: DEV })
-  await finishStep(env, changeAs(REV), { task: task(), transition: 'back to development', summary: 'again', actor: REV })
+  await finishStep(env, changeAs(REV), {
+    task: task(),
+    transition: 'back to development',
+    summary: 'again',
+    actor: REV,
+  })
   await finishStep(env, changeAs(DEV), { task: task(), transition: 'In Review', summary: 'fixed', actor: DEV })
   await finishStep(env, changeAs(REV), { task: task(), transition: 'Finish: Done', summary: 'ok', actor: REV })
   const [run] = runsForTask(env.db, 'TASK', 1)
@@ -1054,7 +1150,12 @@ test('QA sends the task back to either of two steps that share a status, and tha
   await finishStep(env, changeAs(DEV), { task: task(), transition: 'Ready for design', summary: 'coded', actor: DEV })
   assert.equal(task().status.name, 'In Progress')
   await finishStep(env, changeAs(DES), { task: task(), transition: 'Ready for QA', summary: 'designed', actor: DES })
-  await finishStep(env, changeAs(REV), { task: task(), transition: 'Back to design', summary: 'misaligned', actor: REV })
+  await finishStep(env, changeAs(REV), {
+    task: task(),
+    transition: 'Back to design',
+    summary: 'misaligned',
+    actor: REV,
+  })
   assert.equal(task().status.name, 'In Progress')
   await finishStep(env, changeAs(DES), { task: task(), transition: 'Ready for QA', summary: 'aligned', actor: DES })
   await finishStep(env, changeAs(REV), { task: task(), transition: 'Back to code', summary: 'crashes', actor: REV })
@@ -1115,7 +1216,12 @@ test('a person’s move opens the first step its status starts, and counts as th
 
 test('a transition to the end finishes the run even into a status that is not done; a person reaching it does too', async () => {
   const steps: WorkflowStepDraft[] = [
-    { name: 'Development', triggerStatus: 2, worker: { kind: 'assignee' }, transitions: [{ label: 'Handed over', toStep: 'end', status: 3 }] },
+    {
+      name: 'Development',
+      triggerStatus: 2,
+      worker: { kind: 'assignee' },
+      transitions: [{ label: 'Handed over', toStep: 'end', status: 3 }],
+    },
   ]
   const agent = setup({ steps })
   await startWorkflow(agent.env, agent.changeAs(PERSON), { task: agent.task(), actor: PERSON })
@@ -1132,7 +1238,12 @@ test('a transition to the end finishes the run even into a status that is not do
 
 test('a gate override wins over the one the graph gives', async () => {
   const steps: WorkflowStepDraft[] = [
-    { name: 'Development', triggerStatus: 2, worker: { kind: 'assignee' }, transitions: [{ label: 'Abandoned', toStep: 'end', status: 5, gate: 'fail' }] },
+    {
+      name: 'Development',
+      triggerStatus: 2,
+      worker: { kind: 'assignee' },
+      transitions: [{ label: 'Abandoned', toStep: 'end', status: 5, gate: 'fail' }],
+    },
   ]
   const { env, task, changeAs } = setup({ steps })
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
@@ -1179,7 +1290,11 @@ test('a finish the task model refuses leaves no move pending for the next status
   }
   await assert.rejects(finishStep(env, refusing, { task: task(), transition: 'Back to design', actor: REV }), /refused/)
   await changeAs(PERSON).changeStatus({ key: 'TASK-1', status: 2 })
-  assert.equal(activeRunForTask(env.db, 'TASK', 1)?.steps.find((s) => s.state === 'active')?.name, 'Code', 'the move a person made, not the refused one')
+  assert.equal(
+    activeRunForTask(env.db, 'TASK', 1)?.steps.find((s) => s.state === 'active')?.name,
+    'Code',
+    'the move a person made, not the refused one',
+  )
 })
 
 // ─── One thread per agent per task ─────────────────────────────────────────
@@ -1187,7 +1302,12 @@ test('a finish the task model refuses leaves no move pending for the next status
 test("an agent's next step on the task continues in its thread, queued, with that step's opening message", async () => {
   const { env, chats, task, changeAs } = setup({ assignee: REV_ASSIGNED })
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
-  await finishStep(env, changeAs(REV), { task: task(), transition: 'In Review', summary: 'Patched the handler', actor: REV })
+  await finishStep(env, changeAs(REV), {
+    task: task(),
+    transition: 'In Review',
+    summary: 'Patched the handler',
+    actor: REV,
+  })
   assert.deepEqual(
     chats.sent.map((s) => [s.kind, s.target, s.title, s.queue]),
     [
@@ -1219,7 +1339,12 @@ test('in a shared thread, rework of a step still gets the rework message, and a 
   const { env, chats, task, changeAs } = setup({ assignee: REV_ASSIGNED })
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
   await finishStep(env, changeAs(REV), { task: task(), transition: 'In Review', summary: 'done', actor: REV })
-  await finishStep(env, changeAs(REV), { task: task(), transition: 'In Progress', summary: 'Missing a test', actor: REV })
+  await finishStep(env, changeAs(REV), {
+    task: task(),
+    transition: 'In Progress',
+    summary: 'Missing a test',
+    actor: REV,
+  })
   await finishStep(env, changeAs(REV), { task: task(), transition: 'In Review', summary: 'Added it', actor: REV })
   assert.deepEqual(
     chats.sent.map((s) => [s.kind, s.target, s.queue]),
@@ -1279,17 +1404,22 @@ test('a step waits with the reason only when every title for its thread is taken
   }
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
   const [development] = activeRunForTask(env.db, 'TASK', 1)?.steps ?? []
-  assert.deepEqual([development?.state, development?.error], ['waiting', 'This agent already has a thread named "TASK-1 (task manager 3)" here'])
+  assert.deepEqual(
+    [development?.state, development?.error],
+    ['waiting', 'This agent already has a thread named "TASK-1 (task manager 3)" here'],
+  )
   assert.equal(warnings.length, 1)
   assert.equal(chats.sent.length, 0)
 })
 
-test("steps sharing a thread each count only their own turns; the finishing turn goes to the step it finished", async () => {
+test('steps sharing a thread each count only their own turns; the finishing turn goes to the step it finished', async () => {
   const { env, chats, task, changeAs } = setup({ assignee: REV_ASSIGNED })
   let clock = at('10:00')
   env.now = () => clock
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
-  const runId = activeRunForTask(env.db, 'TASK', 1)!.id
+  const startedRun = activeRunForTask(env.db, 'TASK', 1)
+  assert.ok(startedRun)
+  const runId = startedRun.id
   const thread = 'dev.agent.t1'
 
   // Development finishes from inside a turn, and Review opens in the same thread at the same moment.
@@ -1299,8 +1429,14 @@ test("steps sharing a thread each count only their own turns; the finishing turn
 
   // Development's finishing turn ends at 10:11; Review's queued message runs after it.
   chats.threads.set(thread, { turns: [turn('10:04', 100), turn('10:11', 20), turn('10:15', 50)], busy: false })
-  const live = await withLiveUsage(env.db, chats, getRun(env.db, 'TASK', runId)!)
-  assert.equal(live.steps[1]?.rounds[0]?.usage?.tokens.total, 50, "Review read live before Development settled leaves out Development's finishing turn")
+  const liveRun = getRun(env.db, 'TASK', runId)
+  assert.ok(liveRun)
+  const live = await withLiveUsage(env.db, chats, liveRun)
+  assert.equal(
+    live.steps[1]?.rounds[0]?.usage?.tokens.total,
+    50,
+    "Review read live before Development settled leaves out Development's finishing turn",
+  )
 
   // Review sends the task back from inside a turn that ends at 10:21; Development round 2 follows it in the thread.
   chats.threads.set(thread, { turns: [turn('10:04', 100), turn('10:11', 20), turn('10:15', 50)], busy: true })
@@ -1311,8 +1447,13 @@ test("steps sharing a thread each count only their own turns; the finishing turn
     busy: true,
   })
   await settlePendingUsage(env.db, chats, [runId])
-  const run = await withLiveUsage(env.db, chats, getRun(env.db, 'TASK', runId)!)
-  const usage = run.steps.map((s) => [s.name, s.rounds.map((r) => [r.usage?.state, r.usage?.turns, r.usage?.tokens.total])])
+  const currentRun = getRun(env.db, 'TASK', runId)
+  assert.ok(currentRun)
+  const run = await withLiveUsage(env.db, chats, currentRun)
+  const usage = run.steps.map((s) => [
+    s.name,
+    s.rounds.map((r) => [r.usage?.state, r.usage?.turns, r.usage?.tokens.total]),
+  ])
   assert.deepEqual(usage, [
     [
       'Development',
@@ -1331,7 +1472,9 @@ test("a round after a still-pending one on its thread keeps its own first turn w
   let clock = at('10:00')
   env.now = () => clock
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
-  const runId = activeRunForTask(env.db, 'TASK', 1)!.id
+  const startedRun = activeRunForTask(env.db, 'TASK', 1)
+  assert.ok(startedRun)
+  const runId = startedRun.id
   chats.threads.set('dev.agent.t1', { turns: [turn('10:04', 100)], busy: true })
   clock = at('10:10')
   await finishStep(env, changeAs(DEV), { task: task(), transition: 'In Review', actor: DEV })
@@ -1339,22 +1482,27 @@ test("a round after a still-pending one on its thread keeps its own first turn w
   clock = at('10:20')
   await finishStep(env, changeAs(REV), { task: task(), transition: 'In Progress', summary: 'again', actor: REV })
   chats.threads.set('dev.agent.t1', { turns: [turn('10:04', 100), turn('10:11', 20), turn('10:25', 300)], busy: true })
-  const run = await withLiveUsage(env.db, chats, getRun(env.db, 'TASK', runId)!)
-  const dev = run.steps[0]!.rounds.map((r) => [r.usage?.state, r.usage?.tokens.total])
+  const currentRun = getRun(env.db, 'TASK', runId)
+  assert.ok(currentRun)
+  const run = await withLiveUsage(env.db, chats, currentRun)
+  const dev = run.steps[0].rounds.map((r) => [r.usage?.state, r.usage?.tokens.total])
   assert.deepEqual(dev, [
     ['pending', 100],
     ['live', 300],
   ])
 })
 
-test("a round whose usage could not be read claims no turn of the next round on its thread", async () => {
+test('a round whose usage could not be read claims no turn of the next round on its thread', async () => {
   const { env, chats, task, changeAs } = setup({ assignee: REV_ASSIGNED })
   let clock = at('10:00')
   env.now = () => clock
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
-  const runId = activeRunForTask(env.db, 'TASK', 1)!.id
+  const startedRun = activeRunForTask(env.db, 'TASK', 1)
+  assert.ok(startedRun)
+  const runId = startedRun.id
   const thread = 'dev.agent.t1'
-  const usage = chats.usage!
+  const usage = chats.usage
+  assert.ok(usage)
   // Development ends idle, and the host fails to answer the one read of its usage.
   chats.threads.set(thread, { turns: [turn('10:04', 100)], busy: false })
   chats.usage = async () => {
@@ -1368,7 +1516,8 @@ test("a round whose usage could not be read claims no turn of the next round on 
   clock = at('10:20')
   await finishStep(env, changeAs(REV), { task: task(), transition: 'In Progress', summary: 'again', actor: REV })
   await settlePendingUsage(env.db, chats, [runId])
-  const run = getRun(env.db, 'TASK', runId)!
+  const run = getRun(env.db, 'TASK', runId)
+  assert.ok(run)
   assert.deepEqual(
     run.steps.map((s) => [s.name, s.rounds.map((r) => [r.usage?.state ?? null, r.usage?.tokens.total ?? null])]),
     [
@@ -1393,7 +1542,9 @@ test('rounds that all happened inside one turn count that turn once, for the fir
   let clock = at('10:00')
   env.now = () => clock
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
-  const runId = activeRunForTask(env.db, 'TASK', 1)!.id
+  const startedRun = activeRunForTask(env.db, 'TASK', 1)
+  assert.ok(startedRun)
+  const runId = startedRun.id
   const thread = 'dev.agent.t1'
   chats.threads.set(thread, { turns: [], busy: true })
   clock = at('10:01')
@@ -1406,7 +1557,8 @@ test('rounds that all happened inside one turn count that turn once, for the fir
   await finishStep(env, changeAs(REV), { task: task(), transition: 'Done', actor: REV })
   chats.threads.set(thread, { turns: [turn('10:05', 400)], busy: false })
   await settlePendingUsage(env.db, chats, [runId])
-  const run = getRun(env.db, 'TASK', runId)!
+  const run = getRun(env.db, 'TASK', runId)
+  assert.ok(run)
   assert.deepEqual(
     run.steps.map((s) => [s.name, s.rounds.map((r) => [r.usage?.state, r.usage?.tokens.total, r.usage?.sharedWith])]),
     [
@@ -1426,8 +1578,12 @@ test('rounds that all happened inside one turn count that turn once, for the fir
       ],
     ],
   )
-  const review = run.steps[1]!.spent
-  assert.deepEqual([review.usage, review.sharedWith], [null, ['Development']], 'Review shows no figures of its own, only that it shared a turn')
+  const review = run.steps[1].spent
+  assert.deepEqual(
+    [review.usage, review.sharedWith],
+    [null, ['Development']],
+    'Review shows no figures of its own, only that it shared a turn',
+  )
   assert.equal(run.spent.usage?.tokens.total, 400, 'the one turn is counted once')
   assert.equal(run.spent.sharedWith, undefined, 'the run total already holds the shared turn')
 })
@@ -1440,7 +1596,9 @@ test('a round that ended inside a claimed turn takes no later turn as its finish
   let clock = at('10:00')
   env.now = () => clock
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
-  const runId = activeRunForTask(env.db, 'TASK', 1)!.id
+  const startedRun = activeRunForTask(env.db, 'TASK', 1)
+  assert.ok(startedRun)
+  const runId = startedRun.id
   const thread = 'dev.agent.t1'
   chats.threads.set(thread, { turns: [], busy: true })
   clock = at('10:01')
@@ -1453,7 +1611,8 @@ test('a round that ended inside a claimed turn takes no later turn as its finish
   clock = at('10:12')
   await finishStep(env, changeAs(REV), { task: task(), transition: 'Done', actor: REV })
   await settlePendingUsage(env.db, chats, [runId])
-  const run = getRun(env.db, 'TASK', runId)!
+  const run = getRun(env.db, 'TASK', runId)
+  assert.ok(run)
   assert.deepEqual(
     run.steps.map((s) => [s.name, s.rounds.map((r) => [r.usage?.state, r.usage?.tokens.total, r.usage?.sharedWith])]),
     [
@@ -1481,9 +1640,12 @@ test('a round whose usage read failed in the middle of one shared turn does not 
   let clock = at('10:00')
   env.now = () => clock
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
-  const runId = activeRunForTask(env.db, 'TASK', 1)!.id
+  const startedRun = activeRunForTask(env.db, 'TASK', 1)
+  assert.ok(startedRun)
+  const runId = startedRun.id
   const thread = 'dev.agent.t1'
-  const usage = chats.usage!
+  const usage = chats.usage
+  assert.ok(usage)
   chats.threads.set(thread, { turns: [], busy: true })
   clock = at('10:01')
   await finishStep(env, changeAs(REV), { task: task(), transition: 'In Review', actor: REV })
@@ -1500,9 +1662,13 @@ test('a round whose usage read failed in the middle of one shared turn does not 
   await finishStep(env, changeAs(REV), { task: task(), transition: 'Done', actor: REV })
   chats.threads.set(thread, { turns: [turn('10:05', 400)], busy: false })
   await settlePendingUsage(env.db, chats, [runId])
-  const run = getRun(env.db, 'TASK', runId)!
+  const run = getRun(env.db, 'TASK', runId)
+  assert.ok(run)
   assert.deepEqual(
-    run.steps.map((s) => [s.name, s.rounds.map((r) => [r.usage?.state ?? null, r.usage?.tokens.total ?? null, r.usage?.sharedWith ?? null])]),
+    run.steps.map((s) => [
+      s.name,
+      s.rounds.map((r) => [r.usage?.state ?? null, r.usage?.tokens.total ?? null, r.usage?.sharedWith ?? null]),
+    ]),
     [
       [
         'Development',
@@ -1627,7 +1793,11 @@ test('each entry into a step is a round: ended by the move out, a second one aft
 test('a round counts each time its step could not proceed, and a person it waits on works it', async () => {
   const refused = setup({ refuse: true })
   await startWorkflow(refused.env, refused.changeAs(PERSON), { task: refused.task(), actor: PERSON })
-  await restartStep(refused.env, refused.changeAs(PERSON), { task: refused.task(), step: 'development', actor: PERSON }).catch(() => {})
+  await restartStep(refused.env, refused.changeAs(PERSON), {
+    task: refused.task(),
+    step: 'development',
+    actor: PERSON,
+  }).catch(() => {})
   assert.deepEqual(rounds(refused.env), [['Development', 1, 'agent', 'Dev', null, null, 2]])
 
   const nobody = setup({ assignee: null })
@@ -1684,12 +1854,16 @@ test('the inbox hears a step waiting on a person, and a step that needs attentio
 
   const nobody = withInbox({ assignee: null })
   await startWorkflow(nobody.env, nobody.changeAs(PERSON), { task: nobody.task(), actor: PERSON })
-  assert.deepEqual(nobody.told(), [['step_attention', 'Development', [{ kind: 'person', name: 'user' }, 'reporter'], null]])
+  assert.deepEqual(nobody.told(), [
+    ['step_attention', 'Development', [{ kind: 'person', name: 'user' }, 'reporter'], null],
+  ])
   assert.match(nobody.drafts[0]?.excerpt ?? '', /Nobody is assigned/)
 
   const refused = withInbox({ outsider: true })
   await startWorkflow(refused.env, refused.changeAs(PERSON), { task: refused.task(), actor: PERSON })
-  assert.deepEqual(refused.told(), [['step_attention', 'Development', [{ kind: 'person', name: 'user' }, 'reporter'], null]])
+  assert.deepEqual(refused.told(), [
+    ['step_attention', 'Development', [{ kind: 'person', name: 'user' }, 'reporter'], null],
+  ])
   assert.match(refused.drafts[0]?.excerpt ?? '', /isn't in this space's chat \("dev"\)/)
 })
 
@@ -1723,7 +1897,13 @@ const as = (p: { name: string }): Actor => ({ kind: 'person', name: p.name })
 function approvalSetup(extra: WorkflowStepDraft['transitions'] = [], after: WorkflowStepDraft[] = []) {
   const ctx = withInbox({
     steps: [
-      { name: 'Development', triggerStatus: 2, worker: { kind: 'assignee' }, instructions: 'Implement {{ task.key }}', transitions: [3] },
+      {
+        name: 'Development',
+        triggerStatus: 2,
+        worker: { kind: 'assignee' },
+        instructions: 'Implement {{ task.key }}',
+        transitions: [3],
+      },
       {
         name: 'Sign-off',
         kind: 'approval',
@@ -1741,12 +1921,20 @@ function approvalSetup(extra: WorkflowStepDraft['transitions'] = [], after: Work
       ...after,
     ],
   })
-  const decide = (person: { id: string; name: string }, verdict: 'approve' | 'reject', more: { transition?: string; comment?: string } = {}) =>
-    decideStep(ctx.env, ctx.changeAs(as(person)), { task: ctx.task(), verdict, person, ...more })
+  const decide = (
+    person: { id: string; name: string },
+    verdict: 'approve' | 'reject',
+    more: { transition?: string; comment?: string } = {},
+  ) => decideStep(ctx.env, ctx.changeAs(as(person)), { task: ctx.task(), verdict, person, ...more })
   /** Start, and let Development hand the task to Sign-off. */
   const reachSignOff = async () => {
     await startWorkflow(ctx.env, ctx.changeAs(PERSON), { task: ctx.task(), actor: PERSON })
-    await finishStep(ctx.env, ctx.changeAs(DEV), { task: ctx.task(), transition: 'On to Sign-off', summary: 'Patched', actor: DEV })
+    await finishStep(ctx.env, ctx.changeAs(DEV), {
+      task: ctx.task(),
+      transition: 'On to Sign-off',
+      summary: 'Patched',
+      actor: DEV,
+    })
   }
   const signOff = () => activeRunForTask(ctx.env.db, 'TASK', 1)?.steps.find((s) => s.name === 'Sign-off') ?? null
   return { ...ctx, decide, reachSignOff, signOff }
@@ -1758,7 +1946,10 @@ test('an approval step opens no session: it waits on its approvers, each of whom
   assert.equal(chats.sent.length, 1, "only Development's session opened")
   const step = signOff()
   assert.deepEqual([step?.state, step?.error, step?.agentName, step?.threadRef], ['waiting', null, null, null])
-  assert.deepEqual(step?.rounds.map((r) => [r.worker, r.decisions]), [[null, []]])
+  assert.deepEqual(
+    step?.rounds.map((r) => [r.worker, r.decisions]),
+    [[null, []]],
+  )
   assert.deepEqual(told().at(-1), [
     'approval_requested',
     'Sign-off',
@@ -1771,7 +1962,10 @@ test('an approval step opens no session: it waits on its approvers, each of whom
 test('while an approval step is open no agent moves the task or finishes the step; a person still can on the board', async () => {
   const { env, task, changeAs, reachSignOff, signOff } = approvalSetup()
   await reachSignOff()
-  await assert.rejects(changeAs(DEV).changeStatus({ key: 'TASK-1', status: 4 }), /waits on the approvers of "Sign-off": only people can move it/)
+  await assert.rejects(
+    changeAs(DEV).changeStatus({ key: 'TASK-1', status: 4 }),
+    /waits on the approvers of "Sign-off": only people can move it/,
+  )
   await assert.rejects(
     finishStep(env, changeAs(REV), { task: task(), transition: 'Approve', actor: REV }),
     /"Sign-off" is an approval step: its approvers decide it from the task, with workflow_step_decide/,
@@ -1794,11 +1988,12 @@ test('the step passes once every required approver has approved and the approval
   assert.equal(signOff()?.state, 'waiting')
   await decide(ALICE, 'approve', { comment: 'Ship it' })
   assert.equal(task().status.name, 'Done')
-  const run = runsForTask(env.db, 'TASK', 1)[0]!
+  const run = runsForTask(env.db, 'TASK', 1)[0]
   assert.equal(run.state, 'finished')
-  const step = run.steps.find((s) => s.name === 'Sign-off')!
+  const step = run.steps.find((s) => s.name === 'Sign-off')
+  assert.ok(step)
   assert.deepEqual([step.state, step.outcome, step.summary, step.finishedBy], ['done', 'Done', 'Ship it', 'Alice'])
-  const round = step.rounds[0]!
+  const round = step.rounds[0]
   assert.deepEqual([round.transition, round.gate, round.endedBy], ['Approve', 'pass', 'transition'])
   assert.deepEqual(
     round.decisions.map((d) => [d.approver, d.verdict, d.transition, d.comment]),
@@ -1817,11 +2012,19 @@ test("any one Reject rejects the step, an optional approver's included: the task
   await decide(ALICE, 'approve')
   await decide(CAROL, 'reject', { comment: 'The login still returns 500' })
   assert.equal(task().status.name, 'In Progress')
-  const run = activeRunForTask(env.db, 'TASK', 1)!
+  const run = activeRunForTask(env.db, 'TASK', 1)
+  assert.ok(run)
   const [dev, signOff] = run.steps
   assert.deepEqual([dev?.state, dev?.attempts], ['active', 2])
-  assert.deepEqual([signOff?.state, signOff?.finishedBy, signOff?.rounds[0]?.transition, signOff?.rounds[0]?.gate], ['done', 'Carol', 'Rework', 'fail'])
-  assert.match(chats.sent.at(-1)?.message ?? '', /The login still returns 500/, "Development's rework message quotes the reason")
+  assert.deepEqual(
+    [signOff?.state, signOff?.finishedBy, signOff?.rounds[0]?.transition, signOff?.rounds[0]?.gate],
+    ['done', 'Carol', 'Rework', 'fail'],
+  )
+  assert.match(
+    chats.sent.at(-1)?.message ?? '',
+    /The login still returns 500/,
+    "Development's rework message quotes the reason",
+  )
 })
 
 test('a step re-entered after rework starts a round with no decisions', async () => {
@@ -1831,10 +2034,13 @@ test('a step re-entered after rework starts a round with no decisions', async ()
   await finishStep(env, changeAs(DEV), { task: task(), transition: 'On to Sign-off', actor: DEV })
   const step = signOff()
   assert.deepEqual([step?.state, step?.attempts], ['waiting', 2])
-  assert.deepEqual(step?.rounds.map((r) => [r.roundNo, r.decisions.length]), [
-    [1, 1],
-    [2, 0],
-  ])
+  assert.deepEqual(
+    step?.rounds.map((r) => [r.roundNo, r.decisions.length]),
+    [
+      [1, 1],
+      [2, 0],
+    ],
+  )
 })
 
 test('an approver may change their decision until the round settles; the changed one counts as made last', async () => {
@@ -1856,42 +2062,76 @@ test('an approver may change their decision until the round settles; the changed
 test('with several transitions for a verdict the approver chooses one, and the settling decision takes its own choice', async () => {
   const { env, task, decide, reachSignOff } = approvalSetup([{ label: 'Park', status: 1, toStep: 'end', gate: 'fail' }])
   await reachSignOff()
-  await assert.rejects(decide(BOB, 'reject'), /"Sign-off" can reject by several transitions: pass "transition" as one of "Rework", "Park"/)
-  await assert.rejects(decide(BOB, 'reject', { transition: 'Approve' }), /"Approve" is not a way to reject "Sign-off"; choose one of: "Rework", "Park"/)
-  assert.deepEqual(activeRunForTask(env.db, 'TASK', 1)?.steps[1]?.rounds[0]?.decisions, [], 'a refused decision is not recorded')
+  await assert.rejects(
+    decide(BOB, 'reject'),
+    /"Sign-off" can reject by several transitions: pass "transition" as one of "Rework", "Park"/,
+  )
+  await assert.rejects(
+    decide(BOB, 'reject', { transition: 'Approve' }),
+    /"Approve" is not a way to reject "Sign-off"; choose one of: "Rework", "Park"/,
+  )
+  assert.deepEqual(
+    activeRunForTask(env.db, 'TASK', 1)?.steps[1]?.rounds[0]?.decisions,
+    [],
+    'a refused decision is not recorded',
+  )
   await decide(BOB, 'reject', { transition: 'park' })
   assert.equal(task().status.name, 'To Do')
-  const run = runsForTask(env.db, 'TASK', 1)[0]!
-  assert.deepEqual([run.state, run.steps[1]?.rounds[0]?.transition, run.steps[1]?.rounds[0]?.gate], ['finished', 'Park', 'fail'])
+  const run = runsForTask(env.db, 'TASK', 1)[0]
+  assert.deepEqual(
+    [run.state, run.steps[1]?.rounds[0]?.transition, run.steps[1]?.rounds[0]?.gate],
+    ['finished', 'Park', 'fail'],
+  )
 })
 
 test("an agent's restart cannot close an open approval step, in place or by a move; a person's can, and the approval step itself restarts", async () => {
   // Docs shares Sign-off's trigger status, so restarting it re-enters in place and would close Sign-off.
-  const docs: WorkflowStepDraft = { name: 'Docs', triggerStatus: 3, worker: { kind: 'assignee' }, instructions: 'Document {{ task.key }}', transitions: [4] }
+  const docs: WorkflowStepDraft = {
+    name: 'Docs',
+    triggerStatus: 3,
+    worker: { kind: 'assignee' },
+    instructions: 'Document {{ task.key }}',
+    transitions: [4],
+  }
   const { env, task, changeAs, reachSignOff, signOff, told } = approvalSetup([], [docs])
   await reachSignOff()
   await assert.rejects(
     restartStep(env, changeAs(DEV), { task: task(), step: 'Docs', actor: DEV }),
     /TASK-1 waits on the approvers of "Sign-off": only people can move it on until they decide/,
   )
-  await assert.rejects(restartStep(env, changeAs(DEV), { task: task(), step: 'Development', actor: DEV }), /waits on the approvers of "Sign-off"/)
+  await assert.rejects(
+    restartStep(env, changeAs(DEV), { task: task(), step: 'Development', actor: DEV }),
+    /waits on the approvers of "Sign-off"/,
+  )
   assert.deepEqual([task().status.name, signOff()?.state, signOff()?.rounds.length], ['In Review', 'waiting', 1])
 
   await restartStep(env, changeAs(DEV), { task: task(), step: 'Sign-off', actor: DEV })
-  assert.deepEqual([signOff()?.state, signOff()?.rounds.length], ['waiting', 1], 'restarted in place, the round continues')
+  assert.deepEqual(
+    [signOff()?.state, signOff()?.rounds.length],
+    ['waiting', 1],
+    'restarted in place, the round continues',
+  )
   assert.equal(told().filter(([kind]) => kind === 'approval_requested').length, 2, 'the approvers are asked again')
 
   await restartStep(env, changeAs(PERSON), { task: task(), step: 'Docs', actor: PERSON })
-  assert.deepEqual([signOff()?.state, signOff()?.rounds[0]?.transition], ['done', null], "a person's restart closes it, with no transition taken")
+  assert.deepEqual(
+    [signOff()?.state, signOff()?.rounds[0]?.transition],
+    ['done', null],
+    "a person's restart closes it, with no transition taken",
+  )
 })
 
 test('an agent may cancel a run waiting on its approvers, and the run records who cancelled it', async () => {
   const { env, task, reachSignOff, told } = approvalSetup()
   await reachSignOff()
   await cancelRun(env, { task: task(), actor: DEV })
-  const run = runsForTask(env.db, 'TASK', 1)[0]!
-  const step = run.steps.find((s) => s.name === 'Sign-off')!
-  assert.deepEqual([run.state, step.state, step.outcome, step.finishedBy, step.rounds[0]?.endedBy], ['cancelled', 'done', 'Cancelled', 'Dev', 'cancel'])
+  const run = runsForTask(env.db, 'TASK', 1)[0]
+  const step = run.steps.find((s) => s.name === 'Sign-off')
+  assert.ok(step)
+  assert.deepEqual(
+    [run.state, step.state, step.outcome, step.finishedBy, step.rounds[0]?.endedBy],
+    ['cancelled', 'done', 'Cancelled', 'Dev', 'cancel'],
+  )
   assert.equal(task().status.name, 'In Review', 'cancelling moves nothing')
   assert.deepEqual(told().at(-1), ['workflow_cancelled', 'Standard', [{ kind: 'person', name: 'user' }], 'Dev'])
 })
@@ -1905,7 +2145,10 @@ test('a settling decision moves the task only by the transition it chose; one th
       throw new Error('the store is read-only')
     },
   }
-  await assert.rejects(decideStep(env, refusing, { task: task(), verdict: 'reject', person: ALICE }), /the store is read-only/)
+  await assert.rejects(
+    decideStep(env, refusing, { task: task(), verdict: 'reject', person: ALICE }),
+    /the store is read-only/,
+  )
   // Rework is replaced by a new transition to the same place.
   const statuses = db.prepare('SELECT id, name FROM status').all() as Array<{ id: number; name: string }>
   saveWorkflow(
@@ -1914,14 +2157,19 @@ test('a settling decision moves the task only by the transition it chose; one th
       {
         id: wf.id,
         name: wf.name,
-        steps: wf.steps.map((s) => (s.name === 'Sign-off' ? { ...s, transitions: [s.transitions[0]!, { label: 'Back to work', status: 2 }] } : s)),
+        steps: wf.steps.map((s) =>
+          s.name === 'Sign-off' ? { ...s, transitions: [s.transitions[0], { label: 'Back to work', status: 2 }] } : s,
+        ),
       },
       mintId,
       statuses,
     ),
     '2026-09-26T06:00:00.000Z',
   )
-  await assert.rejects(decide(BOB, 'approve'), /"Rework", which Alice chose, is no longer a way to reject "Sign-off": Alice must decide again/)
+  await assert.rejects(
+    decide(BOB, 'approve'),
+    /"Rework", which Alice chose, is no longer a way to reject "Sign-off": Alice must decide again/,
+  )
   assert.equal(task().status.name, 'In Review', 'no other transition was taken in its place')
   await decide(ALICE, 'reject')
   assert.equal(task().status.name, 'In Progress')
@@ -1935,7 +2183,10 @@ test('only the approvers decide, only as signed-in people, and only an open appr
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
   await assert.rejects(decide(ALICE, 'approve'), /"Development" of TASK-1 is not an approval step/)
   await finishStep(env, changeAs(DEV), { task: task(), transition: 'On to Sign-off', actor: DEV })
-  await assert.rejects(decide({ id: 'person-dave', name: 'Dave' }, 'approve'), /You aren't an approver of "Sign-off". Its approvers: Alice, Bob, Carol/)
+  await assert.rejects(
+    decide({ id: 'person-dave', name: 'Dave' }, 'approve'),
+    /You aren't an approver of "Sign-off". Its approvers: Alice, Bob, Carol/,
+  )
   await assert.rejects(
     decideStep(env, changeAs(DEV), { task: task(), verdict: 'approve', person: null }),
     /Only a person can approve or reject/,

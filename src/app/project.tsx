@@ -2,8 +2,8 @@
 // statuses, assignees, labels with their colours and versions (kept fresh by live events), a toast for
 // failures, a confirm dialog, and the task menu every task surface offers.
 
-import { legacy } from '@opencroft/client'
-import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 
 import {
   AlertDialog,
@@ -18,11 +18,10 @@ import {
 import { TaskAvatarsProvider } from '@/components/ui/tasks/task-assignee'
 import { TaskLabelColorsProvider } from '@/components/ui/tasks/task-label-chip'
 import type { TaskMenuProps } from '@/components/ui/tasks/task-menu'
-
 import type { LabelColor, ProjectLabel } from '../../shared/settings'
 import type { AssigneeOption, PersonAvatar, Priority, Status, TaskSummary } from '../../shared/types'
 import type { Version } from '../../shared/versions'
-import { type TasksApi, errorMessage, tasksApi } from '../lib/api'
+import { errorMessage, type TasksApi, tasksApi } from '../lib/api'
 import { assigneeInput } from '../lib/assignees'
 import { useTasksLive } from '../lib/live'
 import { absoluteLink, currentLocation, hrefFor, navigate } from '../lib/router'
@@ -81,13 +80,21 @@ function unlessUnchanged<T>(next: T): (previous: T) => T {
 export async function copyText(text: string, what: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text)
-    legacy.toast.success(`Copied ${what}`)
+    toast.success(`Copied ${what}`)
   } catch {
-    legacy.toast.error('Copying is not allowed here')
+    toast.error('Copying is not allowed here')
   }
 }
 
-export function ProjectProvider({ instanceId, projectKey, children }: { instanceId: string; projectKey: string; children: ReactNode }) {
+export function ProjectProvider({
+  instanceId,
+  projectKey,
+  children,
+}: {
+  instanceId: string
+  projectKey: string
+  children: ReactNode
+}) {
   const api = useMemo(() => tasksApi(instanceId), [instanceId])
   const [statuses, setStatuses] = useState<Status[]>([])
   const [assignees, setAssignees] = useState<AssigneeOption[]>([])
@@ -98,7 +105,7 @@ export function ProjectProvider({ instanceId, projectKey, children }: { instance
   const [confirming, setConfirming] = useState(false)
 
   const fail = useCallback((error: unknown) => {
-    legacy.toast.error(errorMessage(error))
+    toast.error(errorMessage(error))
   }, [])
 
   const loadMeta = useCallback(async () => {
@@ -141,13 +148,18 @@ export function ProjectProvider({ instanceId, projectKey, children }: { instance
       priority: task.priority,
       assigneeName: task.assignee?.name ?? null,
       statuses,
-      assignees: assignees.map((option) => ({ kind: option.assignee.kind, name: option.assignee.name, id: option.assignee.id })),
+      assignees: assignees.map((option) => ({
+        kind: option.assignee.kind,
+        name: option.assignee.name,
+        id: option.assignee.id,
+      })),
       onOpen: () => openTask(task.key),
       onCopyKey: () => void copyText(task.key, task.key),
       onCopyLink: () => void copyText(absoluteLink(taskHref(task.key)), `link to ${task.key}`),
       onStatusChange: (statusId) => void api.task_change_status({ key: task.key, status: statusId }).catch(fail),
       onPriorityChange: (priority: Priority) => void api.task_update({ key: task.key, priority }).catch(fail),
-      onAssigneeChange: (assignee) => void api.task_update({ key: task.key, assignee: assigneeInput(assignee) }).catch(fail),
+      onAssigneeChange: (assignee) =>
+        void api.task_update({ key: task.key, assignee: assigneeInput(assignee) }).catch(fail),
       onAddSubtask: () => navigate(hrefFor(['task', task.key], { add: 'subtask' })),
       onDelete: () =>
         setPendingConfirm({
@@ -159,7 +171,7 @@ export function ProjectProvider({ instanceId, projectKey, children }: { instance
           destructive: true,
           onConfirm: async () => {
             await api.task_delete({ key: task.key, withSubtasks: Boolean(task.childCount) })
-            legacy.toast.success(`Deleted ${task.key}`)
+            toast.success(`Deleted ${task.key}`)
             const [page, key] = currentLocation().segments
             if (page === 'task' && key?.toUpperCase() === task.key) {
               navigate(task.parentKey ? taskHref(task.parentKey) : hrefFor(['tasks']), { replace: true })
@@ -174,13 +186,43 @@ export function ProjectProvider({ instanceId, projectKey, children }: { instance
 
   const labels = useMemo(() => projectLabels.map((label) => label.name), [projectLabels])
   const labelColors = useMemo(
-    () => Object.fromEntries(projectLabels.flatMap((label) => (label.color ? [[label.name, label.color]] : []))) as Record<string, LabelColor>,
+    () =>
+      Object.fromEntries(projectLabels.flatMap((label) => (label.color ? [[label.name, label.color]] : []))) as Record<
+        string,
+        LabelColor
+      >,
     [projectLabels],
   )
 
   const value = useMemo<ProjectContextValue>(
-    () => ({ instanceId, projectKey, api, statuses, assignees, labels, projectLabels, labelsLoaded, versions, fail, confirm, menuFor }),
-    [instanceId, projectKey, api, statuses, assignees, labels, projectLabels, labelsLoaded, versions, fail, confirm, menuFor],
+    () => ({
+      instanceId,
+      projectKey,
+      api,
+      statuses,
+      assignees,
+      labels,
+      projectLabels,
+      labelsLoaded,
+      versions,
+      fail,
+      confirm,
+      menuFor,
+    }),
+    [
+      instanceId,
+      projectKey,
+      api,
+      statuses,
+      assignees,
+      labels,
+      projectLabels,
+      labelsLoaded,
+      versions,
+      fail,
+      confirm,
+      menuFor,
+    ],
   )
 
   return (
@@ -189,7 +231,10 @@ export function ProjectProvider({ instanceId, projectKey, children }: { instance
       <TaskLabelColorsProvider value={labelColors}>
         <TaskAvatarsProvider value={avatars}>{children}</TaskAvatarsProvider>
       </TaskLabelColorsProvider>
-      <AlertDialog open={pendingConfirm !== null} onOpenChange={(open) => !open && !confirming && setPendingConfirm(null)}>
+      <AlertDialog
+        open={pendingConfirm !== null}
+        onOpenChange={(open) => !open && !confirming && setPendingConfirm(null)}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{pendingConfirm?.title}</AlertDialogTitle>

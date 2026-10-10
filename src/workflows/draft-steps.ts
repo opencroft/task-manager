@@ -52,5 +52,5 @@ export function duplicateStep(steps: DraftStep[], index: number): DraftStep[] {
     return steps
   }
   const [copy] = copySteps([step])
-  return [...steps.slice(0, index + 1), { ...copy!, name: `${step.name} copy` }, ...steps.slice(index + 1)]
+  return [...steps.slice(0, index + 1), { ...copy, name: `${step.name} copy` }, ...steps.slice(index + 1)]
 }

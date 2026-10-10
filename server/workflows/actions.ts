@@ -5,26 +5,27 @@
  * Handlers are built over a `WorkflowHost`: how to reach the project's
  * database, a task, the task model's status change and the group chats. The
  * server entry (index.ts) supplies the real one; tests supply their own. Each
- * handler checks its params itself and refuses with a message that says what
- * to pass instead, because the caller is often an agent reading it cold.
+ * handler gets its parameters checked against its schema and typed by it
+ * (../action-params.ts); what the schema cannot say — a blank name, a step
+ * the workflow lacks, the fields of `match` — is refused here, with a message
+ * that says what to pass instead, because the caller is often an agent
+ * reading it cold.
  */
 
-import type { AppActionContext, AppActionHandler } from '@opencroft/server'
+import type { AppActionContext, AppActionHandler } from '@opencroft/server/apps'
 
+import type { ActionId } from '../../shared/action-inputs.ts'
 import type { Actor, Status, TaskSummary } from '../../shared/types.ts'
 import {
-  APPROVAL_VERDICTS,
-  type ApprovalVerdict,
   COULDNT_START_REASONS,
   type CouldntStartKey,
   type OpenApproval,
   RUN_EXITS,
   type RunExit,
-  type RunsMatch,
-  type RunState,
   type RunStep,
-  STATS_RANGES,
+  type RunsMatch,
   type SpaceChatState,
+  STATS_RANGES,
   type StatsRange,
   verdictTransitions,
   type WorkflowDef,
@@ -32,12 +33,13 @@ import {
   type WorkflowRun,
   type WorkflowStepDef,
 } from '../../shared/workflows.ts'
+import { type TypedHandlers, typedActions } from '../action-params.ts'
 import type { Db } from '../db.ts'
 import { findSpaceChat, type SpaceChatListing } from '../space-chat.ts'
 import { normalizeDraft, validateWorkflow } from './definition.ts'
 import {
-  cancelRun,
   type ChatsPort,
+  cancelRun,
   decideStep,
   type EngineEnv,
   finishStep,
@@ -45,6 +47,8 @@ import {
   startWorkflow,
   type TaskPort,
 } from './engine.ts'
+import { pendingRunIds, workflowStats } from './stats.ts'
+import { matchingRunIds, rangeStart } from './stats-flow.ts'
 import {
   activeRunForTask,
   deleteWorkflow,
@@ -56,8 +60,6 @@ import {
   runsForTask,
   saveWorkflow,
 } from './store.ts'
-import { pendingRunIds, workflowStats } from './stats.ts'
-import { matchingRunIds, rangeStart } from './stats-flow.ts'
 import { settlePendingUsage, sumSpent, withLiveUsage } from './usage.ts'
 
 /** The system member a chat needs so the workflow can open sessions in it. */
@@ -88,18 +90,21 @@ export interface WorkflowHost {
   agents?(ctx: AppActionContext): Promise<Array<{ id: string; name: string }>>
 }
 
-function str(params: Record<string, unknown>, name: string, hint: string): string {
-  const value = params[name]
-  if (typeof value !== 'string' || !value.trim()) {
+/** The actions of this module, as the generated parameter types name them. */
+type WorkflowActionId = Extract<ActionId, 'workflows_list' | 'space_chat' | 'space_chat_grant' | `workflow_${string}`>
+
+/** `value` trimmed, refused when blank: the boundary proves it is a string, not that it says anything. */
+function filled(value: string, name: string, hint: string): string {
+  if (!value.trim()) {
     throw new Error(`"${name}" is required: ${hint}`)
   }
   return value.trim()
 }
 
-function optStr(params: Record<string, unknown>, name: string): string | undefined {
-  const value = params[name]
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined
-}
+const TASK_HINT = 'the task key, e.g. TASK-12'
+
+/** `value` trimmed, or undefined when absent or blank. */
+const trimmed = (value: string | undefined) => value?.trim() || undefined
 
 /** The step fields `workflow_step_update` can change; anything not passed keeps its value. */
 const STEP_FIELDS = [
@@ -114,8 +119,8 @@ const STEP_FIELDS = [
   'sessionOptions',
 ] as const
 
-function requireWorkflow(db: Db, params: Record<string, unknown>): WorkflowDef {
-  const ref = str(params, 'workflow', 'the workflow id or name, from workflows_list')
+function requireWorkflow(db: Db, workflow: string): WorkflowDef {
+  const ref = filled(workflow, 'workflow', 'the workflow id or name, from workflows_list')
   const wf = findWorkflow(db, ref)
   if (!wf) {
     const names = listWorkflows(db).map((w) => `"${w.name}"`)
@@ -124,22 +129,30 @@ function requireWorkflow(db: Db, params: Record<string, unknown>): WorkflowDef {
   return wf
 }
 
-/** `workflow_runs_list`'s `match`, checked against the workflow it selects runs of. */
-function runsMatch(raw: unknown, workflow: WorkflowDef): RunsMatch {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error('"match" must be an object: {"range", "step", and optionally "exit", "transition", "rounds", "couldntStart"}')
-  }
-  const match = raw as Record<string, unknown>
-  const range = (optStr(match, 'range') ?? '30d') as StatsRange
+/** A string field of a nested object, trimmed; undefined when absent, blank or not a string. */
+function textIn(object: Record<string, unknown>, name: string): string | undefined {
+  const value = object[name]
+  return typeof value === 'string' ? trimmed(value) : undefined
+}
+
+/**
+ * `workflow_runs_list`'s `match`, checked against the workflow it selects
+ * runs of. Its fields are read here: the boundary only proves it is an object.
+ */
+function runsMatch(match: Record<string, unknown>, workflow: WorkflowDef): RunsMatch {
+  const range = (textIn(match, 'range') ?? '30d') as StatsRange
   if (!STATS_RANGES.includes(range)) {
     throw new Error(`"match.range" must be one of: ${STATS_RANGES.join(', ')}`)
   }
-  const ref = str(match, 'step', 'the id or name of one of the workflow\'s steps')
-  const step = workflow.steps.find((s) => s.id === ref) ?? workflow.steps.find((s) => s.name.toLowerCase() === ref.toLowerCase())
+  const ref = filled(textIn(match, 'step') ?? '', 'step', "the id or name of one of the workflow's steps")
+  const step =
+    workflow.steps.find((s) => s.id === ref) ?? workflow.steps.find((s) => s.name.toLowerCase() === ref.toLowerCase())
   if (!step) {
-    throw new Error(`"${workflow.name}" has no step "${ref}". Steps: ${workflow.steps.map((s) => `"${s.name}"`).join(', ')}`)
+    throw new Error(
+      `"${workflow.name}" has no step "${ref}". Steps: ${workflow.steps.map((s) => `"${s.name}"`).join(', ')}`,
+    )
   }
-  const exit = optStr(match, 'exit') as RunExit | undefined
+  const exit = textIn(match, 'exit') as RunExit | undefined
   if (exit && !RUN_EXITS.includes(exit)) {
     throw new Error(`"match.exit" must be one of: ${RUN_EXITS.join(', ')}`)
   }
@@ -147,15 +160,25 @@ function runsMatch(raw: unknown, workflow: WorkflowDef): RunsMatch {
   if (rounds !== undefined && !(rounds === 1 || rounds === 2 || rounds === 3 || rounds === 4)) {
     throw new Error('"match.rounds" must be 1, 2, 3, or 4 for four or more')
   }
-  const couldntStart = optStr(match, 'couldntStart') as CouldntStartKey | undefined
+  const couldntStart = textIn(match, 'couldntStart') as CouldntStartKey | undefined
   if (couldntStart && couldntStart !== 'unrecorded' && !COULDNT_START_REASONS.includes(couldntStart)) {
     throw new Error(`"match.couldntStart" must be one of: ${[...COULDNT_START_REASONS, 'unrecorded'].join(', ')}`)
   }
-  return { range, step: step.id, exit, transition: optStr(match, 'transition'), rounds, couldntStart }
+  return { range, step: step.id, exit, transition: textIn(match, 'transition'), rounds, couldntStart }
+}
+
+/**
+ * Whether `draft` has a steps list: the one part of its shape checked here.
+ * The rest is read by `normalizeDraft` and judged by `validateWorkflow`.
+ */
+function hasSteps(draft: Record<string, unknown>): draft is Record<string, unknown> & WorkflowDraft {
+  return Array.isArray(draft.steps)
 }
 
 function statusList(db: Db): Status[] {
-  return db.prepare('SELECT id, name, category, color, position FROM status ORDER BY position').all() as unknown as Status[]
+  return db
+    .prepare('SELECT id, name, category, color, position FROM status ORDER BY position')
+    .all() as unknown as Status[]
 }
 
 /** An open approval step as the caller sees it: its approvers' decisions in the open round, and whether the caller decides. */
@@ -170,7 +193,10 @@ function openApproval(
   const byVerdict = verdictTransitions(workflow.steps, step)
   return {
     needed: step.approval?.needed ?? 0,
-    approvers: approvers.map((a) => ({ ...a, decision: decisions.find((d) => d.approver.personId === a.personId) ?? null })),
+    approvers: approvers.map((a) => ({
+      ...a,
+      decision: decisions.find((d) => d.approver.personId === a.personId) ?? null,
+    })),
     transitions: { approve: byVerdict.approve.map((t) => t.label), reject: byVerdict.reject.map((t) => t.label) },
     canDecide: caller !== null && approvers.some((a) => a.personId === caller.id),
     viewerId: caller?.id ?? null,
@@ -208,32 +234,37 @@ export function makeWorkflowActions(host: WorkflowHost): Record<string, AppActio
 
   const env = async (ctx: AppActionContext): Promise<EngineEnv> => {
     const { db, projectKey } = host.open(ctx)
+    const { agents } = host
     return {
       db,
       projectKey,
       app: await host.appAddress(ctx),
       chats: host.chats(),
       spaceSlug: ctx.spaceSlug,
-      ...(host.agents ? { agents: () => host.agents!(ctx) } : {}),
+      ...(agents ? { agents: () => agents(ctx) } : {}),
       now: host.now,
       inbox: host.inbox?.(ctx),
     }
   }
 
-  const prepare = async (ctx: AppActionContext, draft: WorkflowDraft) => {
+  const prepare = async (ctx: AppActionContext, draft: Record<string, unknown>) => {
     const { db } = host.open(ctx)
-    if (!draft || typeof draft !== 'object' || !Array.isArray(draft.steps)) {
-      throw new Error('"workflow" is required: { name, description?, isDefault?, steps: [...] } — see workflow_get for the shape')
+    if (!hasSteps(draft)) {
+      throw new Error(
+        '"workflow" is required: { name, description?, isDefault?, steps: [...] } — see workflow_get for the shape',
+      )
     }
     const statuses = statusList(db)
     const people = await host.people(ctx)
     const wf = normalizeDraft(draft, mintId, statuses, people)
-    const others = listWorkflows(db).filter((w) => w.id !== wf.id).map((w) => w.name)
+    const others = listWorkflows(db)
+      .filter((w) => w.id !== wf.id)
+      .map((w) => w.name)
     const issues = validateWorkflow(wf, { statuses, otherNames: others, people })
     return { db, wf, issues }
   }
 
-  const save = async (ctx: AppActionContext, draft: WorkflowDraft) => {
+  const save = async (ctx: AppActionContext, draft: Record<string, unknown>) => {
     const { db, wf, issues } = await prepare(ctx, draft)
     if (issues.length > 0) {
       throw new Error(`The workflow was not saved:\n${issues.map((i) => `- ${i.path}: ${i.message}`).join('\n')}`)
@@ -251,13 +282,13 @@ export function makeWorkflowActions(host: WorkflowHost): Record<string, AppActio
     return { task, run, db, projectKey, taskId }
   }
 
-  return {
+  const handlers: TypedHandlers<WorkflowActionId, AppActionContext> = {
     workflows_list: (ctx) => {
       const { db } = host.open(ctx)
       return { workflows: listWorkflows(db), statuses: statusList(db) }
     },
 
-    workflow_get: (ctx, params) => requireWorkflow(host.open(ctx).db, params),
+    workflow_get: (ctx, input) => requireWorkflow(host.open(ctx).db, input.workflow),
 
     space_chat: (ctx) => spaceChat(ctx),
 
@@ -278,22 +309,22 @@ export function makeWorkflowActions(host: WorkflowHost): Record<string, AppActio
       return spaceChat(ctx)
     },
 
-    workflow_validate: async (ctx, params) => {
-      const { issues } = await prepare(ctx, params.workflow as WorkflowDraft)
+    workflow_validate: async (ctx, input) => {
+      const { issues } = await prepare(ctx, input.workflow)
       return { issues }
     },
 
-    workflow_save: (ctx, params) => save(ctx, params.workflow as WorkflowDraft),
+    workflow_save: (ctx, input) => save(ctx, input.workflow),
 
-    workflow_step_update: (ctx, params) => {
+    workflow_step_update: (ctx, input) => {
       const { db } = host.open(ctx)
-      const wf = requireWorkflow(db, params)
-      const ref = str(params, 'step', 'the step name or id, from workflow_get')
+      const wf = requireWorkflow(db, input.workflow)
+      const ref = filled(input.step, 'step', 'the step name or id, from workflow_get')
       const index = wf.steps.findIndex((s) => s.id === ref || s.name.toLowerCase() === ref.toLowerCase())
       if (index < 0) {
         throw new Error(`No step "${ref}" in workflow "${wf.name}". Steps: ${wf.steps.map((s) => s.name).join(', ')}`)
       }
-      const changes = Object.fromEntries(STEP_FIELDS.filter((f) => params[f] !== undefined).map((f) => [f, params[f]]))
+      const changes = Object.fromEntries(STEP_FIELDS.filter((f) => input[f] !== undefined).map((f) => [f, input[f]]))
       if (Object.keys(changes).length === 0) {
         throw new Error(`Nothing to change: pass at least one of ${STEP_FIELDS.join(', ')}`)
       }
@@ -301,29 +332,29 @@ export function makeWorkflowActions(host: WorkflowHost): Record<string, AppActio
       return save(ctx, { id: wf.id, name: wf.name, description: wf.description, isDefault: wf.isDefault, steps })
     },
 
-    workflow_delete: (ctx, params) => {
+    workflow_delete: (ctx, input) => {
       const { db } = host.open(ctx)
-      const wf = requireWorkflow(db, params)
+      const wf = requireWorkflow(db, input.workflow)
       deleteWorkflow(db, wf.id)
       host.changed(ctx, [])
       return { deleted: wf.id }
     },
 
-    workflow_start: async (ctx, params) => {
-      const key = str(params, 'task', 'the task key, e.g. TASK-12')
+    workflow_start: async (ctx, input) => {
+      const key = filled(input.task, 'task', TASK_HINT)
       const actor = host.actor(ctx)
       const task = host.getTask(ctx, key)
       const run = await startWorkflow(await env(ctx), host.tasks(ctx, actor), {
         task,
-        workflow: optStr(params, 'workflow'),
+        workflow: trimmed(input.workflow),
         actor,
       })
       host.changed(ctx, [key])
       return run
     },
 
-    workflow_run_get: async (ctx, params) => {
-      const key = str(params, 'task', 'the task key, e.g. TASK-12')
+    workflow_run_get: async (ctx, input) => {
+      const key = filled(input.task, 'task', TASK_HINT)
       const { task, db, projectKey, taskId } = runOf(ctx, key)
       // Rounds whose finishing turn had not ended when they were recorded
       // settle now, if it has; the open round is read as of now.
@@ -358,85 +389,82 @@ export function makeWorkflowActions(host: WorkflowHost): Record<string, AppActio
       }
     },
 
-    workflow_step_finish: async (ctx, params) => {
-      const key = str(params, 'task', 'the task key, e.g. TASK-12')
-      const transition = params.transition
-      if ((typeof transition !== 'string' || !transition.trim()) && typeof transition !== 'number') {
-        throw new Error('"transition" is required: the label of one of the open step\'s transitions (workflow_run_get lists them)')
+    workflow_step_finish: async (ctx, input) => {
+      const key = filled(input.task, 'task', TASK_HINT)
+      const { transition } = input
+      if (!transition.trim()) {
+        throw new Error(
+          '"transition" is required: the label of one of the open step\'s transitions (workflow_run_get lists them)',
+        )
       }
       const actor = host.actor(ctx)
       const run = await finishStep(await env(ctx), host.tasks(ctx, actor), {
         task: host.getTask(ctx, key),
         transition,
-        summary: optStr(params, 'summary'),
+        summary: trimmed(input.summary),
         actor,
       })
       host.changed(ctx, [key])
       return run
     },
 
-    workflow_step_decide: async (ctx, params) => {
-      const key = str(params, 'task', 'the task key, e.g. TASK-12')
-      const verdict = str(params, 'verdict', `one of ${APPROVAL_VERDICTS.join(', ')}`) as ApprovalVerdict
-      if (!APPROVAL_VERDICTS.includes(verdict)) {
-        throw new Error(`"verdict" must be one of: ${APPROVAL_VERDICTS.join(', ')}`)
-      }
+    workflow_step_decide: async (ctx, input) => {
+      const key = filled(input.task, 'task', TASK_HINT)
       const run = await decideStep(await env(ctx), host.tasks(ctx, host.actor(ctx)), {
         task: host.getTask(ctx, key),
-        verdict,
-        transition: optStr(params, 'transition'),
-        comment: optStr(params, 'comment'),
+        verdict: input.verdict,
+        transition: trimmed(input.transition),
+        comment: trimmed(input.comment),
         person: host.person(ctx),
       })
       host.changed(ctx, [key])
       return run
     },
 
-    workflow_step_restart: async (ctx, params) => {
-      const key = str(params, 'task', 'the task key, e.g. TASK-12')
-      const step = str(params, 'step', 'the step name or id, from workflow_run_get')
+    workflow_step_restart: async (ctx, input) => {
+      const key = filled(input.task, 'task', TASK_HINT)
+      const step = filled(input.step, 'step', 'the step name or id, from workflow_run_get')
       const actor = host.actor(ctx)
-      const run = await restartStep(await env(ctx), host.tasks(ctx, actor), { task: host.getTask(ctx, key), step, actor })
+      const run = await restartStep(await env(ctx), host.tasks(ctx, actor), {
+        task: host.getTask(ctx, key),
+        step,
+        actor,
+      })
       host.changed(ctx, [key])
       return run
     },
 
-    workflow_run_cancel: async (ctx, params) => {
-      const key = str(params, 'task', 'the task key, e.g. TASK-12')
+    workflow_run_cancel: async (ctx, input) => {
+      const key = filled(input.task, 'task', TASK_HINT)
       const run = await cancelRun(await env(ctx), { task: host.getTask(ctx, key), actor: host.actor(ctx) })
       host.changed(ctx, [key])
       return run
     },
 
-    workflow_runs_list: (ctx, params) => {
+    workflow_runs_list: (ctx, input) => {
       const { db, projectKey } = host.open(ctx)
-      const state = optStr(params, 'state') as RunState | undefined
-      if (state && !['active', 'finished', 'cancelled'].includes(state)) {
-        throw new Error('"state" must be one of: active, finished, cancelled')
-      }
-      const workflow = optStr(params, 'workflow') ? requireWorkflow(db, params) : undefined
-      const limit = typeof params.limit === 'number' ? params.limit : undefined
-      if (params.match === undefined) {
+      const { state, limit, match } = input
+      const ref = trimmed(input.workflow)
+      const workflow = ref ? requireWorkflow(db, ref) : undefined
+      if (match === undefined) {
         return { runs: listRuns(db, projectKey, { state, workflowId: workflow?.id, limit }) }
       }
       if (!workflow) {
         throw new Error('"match" needs "workflow": it selects runs by that workflow\'s steps')
       }
       // `total` counts every matching run; `runs` stops at the limit, so a caller can say it shows fewer.
-      const ids = matchingRunIds(db, workflow.id, runsMatch(params.match, workflow), host.now())
+      const ids = matchingRunIds(db, workflow.id, runsMatch(match, workflow), host.now())
       return { runs: listRuns(db, projectKey, { workflowId: workflow.id, limit, ids }), total: ids.length }
     },
 
-    workflow_stats: async (ctx, params) => {
+    workflow_stats: async (ctx, input) => {
       const { db } = host.open(ctx)
-      const range = (optStr(params, 'range') ?? '30d') as StatsRange
-      if (!STATS_RANGES.includes(range)) {
-        throw new Error(`"range" must be one of: ${STATS_RANGES.join(', ')}`)
-      }
-      const workflow = requireWorkflow(db, params)
+      const range = input.range ?? '30d'
+      const workflow = requireWorkflow(db, input.workflow)
       const now = host.now()
       await settlePendingUsage(db, host.chats(), pendingRunIds(db, workflow.id, rangeStart(range, now)))
       return workflowStats(db, workflow, range, now)
     },
   }
+  return typedActions(handlers, (ctx) => ctx)
 }

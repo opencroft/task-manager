@@ -10,7 +10,7 @@
 // Listeners are process-wide and receive the instance they concern in the
 // event, so one registration serves every project.
 
-import type { AppActionContext } from '@opencroft/server'
+import type { AppActionContext } from '@opencroft/server/apps'
 
 import type { Actor, Assignee, Comment, Status, TaskSummary } from '../shared/types.ts'
 
@@ -50,7 +50,8 @@ interface Registry {
 const globalForHooks = globalThis as unknown as { __taskPipelinesStatusHooks?: Registry }
 
 function registry(): Registry {
-  return (globalForHooks.__taskPipelinesStatusHooks ??= { before: [], after: [] })
+  globalForHooks.__taskPipelinesStatusHooks ??= { before: [], after: [] }
+  return globalForHooks.__taskPipelinesStatusHooks
 }
 
 /** Register status-change listeners. Each returns an unsubscribe function. */
@@ -121,7 +122,8 @@ export type TaskListener = (event: TaskEvent) => void | Promise<void>
 const globalForTaskHooks = globalThis as unknown as { __taskPipelinesTaskHooks?: TaskListener[] }
 
 function taskListeners(): TaskListener[] {
-  return (globalForTaskHooks.__taskPipelinesTaskHooks ??= [])
+  globalForTaskHooks.__taskPipelinesTaskHooks ??= []
+  return globalForTaskHooks.__taskPipelinesTaskHooks
 }
 
 /** Register a task-event listener. Returns an unsubscribe function. */

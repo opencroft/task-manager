@@ -17,13 +17,17 @@ import { pipeline } from 'node:stream/promises'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 
 import { ATTACHMENT_MAX_BYTES } from '../../shared/attachments.ts'
-import type { OpenProjectAttachmentPlan, OpenProjectAttachmentsResult, OpenProjectSkipped } from '../../shared/openproject.ts'
+import type {
+  OpenProjectAttachmentPlan,
+  OpenProjectAttachmentsResult,
+  OpenProjectSkipped,
+} from '../../shared/openproject.ts'
 import type { Actor } from '../../shared/types.ts'
 import { incomingDir } from '../attachments/files.ts'
-import { TYPE_HEAD_BYTES, cleanName, placeFile } from '../attachments/store.ts'
+import { cleanName, placeFile, TYPE_HEAD_BYTES } from '../attachments/store.ts'
 import { transaction } from '../db.ts'
-import { type Scope, TaskError, keyOf } from '../service.ts'
-import { type OpenProjectClient, type SourceAttachment, type SourceWorkPackage, mapLimit } from './api.ts'
+import { keyOf, type Scope, TaskError } from '../service.ts'
+import { mapLimit, type OpenProjectClient, type SourceAttachment, type SourceWorkPackage } from './api.ts'
 import { pointAtCopies, sourceLabel } from './mapping.ts'
 import { sourceOf } from './store.ts'
 
@@ -43,7 +47,9 @@ export interface AttachmentLists {
 
 /** When each imported work package's attachments were last read, as its `updatedAt` then. */
 function readMarks(scope: Scope, base: string): Map<string, string | null> {
-  const rows = scope.db.prepare('SELECT source_id, attachments_read_at FROM task_source WHERE source = ?').all(sourceOf(base)) as Array<{
+  const rows = scope.db
+    .prepare('SELECT source_id, attachments_read_at FROM task_source WHERE source = ?')
+    .all(sourceOf(base)) as Array<{
     source_id: string
     attachments_read_at: string | null
   }>
@@ -52,7 +58,9 @@ function readMarks(scope: Scope, base: string): Map<string, string | null> {
 
 /** OpenProject attachment ids imported before. */
 function importedIds(scope: Scope, base: string): Set<string> {
-  const rows = scope.db.prepare('SELECT source_id FROM attachment_source WHERE source = ?').all(sourceOf(base)) as Array<{ source_id: string }>
+  const rows = scope.db
+    .prepare('SELECT source_id FROM attachment_source WHERE source = ?')
+    .all(sourceOf(base)) as Array<{ source_id: string }>
   return new Set(rows.map((row) => row.source_id))
 }
 
@@ -60,7 +68,11 @@ function importedIds(scope: Scope, base: string): Set<string> {
  * The attachment lists of `workPackages` changed since their attachments were
  * last read (all of them, the first time), and which files a run would bring.
  */
-export async function readAttachmentLists(scope: Scope, client: OpenProjectClient, workPackages: SourceWorkPackage[]): Promise<AttachmentLists> {
+export async function readAttachmentLists(
+  scope: Scope,
+  client: OpenProjectClient,
+  workPackages: SourceWorkPackage[],
+): Promise<AttachmentLists> {
   const marks = readMarks(scope, client.base)
   const unread = workPackages.filter((wp) => marks.get(String(wp.id)) !== wp.updatedAt)
   const read = await mapLimit(unread, REQUESTS_AT_ONCE, (wp) => client.attachments(wp.id))
@@ -83,7 +95,10 @@ function tooLargeSkips(tooLarge: SourceAttachment[], labelOf: (workPackageId: nu
 }
 
 /** What a preview says about attachments: how many files, how many bytes, and which are too large. */
-export function planAttachments(read: AttachmentLists, labelOf: (workPackageId: number) => string): OpenProjectAttachmentPlan {
+export function planAttachments(
+  read: AttachmentLists,
+  labelOf: (workPackageId: number) => string,
+): OpenProjectAttachmentPlan {
   return {
     count: read.wanted.length,
     bytes: read.wanted.reduce((sum, attachment) => sum + attachment.fileSize, 0),
@@ -178,12 +193,17 @@ export interface WriteAttachmentsInput {
  * files failed (so the next run tries that one again). Then the images in
  * the imported descriptions and comments point at the copies.
  */
-export function writeAttachments(scope: Scope, input: WriteAttachmentsInput): OpenProjectAttachmentsResult & { skipped: OpenProjectSkipped[] } {
+export function writeAttachments(
+  scope: Scope,
+  input: WriteAttachmentsInput,
+): OpenProjectAttachmentsResult & { skipped: OpenProjectSkipped[] } {
   const origin = sourceOf(input.base)
   const tasks = new Map(
     (
       scope.db
-        .prepare('SELECT ts.source_id, t.id, t.number FROM task_source ts JOIN task t ON t.id = ts.task_id WHERE ts.source = ?')
+        .prepare(
+          'SELECT ts.source_id, t.id, t.number FROM task_source ts JOIN task t ON t.id = ts.task_id WHERE ts.source = ?',
+        )
         .all(origin) as Array<{ source_id: string; id: number; number: number }>
     ).map((row) => [row.source_id, { id: row.id, number: row.number }]),
   )
@@ -193,7 +213,9 @@ export function writeAttachments(scope: Scope, input: WriteAttachmentsInput): Op
     return wp ? sourceLabel(wp) : `#${workPackageId}`
   }
   const known = importedIds(scope, input.base)
-  const remember = scope.db.prepare('INSERT INTO attachment_source (source, source_id, task_id, attachment_id, imported_at) VALUES (?, ?, ?, ?, ?)')
+  const remember = scope.db.prepare(
+    'INSERT INTO attachment_source (source, source_id, task_id, attachment_id, imported_at) VALUES (?, ?, ?, ?, ?)',
+  )
   const mark = scope.db.prepare('UPDATE task_source SET attachments_read_at = ? WHERE task_id = ?')
   const now = new Date().toISOString()
   const touched = new Set<number>()
@@ -269,7 +291,9 @@ export function writeAttachments(scope: Scope, input: WriteAttachmentsInput): Op
 /** Our copy of each OpenProject attachment imported here and still attached, by its OpenProject id. */
 export function copiesOf(scope: Scope, base: string): Map<string, string> {
   const rows = scope.db
-    .prepare('SELECT s.source_id, s.attachment_id FROM attachment_source s JOIN task_attachment a ON a.id = s.attachment_id WHERE s.source = ?')
+    .prepare(
+      'SELECT s.source_id, s.attachment_id FROM attachment_source s JOIN task_attachment a ON a.id = s.attachment_id WHERE s.source = ?',
+    )
     .all(sourceOf(base)) as Array<{ source_id: string; attachment_id: string }>
   return new Map(rows.map((row) => [row.source_id, row.attachment_id]))
 }
@@ -295,7 +319,12 @@ function rewriteImportedTexts(scope: Scope, base: string): Set<number> {
         `SELECT t.id, t.number, t.description, ts.imported FROM task_source ts JOIN task t ON t.id = ts.task_id
          WHERE ts.source = ? AND (t.description LIKE ? OR ts.imported LIKE ?)`,
       )
-      .all(origin, pattern, pattern) as Array<{ id: number; number: number; description: string; imported: string | null }>
+      .all(origin, pattern, pattern) as Array<{
+      id: number
+      number: number
+      description: string
+      imported: string | null
+    }>
     const setDescription = scope.db.prepare('UPDATE task SET description = ? WHERE id = ?')
     const setImported = scope.db.prepare('UPDATE task_source SET imported = ? WHERE task_id = ?')
     for (const task of tasks) {

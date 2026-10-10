@@ -3,17 +3,17 @@
 // this one request. The server entry wraps its actions with
 // `withProjectScope`; `scope: "this"` (the default) leaves them as they are.
 
-import host, { type AppActionContext, type AppActionHandler, type HostAppInstance } from '@opencroft/server'
+import { type AppActionContext, type AppActionHandler, apps, type HostAppInstance } from '@opencroft/server/apps'
 
-import type { MyWorkInput } from '../../shared/my-work.ts'
+import type { ActionInputs } from '../../shared/action-inputs.ts'
 import { REFERENCE_ACTIONS } from '../../shared/references.ts'
-import type { TaskListInput } from '../../shared/types.ts'
+import { parseParams } from '../action-params.ts'
 import { scopeFor } from '../actions.ts'
 import { viewerOf } from '../my-work/index.ts'
 import { mergeMyWork, myWork } from '../my-work/store.ts'
 import { referenceProjects, resolveReferences } from '../references.ts'
 import { listTasks, summariesWhere } from '../service.ts'
-import { type ProjectInstance, acrossProjects, scoped } from './across.ts'
+import { acrossProjects, type ProjectInstance, scoped } from './across.ts'
 import { acrossListInput, mergeTaskLists } from './task-list.ts'
 
 /**
@@ -26,7 +26,7 @@ import { acrossListInput, mergeTaskLists } from './task-list.ts'
  */
 async function visibleProjects(_ctx?: AppActionContext): Promise<ProjectInstance[]> {
   // Each listed instance carries its name and slug as well.
-  return (await host.apps.listInstances('tasks')) as Array<HostAppInstance & Pick<ProjectInstance, 'name' | 'slug'>>
+  return (await apps.listInstances('tasks')) as Array<HostAppInstance & Pick<ProjectInstance, 'name' | 'slug'>>
 }
 
 /**
@@ -39,15 +39,19 @@ function contextIn(ctx: AppActionContext, instance: ProjectInstance): AppActionC
   return { ...ctx, instanceId, spaceSlug, name, slug, params, dataDir }
 }
 
-async function taskListAcross(ctx: AppActionContext, input: TaskListInput) {
+async function taskListAcross(ctx: AppActionContext, input: ActionInputs['task_list']) {
   const { perProject, limit } = acrossListInput(input)
-  const across = await acrossProjects(await visibleProjects(ctx), (instance) => listTasks(scopeFor(contextIn(ctx, instance)), perProject))
+  const across = await acrossProjects(await visibleProjects(ctx), (instance) =>
+    listTasks(scopeFor(contextIn(ctx, instance)), perProject),
+  )
   return { ...mergeTaskLists(input.query, limit, across.parts), projects: across.projects }
 }
 
-async function myWorkAcross(ctx: AppActionContext, input: MyWorkInput) {
+async function myWorkAcross(ctx: AppActionContext, input: ActionInputs['my_work']) {
   const viewer = await viewerOf(scopeFor(ctx))
-  const across = await acrossProjects(await visibleProjects(ctx), (instance) => myWork(scopeFor(contextIn(ctx, instance)), viewer, input))
+  const across = await acrossProjects(await visibleProjects(ctx), (instance) =>
+    myWork(scopeFor(contextIn(ctx, instance)), viewer, input),
+  )
   return { ...mergeMyWork(viewer, input, across.parts), projects: across.projects }
 }
 
@@ -81,7 +85,7 @@ export function withProjectScope(actions: Record<string, AppActionHandler>): Rec
   }
   return {
     ...actions,
-    task_list: scoped(own('task_list'), (ctx, params) => taskListAcross(ctx, params as TaskListInput)),
-    my_work: scoped(own('my_work'), (ctx, params) => myWorkAcross(ctx, params as MyWorkInput)),
+    task_list: scoped(own('task_list'), (ctx, params) => taskListAcross(ctx, parseParams('task_list', params))),
+    my_work: scoped(own('my_work'), (ctx, params) => myWorkAcross(ctx, parseParams('my_work', params))),
   }
 }

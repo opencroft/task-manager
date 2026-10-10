@@ -4,9 +4,16 @@
 // is the base's, so a bare `?view=<id>` link shows the view, and only a
 // change from it is written.
 
-import { type FieldFilter, VIEW_FIELD_FILTER_KEYS, compactFilter, fieldFilterOf } from '../../shared/filters'
+import { compactFilter, type FieldFilter, fieldFilterOf, VIEW_FIELD_FILTER_KEYS } from '../../shared/filters'
 import type { Priority, TaskSort, TaskSortField, TaskType } from '../../shared/types'
-import { DEFAULT_TASK_COLUMNS, type SavedView, type TaskColumn, type ViewFilter, type ViewGrouping, type ViewPage } from '../../shared/views'
+import {
+  DEFAULT_TASK_COLUMNS,
+  type SavedView,
+  type TaskColumn,
+  type ViewFilter,
+  type ViewGrouping,
+  type ViewPage,
+} from '../../shared/views'
 import { fieldInput, selectionOfQuery, selectionParams, textOfQuery, textParam } from '../lib/filter-params'
 import { columnsOfParam, columnsParam } from './task-columns'
 
@@ -24,7 +31,9 @@ export function sortParam(sort: TaskSort | undefined): string {
 }
 
 function sortOfParam(value: string): TaskSort | undefined {
-  return value ? { field: value.split('.')[0] as TaskSortField, dir: value.endsWith('.desc') ? 'desc' : 'asc' } : undefined
+  return value
+    ? { field: value.split('.')[0] as TaskSortField, dir: value.endsWith('.desc') ? 'desc' : 'asc' }
+    : undefined
 }
 
 /** What a page shows with no saved view: no filters, and on Tasks the default columns. */
@@ -53,14 +62,21 @@ export function viewOfQuery(query: URLSearchParams, page: ViewPage, base: ViewSt
   filter.parent = fieldInput(field('parent'))
   filter.sort = sortOfParam(textOfQuery(query, 'sort', sortParam(base.filter.sort)))
   const group = page === 'board' && query.get('group') === 'assignee' ? 'assignee' : null
-  return { filter, group, columns: page === 'tasks' ? columnsOfParam(query.get('cols'), base.columns ?? DEFAULT_TASK_COLUMNS) : null }
+  return {
+    filter,
+    group,
+    columns: page === 'tasks' ? columnsOfParam(query.get('cols'), base.columns ?? DEFAULT_TASK_COLUMNS) : null,
+  }
 }
 
 /** The URL parameters that make a page show `state` when read against `base`: only what differs from it. */
 export function queryOfState(state: ViewState, base: ViewState): URLSearchParams {
   const params: Record<string, string | null> = {
     q: textParam(state.filter.query ?? '', base.filter.query ?? ''),
-    ...Object.assign({}, ...VIEW_FIELD_FILTER_KEYS.map((key) => selectionParams(key, state.filter[key], base.filter[key]))),
+    ...Object.assign(
+      {},
+      ...VIEW_FIELD_FILTER_KEYS.map((key) => selectionParams(key, state.filter[key], base.filter[key])),
+    ),
     sort: textParam(sortParam(state.filter.sort), sortParam(base.filter.sort)),
     // The board's grouping is not read against a base, so it is always written.
     group: state.group,

@@ -10,7 +10,6 @@ import { MessagesSquare } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-
 import type { MentionSession } from '../../shared/mentions'
 import type { TasksApi } from '../lib/api'
 import { useTasksLive } from '../lib/live'
@@ -53,9 +52,9 @@ export function MentionSessions({ api, instanceId, taskKey }: { api: TasksApi; i
   }
   const shown = sessions.find((session) => session.agent.id === open)
   return (
-    <section aria-label="Sessions" className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="mr-1 text-sm font-semibold">Sessions</span>
+    <section aria-label='Sessions' className='flex flex-col gap-2'>
+      <div className='flex flex-wrap items-center gap-1.5'>
+        <span className='mr-1 text-sm font-semibold'>Sessions</span>
         {sessions.map((session) => {
           const readable = Boolean(session.threadId && session.chatSlug)
           const active = session.agent.id === open
@@ -63,16 +62,20 @@ export function MentionSessions({ api, instanceId, taskKey }: { api: TasksApi; i
             <Button
               key={session.agent.id}
               variant={active ? 'secondary' : 'outline'}
-              size="sm"
+              size='sm'
               aria-expanded={readable ? active : undefined}
               disabled={!readable}
-              title={readable ? `Open the session. Last mentioned ${new Date(session.lastAt).toLocaleString()}` : (session.note ?? undefined)}
+              title={
+                readable
+                  ? `Open the session. Last mentioned ${new Date(session.lastAt).toLocaleString()}`
+                  : (session.note ?? undefined)
+              }
               onClick={() => setOpen(active ? null : session.agent.id)}
               className={cn('h-7 gap-1.5 px-2 font-normal', session.note && 'border-destructive/40')}
             >
-              <MessagesSquare className="size-3.5" />
-              <span className="font-medium">{session.agent.name}</span>
-              <span className="text-muted-foreground">· {ago(session.lastAt)}</span>
+              <MessagesSquare className='size-3.5' />
+              <span className='font-medium'>{session.agent.name}</span>
+              <span className='text-muted-foreground'>· {ago(session.lastAt)}</span>
             </Button>
           )
         })}
@@ -80,13 +83,11 @@ export function MentionSessions({ api, instanceId, taskKey }: { api: TasksApi; i
       {sessions
         .filter((session) => session.note)
         .map((session) => (
-          <p key={session.agent.id} className="text-sm text-muted-foreground">
-            <span className="font-medium text-foreground">{session.agent.name}:</span> {session.note}
+          <p key={session.agent.id} className='text-sm text-muted-foreground'>
+            <span className='font-medium text-foreground'>{session.agent.name}:</span> {session.note}
           </p>
         ))}
-      {shown?.threadId && shown.chatSlug ? (
-        <SessionReader chatSlug={shown.chatSlug} chatRef={shown.chatRef} threadId={shown.threadId} />
-      ) : null}
+      {shown?.threadId && shown.chatSlug ? <SessionReader chatSlug={shown.chatSlug} threadId={shown.threadId} /> : null}
     </section>
   )
 }

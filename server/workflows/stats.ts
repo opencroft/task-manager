@@ -67,7 +67,12 @@ interface StepCounts {
 }
 
 /** Counts and times per step, grouped by `key` (an SQL expression over the round `o` that ends in its step). */
-function stepFigures(db: Db, key: string, where: string, params: string[]): { counts: Map<string, StepCounts>; times: Map<string, StatsDurations> } {
+function stepFigures(
+  db: Db,
+  key: string,
+  where: string,
+  params: string[],
+): { counts: Map<string, StepCounts>; times: Map<string, StatsDurations> } {
   const counts = db
     .prepare(
       `SELECT ${key} AS key, count(DISTINCT o.run_id) AS entered,
@@ -148,7 +153,9 @@ function usageStats(rounds: UsageRound[]): StatsUsage {
     // A round priced in a currency adds its amount there; rounds not priced in it are not samples of it.
     cost: currencies.map((currency) => ({
       currency,
-      ...distribution(settled.flatMap((round) => round.cost.filter((c) => c.currency === currency).map((c) => c.amount))),
+      ...distribution(
+        settled.flatMap((round) => round.cost.filter((c) => c.currency === currency).map((c) => c.amount)),
+      ),
     })),
   }
 }
@@ -174,18 +181,23 @@ function stepStats(
 export function workflowStats(db: Db, workflow: WorkflowDef, range: StatsRange, now: string): WorkflowStats {
   const params = [workflow.id, rangeStart(range, now)]
 
-  const runs = { ...db
-    .prepare(
-      `SELECT count(*) AS started,
+  const runs = {
+    ...(db
+      .prepare(
+        `SELECT count(*) AS started,
          coalesce(sum(state = 'finished'), 0) AS finished,
          coalesce(sum(state = 'cancelled'), 0) AS cancelled,
          coalesce(sum(state = 'active'), 0) AS active
        FROM workflow_run WHERE workflow_id = ? AND started_at >= ?`,
-    )
-    .get(...params) as WorkflowStats['runs'] }
+      )
+      .get(...params) as WorkflowStats['runs']),
+  }
   const runTime =
-    durations(db, `SELECT '' AS key, ${MS('started_at', 'ended_at')} AS ms FROM workflow_run WHERE workflow_id = ? AND started_at >= ? AND state = 'finished'`, params).get('') ??
-    NOT_MEASURED
+    durations(
+      db,
+      `SELECT '' AS key, ${MS('started_at', 'ended_at')} AS ms FROM workflow_run WHERE workflow_id = ? AND started_at >= ? AND state = 'finished'`,
+      params,
+    ).get('') ?? NOT_MEASURED
 
   const usage = usageRounds(db, params)
   const flow = flowRounds(db, workflow.id, rangeStart(range, now))
@@ -194,7 +206,12 @@ export function workflowStats(db: Db, workflow: WorkflowDef, range: StatsRange, 
     stepStats(step, overall.counts.get(step.id), overall.times.get(step.id), usage, flow),
   )
 
-  const byWorker = stepFigures(db, `o.worker_kind || ${UNIT} || o.worker_name || ${UNIT} || o.step_id`, 'AND o.worker_kind IS NOT NULL', params)
+  const byWorker = stepFigures(
+    db,
+    `o.worker_kind || ${UNIT} || o.worker_name || ${UNIT} || o.step_id`,
+    'AND o.worker_kind IS NOT NULL',
+    params,
+  )
   const workers = new Map<string, { kind: 'agent' | 'person'; name: string }>()
   for (const key of byWorker.counts.keys()) {
     const [kind, name] = key.split(SEPARATOR) as ['agent' | 'person', string]

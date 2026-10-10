@@ -17,7 +17,7 @@ import {
   readAttachment,
   renameAttachment,
 } from './store.ts'
-import { PNG, makeScope, storedFiles, tempDataDir } from './testing.ts'
+import { makeScope, PNG, storedFiles, tempDataDir } from './testing.ts'
 
 const b64 = (bytes: Uint8Array | string) => Buffer.from(bytes).toString('base64')
 
@@ -42,7 +42,9 @@ test('an attachment keeps its bytes, is attributed to the caller, and is recorde
   assert.deepEqual(fs.readdirSync(incomingDir(scope.dataDir)), [], 'nothing is left in incoming/')
   assert.deepEqual(listAttachments(scope, key), [shot])
   assert.deepEqual(
-    getTask(scope, key).activity.filter((a) => a.kind === 'attachment_added').map((a) => [a.actor.name, a.to]),
+    getTask(scope, key)
+      .activity.filter((a) => a.kind === 'attachment_added')
+      .map((a) => [a.actor.name, a.to]),
     [['Ace (QA)', 'login-error.png']],
   )
   assert.deepEqual(scope.events.at(-1), { keys: [key], kind: 'task' })
@@ -78,11 +80,21 @@ test('refusals name the problem: the size limit, bad base64, an empty name, an u
     message: 'video.mov is 25.1 MB; the limit per file is 25 MB',
   })
   // 25 MiB is 3k + 1 bytes: 4k characters, then one byte as "AA==".
-  const atLimit = 'A'.repeat(((25 * 1024 * 1024 - 1) / 3) * 4) + 'AA=='
-  assert.equal(attach(scope, { key, name: 'max.bin', contentBase64: atLimit }).size, 25 * 1024 * 1024, 'exactly the limit is accepted')
-  assert.throws(() => attach(scope, { key, name: 'x.txt', contentBase64: 'not base64!' }), { message: /must be the file's bytes in base64/ })
-  assert.throws(() => attach(scope, { key, name: ' / ', contentBase64: b64('x') }), { message: /"name" must be a file name/ })
-  assert.throws(() => readAttachment(scope, 'nope'), { message: 'No attachment "nope" in project TASK; task_attachments { key } lists a task\'s' })
+  const atLimit = `${'A'.repeat(((25 * 1024 * 1024 - 1) / 3) * 4)}AA==`
+  assert.equal(
+    attach(scope, { key, name: 'max.bin', contentBase64: atLimit }).size,
+    25 * 1024 * 1024,
+    'exactly the limit is accepted',
+  )
+  assert.throws(() => attach(scope, { key, name: 'x.txt', contentBase64: 'not base64!' }), {
+    message: /must be the file's bytes in base64/,
+  })
+  assert.throws(() => attach(scope, { key, name: ' / ', contentBase64: b64('x') }), {
+    message: /"name" must be a file name/,
+  })
+  assert.throws(() => readAttachment(scope, 'nope'), {
+    message: 'No attachment "nope" in project TASK; task_attachments { key } lists a task\'s',
+  })
   assert.deepEqual(
     listAttachments(scope, key).map((a) => a.name),
     ['max.bin'],
@@ -139,19 +151,38 @@ test('a received upload moves into place with its type from its first bytes; one
     fs.mkdirSync(incomingDir(scope.dataDir), { recursive: true })
     const file = path.join(incomingDir(scope.dataDir), `upload-${name}`)
     fs.writeFileSync(file, bytes)
-    return { file, result: () => attachReceived(scope, { key, name, file, size: bytes.length, head: bytes.subarray(0, 16) }) }
+    return {
+      file,
+      result: () => attachReceived(scope, { key, name, file, size: bytes.length, head: bytes.subarray(0, 16) }),
+    }
   }
   const shot = receive('shot.png', PNG)
   const stored = shot.result()
-  assert.deepEqual([stored.contentType, stored.previewable, stored.size, stored.uploader.name], ['image/png', true, PNG.length, 'Ace (QA)'])
+  assert.deepEqual(
+    [stored.contentType, stored.previewable, stored.size, stored.uploader.name],
+    ['image/png', true, PNG.length, 'Ace (QA)'],
+  )
   assert.equal(fs.existsSync(shot.file), false, 'moved, not copied')
   assert.deepEqual(fs.readFileSync(attachmentFile(scope.dataDir, stored.id)), PNG)
 
   const big = receive('big.bin', Buffer.alloc(1))
-  assert.throws(() => attachReceived(scope, { key, name: 'big.bin', file: big.file, size: 25 * 1024 * 1024 + 1, head: Buffer.alloc(1) }), {
-    message: 'big.bin is 25.1 MB; the limit per file is 25 MB',
-  })
-  assert.deepEqual(listAttachments(scope, key).map((a) => a.name), ['shot.png'])
+  assert.throws(
+    () =>
+      attachReceived(scope, {
+        key,
+        name: 'big.bin',
+        file: big.file,
+        size: 25 * 1024 * 1024 + 1,
+        head: Buffer.alloc(1),
+      }),
+    {
+      message: 'big.bin is 25.1 MB; the limit per file is 25 MB',
+    },
+  )
+  assert.deepEqual(
+    listAttachments(scope, key).map((a) => a.name),
+    ['shot.png'],
+  )
 })
 
 test('a load finishes an interrupted removal and drops uploads that never completed', async () => {

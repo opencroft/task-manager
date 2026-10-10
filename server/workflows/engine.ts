@@ -43,7 +43,13 @@ import {
 } from '../../shared/workflows.ts'
 import { type Db, transaction } from '../db.ts'
 import type { Addressee, NotificationDraft, Party } from '../inbox/store.ts'
-import { findSpaceChat, NO_GROUP_CHATS, notInSpaceChat, type SpaceChatProblemKind, spaceChatFor } from '../space-chat.ts'
+import {
+  findSpaceChat,
+  NO_GROUP_CHATS,
+  notInSpaceChat,
+  type SpaceChatProblemKind,
+  spaceChatFor,
+} from '../space-chat.ts'
 import { agentTaskThread, oneThreadAtATime, openTaskThread } from '../task-threads.ts'
 import {
   type CompactPort,
@@ -68,11 +74,11 @@ import {
   getWorkflow,
   hasPendingMove,
   markCompactionUnsent,
+  orphanedCompactions,
   type PendingMove,
   recordDecision,
   roundNeedsAttention,
   runsForTask,
-  orphanedCompactions,
   setPendingMove,
   setRoundSessionOptions,
   setRoundThread,
@@ -153,7 +159,9 @@ function taskId(db: Db, number: number): number {
 }
 
 function statuses(db: Db): Status[] {
-  return db.prepare('SELECT id, name, category, color, position FROM status ORDER BY position').all() as unknown as Status[]
+  return db
+    .prepare('SELECT id, name, category, color, position FROM status ORDER BY position')
+    .all() as unknown as Status[]
 }
 
 function statusName(all: Status[], id: number): string {
@@ -220,7 +228,9 @@ export function beforeStatusChange(db: Db, projectKey: string, change: StatusCha
     return
   }
   if (step.kind === 'approval') {
-    throw new Error(`${change.task.key} waits on the approvers of "${open.name}": only people can move it until they decide`)
+    throw new Error(
+      `${change.task.key} waits on the approvers of "${open.name}": only people can move it until they decide`,
+    )
   }
   if (open.agentName !== change.actor.name || step.transitions.some((t) => t.status === change.to.id)) {
     return
@@ -268,7 +278,9 @@ async function archiveTaskThreads(env: EngineEnv, taskNumber: number): Promise<v
   }
   const runs = runsForTask(env.db, env.projectKey, taskId(env.db, taskNumber))
   const open = new Set(runs.flatMap((run) => (run.state === 'active' ? [openStepOf(run)?.threadRef] : [])))
-  const refs = new Set(runs.flatMap((run) => run.steps.flatMap((s) => (s.threadRef && !open.has(s.threadRef) ? [s.threadRef] : []))))
+  const refs = new Set(
+    runs.flatMap((run) => run.steps.flatMap((s) => (s.threadRef && !open.has(s.threadRef) ? [s.threadRef] : []))),
+  )
   for (const ref of refs) {
     try {
       await chats.archive(ref)
@@ -291,7 +303,12 @@ interface Move {
  * asked. Any other move opens the first step the status starts, and counts as
  * the open step's transition into that status and step when it has one.
  */
-function moveFor(workflow: WorkflowDef | null, from: WorkflowStepDef | undefined, pending: PendingMove | null, to: Status): Move {
+function moveFor(
+  workflow: WorkflowDef | null,
+  from: WorkflowStepDef | undefined,
+  pending: PendingMove | null,
+  to: Status,
+): Move {
   const steps = workflow?.steps ?? []
   const taken = (t: WorkflowTransition) => (from ? { label: t.label, gate: transitionGate(steps, from.id, t) } : null)
   if (pending?.status === to.id) {
@@ -413,9 +430,11 @@ async function workerFor(
 
 function templateContext(env: EngineEnv, input: EnterInput): TemplateContext {
   const description =
-    (env.db.prepare('SELECT description FROM task WHERE number = ?').get(input.task.number) as
-      | { description: string }
-      | undefined)?.description ?? ''
+    (
+      env.db.prepare('SELECT description FROM task WHERE number = ?').get(input.task.number) as
+        | { description: string }
+        | undefined
+    )?.description ?? ''
   const run = getRun(env.db, env.projectKey, input.run.id) ?? input.run
   const steps: TemplateContext['steps'] = {}
   for (const s of run.steps) {
@@ -533,7 +552,9 @@ export async function enterStep(env: EngineEnv, input: EnterInput): Promise<void
   try {
     const where = await spaceChatFor(env.chats, env.spaceSlug, worker)
     if ('problem' in where || !env.chats) {
-      throw 'problem' in where ? new SpaceChatProblem(where.problem, where.kind) : new SpaceChatProblem(NO_GROUP_CHATS, 'no_chats')
+      throw 'problem' in where
+        ? new SpaceChatProblem(where.problem, where.kind)
+        : new SpaceChatProblem(NO_GROUP_CHATS, 'no_chats')
     }
     const { chat } = where
     const chats = env.chats
@@ -551,7 +572,12 @@ export async function enterStep(env: EngineEnv, input: EnterInput): Promise<void
         const sentBack = input.cause
         // A thread archived when the task closed takes no messages; the step coming back reopens it first.
         await chats.unarchive?.(reuse.ref)
-        updateRunStep(db, run.id, step.id, { threadRef: reuse.ref, threadId: reuse.threadId, chatRef: reuse.chatRef ?? chat.ref, chatSlug: chat.slug })
+        updateRunStep(db, run.id, step.id, {
+          threadRef: reuse.ref,
+          threadId: reuse.threadId,
+          chatRef: reuse.chatRef ?? chat.ref,
+          chatSlug: chat.slug,
+        })
         setRoundThread(db, run.id, step.id, reuse.ref)
         const deliver = async (compacted: boolean) => {
           // Queued behind the running turn: the agent that finished the previous step is usually still
@@ -593,7 +619,9 @@ export async function enterStep(env: EngineEnv, input: EnterInput): Promise<void
           return
         }
         deferred = true
-        void oneThreadAtATime(lane, () => compactThenDeliver(env, input, worker, { thread: reuse.ref, roundNo, ...over }, deliver))
+        void oneThreadAtATime(lane, () =>
+          compactThenDeliver(env, input, worker, { thread: reuse.ref, roundNo, ...over }, deliver),
+        )
         return
       }
       const started = await openTaskThread(task.key, (title) =>
@@ -719,7 +747,11 @@ export async function recoverInterruptedCompactions(env: EngineEnv): Promise<num
  * and each of them is asked for a decision. A round re-entered in place (a
  * restart) keeps the decisions already made in it.
  */
-async function awaitApproval(env: EngineEnv, input: EnterInput, entry: { attempts: number; now: string }): Promise<void> {
+async function awaitApproval(
+  env: EngineEnv,
+  input: EnterInput,
+  entry: { attempts: number; now: string },
+): Promise<void> {
   const { run, workflow, step, task } = input
   updateRunStep(env.db, run.id, step.id, {
     name: step.name,
@@ -738,7 +770,11 @@ async function awaitApproval(env: EngineEnv, input: EnterInput, entry: { attempt
   await tell(env, {
     kind: 'approval_requested',
     taskNumber: task.number,
-    recipients: (step.approval?.approvers ?? []).map((a) => ({ kind: 'person' as const, id: a.personId, name: a.name })),
+    recipients: (step.approval?.approvers ?? []).map((a) => ({
+      kind: 'person' as const,
+      id: a.personId,
+      name: a.name,
+    })),
     actor: input.cause?.actor ?? null,
     workflow: { name: workflow.name },
     step: { name: step.name },
@@ -797,7 +833,7 @@ export async function startWorkflow(
       // Recorded on the step, which the returned run shows; the run itself has started.
     }
   } else {
-    await tasks.changeStatus({ key: input.task.key, status: workflow.steps[0]!.triggerStatus })
+    await tasks.changeStatus({ key: input.task.key, status: workflow.steps[0].triggerStatus })
   }
   return getRun(db, projectKey, runId) ?? run
 }
@@ -807,18 +843,24 @@ export async function startWorkflow(
  * status it sets. A status two transitions set means the one into the step
  * that status starts, as a person's move to it would.
  */
-function resolveTransition(all: Status[], steps: WorkflowStepDef[], step: WorkflowStepDef, transition: string | number): WorkflowTransition {
+function resolveTransition(
+  all: Status[],
+  steps: WorkflowStepDef[],
+  step: WorkflowStepDef,
+  transition: string | number,
+): WorkflowTransition {
   const ref = String(transition).trim()
   const wanted = ref.toLowerCase()
-  const named = step.transitions.find((t) => t.id === ref) ?? step.transitions.find((t) => t.label.toLowerCase() === wanted)
+  const named =
+    step.transitions.find((t) => t.id === ref) ?? step.transitions.find((t) => t.label.toLowerCase() === wanted)
   if (named) {
     return named
   }
-  const byStatus = step.transitions.filter((t) => String(t.status) === wanted || statusName(all, t.status).toLowerCase() === wanted)
+  const byStatus = step.transitions.filter(
+    (t) => String(t.status) === wanted || statusName(all, t.status).toLowerCase() === wanted,
+  )
   const match =
-    byStatus.length > 1
-      ? byStatus.find((t) => t.toStep === (stepStartedBy(steps, t.status)?.id ?? null))
-      : byStatus[0]
+    byStatus.length > 1 ? byStatus.find((t) => t.toStep === (stepStartedBy(steps, t.status)?.id ?? null)) : byStatus[0]
   if (!match) {
     throw new Error(`"${transition}" is not a way out of "${step.name}"; choose one of: ${transitionList(step)}`)
   }
@@ -848,7 +890,9 @@ export async function finishStep(
     throw new Error(`${input.task.key} has no open step to finish`)
   }
   if (step.kind === 'approval') {
-    throw new Error(`"${step.name}" is an approval step: its approvers decide it from the task, with workflow_step_decide`)
+    throw new Error(
+      `"${step.name}" is an approval step: its approvers decide it from the task, with workflow_step_decide`,
+    )
   }
   if (input.actor.kind === 'agent' && open.agentName !== input.actor.name) {
     throw new Error(
@@ -860,7 +904,15 @@ export async function finishStep(
   transaction(db, () => {
     updateRunStep(db, run.id, open.stepId, { summary, finishedBy: input.actor.name })
   })
-  await moveTask(env, tasks, run, input.task, { status: transition.status, transition: transition.id }, summary, input.actor)
+  await moveTask(
+    env,
+    tasks,
+    run,
+    input.task,
+    { status: transition.status, transition: transition.id },
+    summary,
+    input.actor,
+  )
   return getRun(db, projectKey, run.id) ?? run
 }
 
@@ -875,7 +927,7 @@ function verdictTransition(
   const list = options.map((t) => `"${t.label}"`).join(', ')
   if (ref === undefined) {
     if (options.length === 1) {
-      return options[0]!
+      return options[0]
     }
     throw new Error(
       options.length === 0
@@ -904,7 +956,10 @@ function settlingDecision(
   decisions: ApprovalDecision[],
   gate: TransitionGate,
 ): { decision: ApprovalDecision; transition: WorkflowTransition } {
-  const verdict = APPROVAL_VERDICTS.find((v) => VERDICT_GATE[v] === gate)!
+  const verdict = APPROVAL_VERDICTS.find((v) => VERDICT_GATE[v] === gate)
+  if (!verdict) {
+    throw new Error(`"${step.name}" was settled by a ${gate} gate, which no verdict leaves by`)
+  }
   const decision = [...decisions].reverse().find((d) => d.verdict === verdict)
   if (!decision) {
     throw new Error(`"${step.name}" was settled to ${verdict} with no decision to ${verdict}`)
@@ -955,7 +1010,9 @@ export async function decideStep(
   }
   const approver = step.approval.approvers.find((a) => a.personId === person.id)
   if (!approver) {
-    throw new Error(`You aren't an approver of "${step.name}". Its approvers: ${step.approval.approvers.map((a) => a.name).join(', ')}`)
+    throw new Error(
+      `You aren't an approver of "${step.name}". Its approvers: ${step.approval.approvers.map((a) => a.name).join(', ')}`,
+    )
   }
   if (hasPendingMove(db, run.id)) {
     throw new Error(`"${step.name}" has just been decided: ${key} is moving on`)
@@ -969,7 +1026,10 @@ export async function decideStep(
     comment,
     at: env.now(),
   })
-  const decisions = getRun(db, projectKey, run.id)?.steps.find((s) => s.stepId === step.id)?.rounds.at(-1)?.decisions ?? []
+  const decisions =
+    getRun(db, projectKey, run.id)
+      ?.steps.find((s) => s.stepId === step.id)
+      ?.rounds.at(-1)?.decisions ?? []
   const gate = approvalOutcome(step.approval, decisions)
   if (gate === null) {
     return getRun(db, projectKey, run.id) ?? run
@@ -977,10 +1037,18 @@ export async function decideStep(
   const settled = settlingDecision(workflow.steps, step, decisions, gate)
   const summary = settled.decision.comment
   updateRunStep(db, run.id, open.stepId, { summary, finishedBy: settled.decision.approver.name })
-  await moveTask(env, tasks, run, input.task, { status: settled.transition.status, transition: settled.transition.id }, summary, {
-    kind: 'person',
-    name: person.name,
-  })
+  await moveTask(
+    env,
+    tasks,
+    run,
+    input.task,
+    { status: settled.transition.status, transition: settled.transition.id },
+    summary,
+    {
+      kind: 'person',
+      name: person.name,
+    },
+  )
   return getRun(db, projectKey, run.id) ?? run
 }
 
@@ -1040,7 +1108,9 @@ export async function restartStep(
     const openDef = open ? workflow.steps.find((s) => s.id === open.stepId) : undefined
     // Closing an open approval step in place would end it with no decision; only people may override its approvers.
     if (input.actor.kind === 'agent' && open && open.stepId !== step.id && openDef?.kind === 'approval') {
-      throw new Error(`${input.task.key} waits on the approvers of "${open.name}": only people can move it on until they decide`)
+      throw new Error(
+        `${input.task.key} waits on the approvers of "${open.name}": only people can move it on until they decide`,
+      )
     }
     if (open && open.stepId !== step.id) {
       await closeStep(env, run, open, { outcome: input.task.status.name, finishedBy: input.actor.name, taken: null })

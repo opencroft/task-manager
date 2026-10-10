@@ -18,8 +18,15 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { type SmokeConfig, type SmokeResult, type SmokeRow, checkCode, report, smokeChecks } from './smoke-stage/checks.ts'
-import { McpSession, authorizationHeader, runCodeValue } from './smoke-stage/mcp.ts'
+import {
+  checkCode,
+  report,
+  type SmokeConfig,
+  type SmokeResult,
+  type SmokeRow,
+  smokeChecks,
+} from './smoke-stage/checks.ts'
+import { authorizationHeader, McpSession, runCodeValue } from './smoke-stage/mcp.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const CHECK_TIMEOUT_MS = 120_000
@@ -37,7 +44,9 @@ const required = (name: string, what: string): string => {
   }
   return value
 }
-const configured = JSON.parse(readFileSync(required('SMOKE_CONFIG', 'the path of a JSON file holding the SmokeConfig'), 'utf8')) as SmokeConfig
+const configured = JSON.parse(
+  readFileSync(required('SMOKE_CONFIG', 'the path of a JSON file holding the SmokeConfig'), 'utf8'),
+) as SmokeConfig
 const config = { ...configured, origin: process.env.SMOKE_ORIGIN ?? configured.origin }
 const shots = !argv.includes('--no-shots')
 const only = option('--only')
@@ -64,7 +73,10 @@ if (printed !== null) {
 }
 
 const QA_BROWSER_URL = required('QA_BROWSER_URL', "the browser's MCP endpoint")
-const secret = required('QA_BROWSER_AUTH', "the browser's credential: a whole Authorization value, user:password, or its base64")
+const secret = required(
+  'QA_BROWSER_AUTH',
+  "the browser's credential: a whole Authorization value, user:password, or its base64",
+)
 
 const stamp = new Date().toISOString().replace(/[:.]/g, '-')
 const shotDir = join(here, '..', 'smoke-results', stamp)
@@ -87,7 +99,14 @@ for (const check of checks) {
       await session.open()
       rows = await run(code)
     } catch (second) {
-      rows = [{ name: 'runs', pass: false, detail: `${String(first).slice(0, 150)}; retry: ${String(second).slice(0, 150)}`, step: 'call the browser' }]
+      rows = [
+        {
+          name: 'runs',
+          pass: false,
+          detail: `${String(first).slice(0, 150)}; retry: ${String(second).slice(0, 150)}`,
+          step: 'call the browser',
+        },
+      ]
     }
   }
   const saved: Record<number, string> = {}
@@ -111,6 +130,8 @@ console.log(table)
 process.exit(passed ? 0 : 1)
 
 async function run(code: string): Promise<SmokeRow[]> {
-  const value = runCodeValue(await session.callTool('browser_run_code_unsafe', { code }, CHECK_TIMEOUT_MS)) as { rows: SmokeRow[] }
+  const value = runCodeValue(await session.callTool('browser_run_code_unsafe', { code }, CHECK_TIMEOUT_MS)) as {
+    rows: SmokeRow[]
+  }
   return value.rows
 }

@@ -36,7 +36,11 @@ export function smokeChecks(config: SmokeConfig): SmokeCheck[] {
     }
   }
   for (const scroll of config.backScroll) {
-    checks.push({ id: `back-scroll ${scroll.app} ${scroll.top} via ${scroll.via}`, file: 'back-scroll.js', args: { ...scroll } })
+    checks.push({
+      id: `back-scroll ${scroll.app} ${scroll.top} via ${scroll.via}`,
+      file: 'back-scroll.js',
+      args: { ...scroll },
+    })
   }
   // One check per way out: a browser server may close a call's contexts after
   // a time limit, so each check stays short.
@@ -50,6 +54,20 @@ export function smokeChecks(config: SmokeConfig): SmokeCheck[] {
     args: { ...phone, viewport: { width, height } },
   })
   return checks
+}
+
+/**
+ * A browser/ file's function as an expression. Each file default-exports it
+ * rather than being a bare function expression, because a formatter guards a
+ * statement-level `async (…) => {…}` with a leading `;`, which is not valid
+ * inside the parentheses it is pasted into.
+ */
+function exportedFunction(source: string): string {
+  const expression = source.replace(/^export default /m, '')
+  if (expression === source) {
+    throw new Error('a browser/ file must `export default` its function')
+  }
+  return expression.trim()
 }
 
 /**
@@ -67,11 +85,11 @@ export function checkCode(
   return `async (page) => {
   const args = ${JSON.stringify(args)}
   const h = await (
-${sources.helpers.trim()}
+${exportedFunction(sources.helpers)}
   )(page, args)
   try {
     await (
-${sources.check.trim()}
+${exportedFunction(sources.check)}
     )(page, args, h)
   } catch (error) {
     await h.check('runs to the end', false, String(error).slice(0, 300))
@@ -119,6 +137,10 @@ export function report(results: SmokeResult[]): { table: string; passed: boolean
   }
   const total = results.reduce((sum, result) => sum + result.rows.filter((row) => !row.info).length, 0)
   const failed = failures.length
-  lines.push('', failed === 0 ? `All ${total} assertions passed.` : `${failed} of ${total} assertions failed:`, ...failures)
+  lines.push(
+    '',
+    failed === 0 ? `All ${total} assertions passed.` : `${failed} of ${total} assertions failed:`,
+    ...failures,
+  )
   return { table: lines.join('\n'), passed: failed === 0 }
 }

@@ -60,7 +60,10 @@ export interface TaskThread {
  * Both places a thread is recorded count: a workflow run's steps and the
  * task's mention sessions.
  */
-export function agentTaskThread(db: Db, input: { taskId: number; agentId: string; chatSlug: string }): TaskThread | null {
+export function agentTaskThread(
+  db: Db,
+  input: { taskId: number; agentId: string; chatSlug: string },
+): TaskThread | null {
   const { taskId, agentId, chatSlug } = input
   const row = db
     .prepare(
@@ -84,10 +87,14 @@ export function agentTaskThread(db: Db, input: { taskId: number; agentId: string
 // asks, so two arriving together cannot open two threads. On globalThis so a
 // hot-reloaded module keeps the queue.
 const globalForThreads = globalThis as unknown as { __taskPipelinesThreadQueue?: Map<string, Promise<void>> }
-const queues = (globalForThreads.__taskPipelinesThreadQueue ??= new Map())
+globalForThreads.__taskPipelinesThreadQueue ??= new Map()
+const queues = globalForThreads.__taskPipelinesThreadQueue
 
 /** Run `work` after every earlier call for the same app, task and agent has settled. */
-export function oneThreadAtATime<T>(scope: { app: string; taskId: number; agentId: string }, work: () => Promise<T>): Promise<T> {
+export function oneThreadAtATime<T>(
+  scope: { app: string; taskId: number; agentId: string },
+  work: () => Promise<T>,
+): Promise<T> {
   const key = `${scope.app}:${scope.taskId}:${scope.agentId}`
   const result = (queues.get(key) ?? Promise.resolve()).then(work, work)
   const done = result.then(

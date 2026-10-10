@@ -273,9 +273,9 @@ export function deleteWorkflow(db: Db, id: string): void {
     )
   }
   transaction(db, () => {
-    const wasDefault = (db.prepare('SELECT is_default FROM workflow WHERE id = ?').get(id) as
-      | { is_default: number }
-      | undefined)?.is_default
+    const wasDefault = (
+      db.prepare('SELECT is_default FROM workflow WHERE id = ?').get(id) as { is_default: number } | undefined
+    )?.is_default
     db.prepare('DELETE FROM workflow WHERE id = ?').run(id)
     if (wasDefault === 1) {
       // Keep "a project with workflows has a default" true: the oldest remaining one takes over.
@@ -608,7 +608,9 @@ export function enterRound(db: Db, runId: string, stepId: string, worker: RoundW
   const kind = worker?.kind ?? null
   const name = worker?.name ?? null
   const continued = db
-    .prepare('UPDATE workflow_run_round SET worker_kind = ?, worker_name = ? WHERE run_id = ? AND step_id = ? AND ended_at IS NULL')
+    .prepare(
+      'UPDATE workflow_run_round SET worker_kind = ?, worker_name = ? WHERE run_id = ? AND step_id = ? AND ended_at IS NULL',
+    )
     .run(kind, name, runId, stepId)
   if (Number(continued.changes) > 0) {
     return
@@ -630,11 +632,9 @@ export function setRoundThread(db: Db, runId: string, stepId: string, threadRef:
 
 /** What became of the session options the open round of a step sent its message with. */
 export function setRoundSessionOptions(db: Db, runId: string, stepId: string, outcome: SessionOptionsOutcome): void {
-  db.prepare('UPDATE workflow_run_round SET session_options = ? WHERE run_id = ? AND step_id = ? AND ended_at IS NULL').run(
-    JSON.stringify(outcome),
-    runId,
-    stepId,
-  )
+  db.prepare(
+    'UPDATE workflow_run_round SET session_options = ? WHERE run_id = ? AND step_id = ? AND ended_at IS NULL',
+  ).run(JSON.stringify(outcome), runId, stepId)
 }
 
 /**
@@ -643,7 +643,13 @@ export function setRoundSessionOptions(db: Db, runId: string, stepId: string, ou
  * which `endRoundCompaction` records its end on; null when the step has no
  * open round.
  */
-export function startRoundCompaction(db: Db, runId: string, stepId: string, compaction: RoundCompaction, mark: string): number | null {
+export function startRoundCompaction(
+  db: Db,
+  runId: string,
+  stepId: string,
+  compaction: RoundCompaction,
+  mark: string,
+): number | null {
   const row = db
     .prepare(
       `UPDATE workflow_run_round SET compaction = ?, compaction_process = ?
@@ -660,7 +666,13 @@ export function startRoundCompaction(db: Db, runId: string, stepId: string, comp
  * whether the round's message is still to be sent: the compaction was
  * running, and the round is open.
  */
-export function endRoundCompaction(db: Db, runId: string, stepId: string, roundNo: number, compaction: RoundCompaction): boolean {
+export function endRoundCompaction(
+  db: Db,
+  runId: string,
+  stepId: string,
+  roundNo: number,
+  compaction: RoundCompaction,
+): boolean {
   const row = db
     .prepare(
       `UPDATE workflow_run_round SET compaction = ?
@@ -715,10 +727,9 @@ export function roundNeedsAttention(
   why: { reason: CouldntStartReason; message: string; at: string },
 ): void {
   transaction(db, () => {
-    db.prepare('UPDATE workflow_run_round SET attention = attention + 1 WHERE run_id = ? AND step_id = ? AND ended_at IS NULL').run(
-      runId,
-      stepId,
-    )
+    db.prepare(
+      'UPDATE workflow_run_round SET attention = attention + 1 WHERE run_id = ? AND step_id = ? AND ended_at IS NULL',
+    ).run(runId, stepId)
     db.prepare(
       `INSERT INTO workflow_run_attention (run_id, step_id, round_no, reason, message, at)
        SELECT run_id, step_id, round_no, ?, ?, ? FROM workflow_run_round WHERE run_id = ? AND step_id = ? AND ended_at IS NULL`,
@@ -734,7 +745,12 @@ export function endRound(
   db: Db,
   runId: string,
   stepId: string,
-  end: { at: string; by: 'transition' | 'cancel'; outcome: string; transition?: { label: string; gate: TransitionGate } | null },
+  end: {
+    at: string
+    by: 'transition' | 'cancel'
+    outcome: string
+    transition?: { label: string; gate: TransitionGate } | null
+  },
 ): void {
   db.prepare(
     `UPDATE workflow_run_round SET ended_at = ?, ended_by = ?, outcome = ?, transition_label = ?, gate = ?
@@ -750,10 +766,18 @@ export function recordDecision(
   db: Db,
   runId: string,
   stepId: string,
-  vote: { approver: { personId: string; name: string }; verdict: ApprovalVerdict; transition: WorkflowTransition; comment: string | null; at: string },
+  vote: {
+    approver: { personId: string; name: string }
+    verdict: ApprovalVerdict
+    transition: WorkflowTransition
+    comment: string | null
+    at: string
+  },
 ): void {
   const open = db
-    .prepare('SELECT round_no FROM workflow_run_round WHERE run_id = ? AND step_id = ? AND ended_at IS NULL ORDER BY round_no DESC LIMIT 1')
+    .prepare(
+      'SELECT round_no FROM workflow_run_round WHERE run_id = ? AND step_id = ? AND ended_at IS NULL ORDER BY round_no DESC LIMIT 1',
+    )
     .get(runId, stepId) as { round_no: number } | undefined
   if (!open) {
     throw new Error('The step has no open round to decide')
@@ -779,7 +803,9 @@ export function recordDecision(
 
 /** Whether a move the workflow asked for is still on its way: the status change it makes has not arrived. */
 export function hasPendingMove(db: Db, runId: string): boolean {
-  const row = db.prepare('SELECT pending_status_id FROM workflow_run WHERE id = ?').get(runId) as { pending_status_id: number | null } | undefined
+  const row = db.prepare('SELECT pending_status_id FROM workflow_run WHERE id = ?').get(runId) as
+    | { pending_status_id: number | null }
+    | undefined
   return row?.pending_status_id != null
 }
 
@@ -792,7 +818,9 @@ export function hasPendingMove(db: Db, runId: string): boolean {
 export type PendingMove = { status: number } & ({ transition: string } | { step: string })
 
 export function setPendingMove(db: Db, runId: string, move: PendingMove | null): void {
-  db.prepare('UPDATE workflow_run SET pending_status_id = ?, pending_transition_id = ?, pending_step_id = ? WHERE id = ?').run(
+  db.prepare(
+    'UPDATE workflow_run SET pending_status_id = ?, pending_transition_id = ?, pending_step_id = ? WHERE id = ?',
+  ).run(
     move?.status ?? null,
     move && 'transition' in move ? move.transition : null,
     move && 'step' in move ? move.step : null,
@@ -804,7 +832,9 @@ export function setPendingMove(db: Db, runId: string, move: PendingMove | null):
 export function takePendingMove(db: Db, runId: string): PendingMove | null {
   const row = db
     .prepare('SELECT pending_status_id, pending_transition_id, pending_step_id FROM workflow_run WHERE id = ?')
-    .get(runId) as { pending_status_id: number | null; pending_transition_id: string | null; pending_step_id: string | null } | undefined
+    .get(runId) as
+    | { pending_status_id: number | null; pending_transition_id: string | null; pending_step_id: string | null }
+    | undefined
   if (!row || row.pending_status_id === null) {
     return null
   }

@@ -1,9 +1,7 @@
-import { legacy } from '@opencroft/client'
+import { defineExtension } from '@opencroft/client/extension'
 
 import { TasksApp } from './app/tasks-app'
 import { taskKeyResolver } from './lib/markdown-resolver'
-
-const { defineExtension } = legacy
 
 export default defineExtension({
   manifest: {},

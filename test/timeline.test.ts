@@ -23,8 +23,8 @@ import {
   scaleRange,
   ticks,
   tiersFor,
-  today,
   toDay,
+  today,
   unitStart,
 } from '../src/components/ui/timeline/timeline-scale'
 
@@ -217,10 +217,14 @@ describe('timeline drops', () => {
   const day = toDay('2026-10-05')
 
   it('shifts a dragged bar by the days it moved', () => {
-    assert.deepEqual(changesForDrop({ tasks, key: 'T-1', source: 'bar', target: { kind: 'scale', day }, shiftDays: 3 }), [
-      { type: 'schedule', key: 'T-1', start: '2026-09-24', end: '2026-09-26' },
-    ])
-    assert.deepEqual(changesForDrop({ tasks, key: 'T-1', source: 'bar', target: { kind: 'scale', day }, shiftDays: 0 }), [])
+    assert.deepEqual(
+      changesForDrop({ tasks, key: 'T-1', source: 'bar', target: { kind: 'scale', day }, shiftDays: 3 }),
+      [{ type: 'schedule', key: 'T-1', start: '2026-09-24', end: '2026-09-26' }],
+    )
+    assert.deepEqual(
+      changesForDrop({ tasks, key: 'T-1', source: 'bar', target: { kind: 'scale', day }, shiftDays: 0 }),
+      [],
+    )
   })
 
   it("schedules a backlog item from the drop day for the default length, and keeps a scheduled task's length", () => {
@@ -237,7 +241,12 @@ describe('timeline drops', () => {
       { type: 'unschedule', key: 'T-1' },
     ])
     assert.deepEqual(
-      changesForDrop({ tasks, key: 'T-1', source: 'bar', target: { kind: 'backlog-item', key: 'T-2', zone: 'before' } }),
+      changesForDrop({
+        tasks,
+        key: 'T-1',
+        source: 'bar',
+        target: { kind: 'backlog-item', key: 'T-2', zone: 'before' },
+      }),
       [
         { type: 'unschedule', key: 'T-1' },
         { type: 'move', key: 'T-1', placement: { before: 'T-2' } },
@@ -247,22 +256,39 @@ describe('timeline drops', () => {
 
   it('reorders the backlog without touching dates, and ignores a drop on itself', () => {
     assert.deepEqual(
-      changesForDrop({ tasks, key: 'T-2', source: 'backlog', target: { kind: 'backlog-item', key: 'T-3', zone: 'after' } }),
+      changesForDrop({
+        tasks,
+        key: 'T-2',
+        source: 'backlog',
+        target: { kind: 'backlog-item', key: 'T-3', zone: 'after' },
+      }),
       [{ type: 'move', key: 'T-2', placement: { after: 'T-3' } }],
     )
     assert.deepEqual(
-      changesForDrop({ tasks, key: 'T-2', source: 'backlog', target: { kind: 'backlog-item', key: 'T-2', zone: 'after' } }),
+      changesForDrop({
+        tasks,
+        key: 'T-2',
+        source: 'backlog',
+        target: { kind: 'backlog-item', key: 'T-2', zone: 'after' },
+      }),
       [],
     )
     assert.deepEqual(changesForDrop({ tasks, key: 'T-2', source: 'backlog', target: { kind: 'backlog' } }), [])
   })
 
   it('moves rows in the tree, but never a bar, and never a task into its own subtree', () => {
-    assert.deepEqual(changesForDrop({ tasks, key: 'T-2', source: 'row', target: { kind: 'row', key: 'T-1', zone: 'inside' } }), [
-      { type: 'move', key: 'T-2', placement: { parent: 'T-1' } },
-    ])
-    assert.deepEqual(changesForDrop({ tasks, key: 'T-1', source: 'bar', target: { kind: 'row', key: 'T-2', zone: 'inside' } }), [])
-    assert.deepEqual(changesForDrop({ tasks, key: 'T-1', source: 'row', target: { kind: 'row', key: 'T-3', zone: 'inside' } }), [])
+    assert.deepEqual(
+      changesForDrop({ tasks, key: 'T-2', source: 'row', target: { kind: 'row', key: 'T-1', zone: 'inside' } }),
+      [{ type: 'move', key: 'T-2', placement: { parent: 'T-1' } }],
+    )
+    assert.deepEqual(
+      changesForDrop({ tasks, key: 'T-1', source: 'bar', target: { kind: 'row', key: 'T-2', zone: 'inside' } }),
+      [],
+    )
+    assert.deepEqual(
+      changesForDrop({ tasks, key: 'T-1', source: 'row', target: { kind: 'row', key: 'T-3', zone: 'inside' } }),
+      [],
+    )
   })
 
   it('does nothing without a target', () => {

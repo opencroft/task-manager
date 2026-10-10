@@ -1,10 +1,9 @@
+import { cn } from 'cn'
 import { Copy, Reply } from 'lucide-react'
 import { createContext, type PointerEvent, type ReactNode, useContext, useRef } from 'react'
 import { toast } from 'sonner'
 
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
-import { cn } from 'cn'
-
 import { selectedTextWithin } from './message-selection'
 
 // What a message's menu can do besides copying, supplied by whatever renders
@@ -59,8 +58,7 @@ export function MessageContextMenu({ text, className, children }: MessageContext
   // streaming in is taken as it stands then.
   const selectedRef = useRef('')
 
-  const readSelection = () =>
-    rootRef.current ? selectedTextWithin(rootRef.current, document.getSelection()) : ''
+  const readSelection = () => (rootRef.current ? selectedTextWithin(rootRef.current, document.getSelection()) : '')
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button === 2 || event.pointerType === 'touch') {

@@ -4,8 +4,7 @@
 // views name versions, as task_list does.
 
 import type { TaskFilterDef } from '@/components/ui/tasks/task-filter-bar'
-import { type TaskVersion, TaskVersionChip, sortVersions } from '@/components/ui/tasks/task-version-chip'
-
+import { sortVersions, type TaskVersion, TaskVersionChip } from '@/components/ui/tasks/task-version-chip'
 import type { Version } from '../../shared/versions'
 
 export function toTaskVersion(version: Version): TaskVersion {
@@ -22,7 +21,7 @@ export function versionFilter(versions: readonly Version[]): TaskFilterDef {
       ...sortVersions(versions).map((version) => ({
         value: version.name,
         label: version.name,
-        icon: <TaskVersionChip name={version.name} state={version.state} variant="outline" />,
+        icon: <TaskVersionChip name={version.name} state={version.state} variant='outline' />,
       })),
     ],
     emptyText: 'No versions yet',

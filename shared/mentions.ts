@@ -1,7 +1,7 @@
 // Agents @mentioned in a task's comments: the session each one gets on the
 // task, a thread in the space's chat.
 
-import type { TaskKey } from './types.ts'
+import type { ActionInputs } from './action-inputs.ts'
 
 /** Agent↔agent mentions on one task stop after this many rounds within LOOP_WINDOW_MS. */
 export const LOOP_ROUNDS = 3
@@ -23,7 +23,7 @@ export interface MentionSession {
 }
 
 export interface MentionActionMap {
-  mention_sessions: { input: { key: TaskKey }; output: { sessions: MentionSession[] } }
+  mention_sessions: { input: ActionInputs['mention_sessions']; output: { sessions: MentionSession[] } }
 }
 
 export type MentionActionId = keyof MentionActionMap

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 
-import type { AppActionContext } from '@opencroft/server'
+import type { AppActionContext } from '@opencroft/server/apps'
 
 import type { Actor, Status, TaskSummary } from '../../shared/types.ts'
 import type { OpenApproval, WorkflowDef } from '../../shared/workflows.ts'
@@ -14,7 +14,11 @@ import { afterStatusChange, beforeStatusChange, type ChatsPort, type EngineEnv, 
 const NOW = '2026-09-26T06:00:00.000Z'
 
 /** `more` fills in the parts of the host a test needs beyond definitions and chats. */
-function setup(person: PersonChatsPort | null = null, chats: ChatsPort | null = null, more: Partial<WorkflowHost> = {}) {
+function setup(
+  person: PersonChatsPort | null = null,
+  chats: ChatsPort | null = null,
+  more: Partial<WorkflowHost> = {},
+) {
   const db = new DatabaseSync(':memory:')
   db.exec('PRAGMA foreign_keys = ON')
   migrate(db, allMigrations())
@@ -32,15 +36,28 @@ function setup(person: PersonChatsPort | null = null, chats: ChatsPort | null = 
   } as unknown as WorkflowHost
   const actions = makeWorkflowActions(host)
   const ctx = { spaceSlug: 'dev' } as AppActionContext
-  const call = async (action: string, params: Record<string, unknown> = {}) => (await actions[action]!(ctx, params)) as WorkflowDef
+  const call = async (action: string, params: Record<string, unknown> = {}) =>
+    (await actions[action](ctx, params)) as WorkflowDef
   return { call, db }
 }
 
 const standard = {
   name: 'Standard',
   steps: [
-    { name: 'Development', triggerStatus: 'In Progress', worker: { kind: 'assignee' }, instructions: 'Do {{ task.key }}', transitions: ['In Review'] },
-    { name: 'Review', triggerStatus: 'in review', worker: { kind: 'assignee' }, instructions: 'Review', transitions: ['Done', 'In Progress'] },
+    {
+      name: 'Development',
+      triggerStatus: 'In Progress',
+      worker: { kind: 'assignee' },
+      instructions: 'Do {{ task.key }}',
+      transitions: ['In Review'],
+    },
+    {
+      name: 'Review',
+      triggerStatus: 'in review',
+      worker: { kind: 'assignee' },
+      instructions: 'Review',
+      transitions: ['Done', 'In Progress'],
+    },
   ],
 }
 
@@ -55,12 +72,17 @@ test('workflow_step_update changes only the fields passed, on only the step name
     ],
     'status names were stored as ids',
   )
-  const updated = await call('workflow_step_update', { workflow: 'standard', step: 'review', instructions: 'Review {{ steps.development.summary }}', transitions: ['Done'] })
+  const updated = await call('workflow_step_update', {
+    workflow: 'standard',
+    step: 'review',
+    instructions: 'Review {{ steps.development.summary }}',
+    transitions: ['Done'],
+  })
   assert.deepEqual(
     updated.steps.map((s) => [s.id, s.name, s.instructions, s.transitions.map((t) => t.status)]),
     [
-      [saved.steps[0]!.id, 'Development', 'Do {{ task.key }}', [3]],
-      [saved.steps[1]!.id, 'Review', 'Review {{ steps.development.summary }}', [4]],
+      [saved.steps[0].id, 'Development', 'Do {{ task.key }}', [3]],
+      [saved.steps[1].id, 'Review', 'Review {{ steps.development.summary }}', [4]],
     ],
   )
 })
@@ -92,10 +114,22 @@ test("a step's folder is saved, read back, kept by an update that leaves it out,
 test('workflow_step_update refuses an unknown step or workflow by naming the ones that exist, and an empty change', async () => {
   const { call } = setup()
   await call('workflow_save', { workflow: standard })
-  await assert.rejects(call('workflow_step_update', { workflow: 'Standard', step: 'QA', name: 'x' }), /No step "QA" in workflow "Standard"\. Steps: Development, Review/)
-  await assert.rejects(call('workflow_step_update', { workflow: 'Hotfix', step: 'Review', name: 'x' }), /No workflow "Hotfix" in this project\. Workflows: "Standard"/)
-  await assert.rejects(call('workflow_step_update', { workflow: 'Standard', step: 'Review' }), /Nothing to change: pass at least one of name, triggerStatus, kind, worker, approval, instructions, transitions, folder, sessionOptions$/)
-  await assert.rejects(call('workflow_step_update', { workflow: 'Standard', step: 'Review', transitions: ['Shipped'] }), /steps\.1\.transitions\.0\.status: No such status\. Statuses \(name or id\): To Do \(1\)/)
+  await assert.rejects(
+    call('workflow_step_update', { workflow: 'Standard', step: 'QA', name: 'x' }),
+    /No step "QA" in workflow "Standard"\. Steps: Development, Review/,
+  )
+  await assert.rejects(
+    call('workflow_step_update', { workflow: 'Hotfix', step: 'Review', name: 'x' }),
+    /No workflow "Hotfix" in this project\. Workflows: "Standard"/,
+  )
+  await assert.rejects(
+    call('workflow_step_update', { workflow: 'Standard', step: 'Review' }),
+    /Nothing to change: pass at least one of name, triggerStatus, kind, worker, approval, instructions, transitions, folder, sessionOptions$/,
+  )
+  await assert.rejects(
+    call('workflow_step_update', { workflow: 'Standard', step: 'Review', transitions: ['Shipped'] }),
+    /steps\.1\.transitions\.0\.status: No such status\. Statuses \(name or id\): To Do \(1\)/,
+  )
 })
 
 const agents = [{ nodeId: 'agent_dev', name: 'Dev' }]
@@ -124,7 +158,14 @@ function world(mine: string[], granted: string[] = []) {
   return { person, chats, grants }
 }
 
-type SpaceChat = { slug: string; ref: string | null; name: string | null; taskManagerIn: boolean; agents: unknown[]; youAreIn: boolean | null }
+type SpaceChat = {
+  slug: string
+  ref: string | null
+  name: string | null
+  taskManagerIn: boolean
+  agents: unknown[]
+  youAreIn: boolean | null
+}
 
 test("space_chat is the chat at the space's address; a person in it lets the task manager in", async () => {
   const { person, chats, grants } = world(['dev', 'ops'])
@@ -142,14 +183,24 @@ test("space_chat_grant refuses a person outside the space's chat, and never touc
   const { call } = setup(person, chats)
   const state = (await call('space_chat')) as unknown as SpaceChat
   assert.deepEqual([state.name, state.taskManagerIn, state.youAreIn], [null, false, false])
-  await assert.rejects(call('space_chat_grant'), /You aren't in this space's chat \("dev"\), so you can't add the task manager to it/)
+  await assert.rejects(
+    call('space_chat_grant'),
+    /You aren't in this space's chat \("dev"\), so you can't add the task manager to it/,
+  )
   assert.deepEqual(grants, [])
 })
 
 test('a step names no chat: saving any agent works, and an old draft that passes one still saves', async () => {
   const { call } = setup()
   const saved = await call('workflow_save', {
-    workflow: { ...standard, steps: standard.steps.map((s) => ({ ...s, chat: 'old-project-chat', worker: { kind: 'agent', agentNodeId: 'agent_x' } })) },
+    workflow: {
+      ...standard,
+      steps: standard.steps.map((s) => ({
+        ...s,
+        chat: 'old-project-chat',
+        worker: { kind: 'agent', agentNodeId: 'agent_x' },
+      })),
+    },
   })
   assert.ok(saved.steps.every((s) => !('chat' in s)))
 })
@@ -157,9 +208,20 @@ test('a step names no chat: saving any agent works, and an old draft that passes
 test('workflow_stats takes the workflow by name, defaults to 30 days, and names the ranges it accepts', async () => {
   const { call } = setup()
   await call('workflow_save', { workflow: standard })
-  const stats = (await call('workflow_stats', { workflow: 'standard' })) as unknown as { range: string; runs: { started: number }; steps: Array<{ name: string }> }
-  assert.deepEqual([stats.range, stats.runs.started, stats.steps.map((s) => s.name)], ['30d', 0, ['Development', 'Review']])
-  await assert.rejects(call('workflow_stats', { workflow: 'standard', range: '1y' }), /"range" must be one of: 7d, 30d, 90d, all/)
+  const stats = (await call('workflow_stats', { workflow: 'standard' })) as unknown as {
+    range: string
+    runs: { started: number }
+    steps: Array<{ name: string }>
+  }
+  assert.deepEqual(
+    [stats.range, stats.runs.started, stats.steps.map((s) => s.name)],
+    ['30d', 0, ['Development', 'Review']],
+  )
+  await assert.rejects(call('workflow_stats', { workflow: 'standard', range: '1y' }), {
+    name: 'TaskError',
+    message:
+      '"range" must be one of "7d", "30d", "90d" or "all", not "1y". Parameters of workflow_stats: workflow (required), range.',
+  })
   await assert.rejects(call('workflow_stats', { workflow: 'nightly' }), /No workflow "nightly"/)
 })
 
@@ -171,14 +233,17 @@ test('workflow_stats takes the workflow by name, defaults to 30 days, and names 
  */
 function approvalWorld() {
   const world = { caller: null as { id: string; name: string } | null, db: null as unknown as DatabaseSync }
-  const statuses = () => world.db.prepare('SELECT id, name, category, color, position FROM status').all() as unknown as Status[]
+  const statuses = () =>
+    world.db.prepare('SELECT id, name, category, color, position FROM status').all() as unknown as Status[]
   const getTask = (): TaskSummary => {
     const row = world.db.prepare('SELECT status_id FROM task WHERE number = 1').get() as { status_id: number }
+    const status = statuses().find((s) => s.id === row.status_id)
+    assert.ok(status)
     return {
       key: 'TASK-1',
       number: 1,
       summary: 'Fix login',
-      status: statuses().find((s) => s.id === row.status_id)!,
+      status,
       type: 'task',
       priority: 'medium',
       assignee: null,
@@ -197,12 +262,22 @@ function approvalWorld() {
       prs: { open: 0, merged: 0, closed: 0 },
     }
   }
-  const actor = (): Actor => (world.caller ? { kind: 'person', name: world.caller.name } : { kind: 'agent', name: 'Dev' })
-  const env = (): EngineEnv => ({ db: world.db, projectKey: 'TASK', app: 'dev.tasks', chats: null, spaceSlug: 'dev', now: () => NOW })
+  const actor = (): Actor =>
+    world.caller ? { kind: 'person', name: world.caller.name } : { kind: 'agent', name: 'Dev' }
+  const env = (): EngineEnv => ({
+    db: world.db,
+    projectKey: 'TASK',
+    app: 'dev.tasks',
+    chats: null,
+    spaceSlug: 'dev',
+    now: () => NOW,
+  })
   const tasks = (): TaskPort => ({
     async changeStatus({ status }) {
       const before = getTask()
-      const change = { task: before, from: before.status, to: statuses().find((s) => s.id === status)!, actor: actor() }
+      const to = statuses().find((s) => s.id === status)
+      assert.ok(to)
+      const change = { task: before, from: before.status, to, actor: actor() }
       beforeStatusChange(world.db, 'TASK', change)
       world.db.prepare('UPDATE task SET status_id = ? WHERE number = 1').run(status)
       await afterStatusChange(env(), { ...change, task: getTask() })
@@ -277,11 +352,23 @@ test('workflow_step_decide records an approver’s decision; workflow_run_get sh
     viewerId: BOB.id,
   })
   assert.equal((await view(null))?.canDecide, false, 'an agent does not decide')
-  assert.equal((await view({ id: 'person-carol', name: 'Carol' }))?.canDecide, false, 'nor does a person who is not an approver')
+  assert.equal(
+    (await view({ id: 'person-carol', name: 'Carol' }))?.canDecide,
+    false,
+    'nor does a person who is not an approver',
+  )
   assert.equal(getTask().status.name, 'In Review', 'the required approver has not approved')
 
-  await assert.rejects(as(ALICE)('workflow_step_decide', { task: 'TASK-1', verdict: 'maybe' }), /"verdict" must be one of: approve, reject/)
-  await assert.rejects(as(null)('workflow_step_decide', { task: 'TASK-1', verdict: 'approve' }), /Only a person can approve or reject/)
+  await assert.rejects(as(ALICE)('workflow_step_decide', { task: 'TASK-1', verdict: 'maybe' }), {
+    name: 'TaskError',
+    message:
+      '"verdict" must be one of "approve" or "reject", not "maybe". ' +
+      'Parameters of workflow_step_decide: detail, task (required), verdict (required), transition, comment.',
+  })
+  await assert.rejects(
+    as(null)('workflow_step_decide', { task: 'TASK-1', verdict: 'approve' }),
+    /Only a person can approve or reject/,
+  )
   await as(ALICE)('workflow_step_decide', { task: 'TASK-1', verdict: 'reject' })
   assert.equal(getTask().status.name, 'In Progress')
   assert.equal(await view(ALICE), undefined, 'the run ended with the step')
@@ -293,14 +380,22 @@ test("an approval step's approvers are checked against the host's people", async
     call('workflow_save', {
       workflow: {
         name: 'Sign-off',
-        steps: [{ name: 'Sign-off', kind: 'approval', triggerStatus: 'In Review', approval: { approvers: [{ name: 'Dev' }] }, transitions: ['Done', 'To Do'] }],
+        steps: [
+          {
+            name: 'Sign-off',
+            kind: 'approval',
+            triggerStatus: 'In Review',
+            approval: { approvers: [{ name: 'Dev' }] },
+            transitions: ['Done', 'To Do'],
+          },
+        ],
       },
     }),
     /steps\.0\.approval\.approvers\.0: "Dev" is not a person in the directory: only people can approve/,
   )
 })
 
-test("an agent sees the space chat as the task manager does, and cannot let it in", async () => {
+test('an agent sees the space chat as the task manager does, and cannot let it in', async () => {
   const { chats } = world([], ['dev', 'ops'])
   const { call } = setup(null, chats)
   const state = (await call('space_chat')) as unknown as SpaceChat
@@ -311,7 +406,7 @@ test("an agent sees the space chat as the task manager does, and cannot let it i
 test('runs matched past the list limit keep their total, so a caller can say it shows fewer', async () => {
   const { call, db } = setup()
   const saved = await call('workflow_save', { workflow: standard })
-  const dev = saved.steps[0]!.id
+  const dev = saved.steps[0].id
   db.prepare(
     `INSERT INTO task (number, summary, description, status_id, reporter_kind, reporter_name, rank, created_at, updated_at)
      VALUES (1, 'Fix login', '', 4, 'person', 'Alice', 'a', ?, ?)`,
@@ -329,11 +424,17 @@ test('runs matched past the list limit keep their total, so a caller can say it 
     addRun.run(`run-${i}`, saved.id, at, NOW)
     addRound.run(`run-${i}`, dev, at, NOW)
   }
-  const listed = (await call('workflow_runs_list', { workflow: 'Standard', match: { step: 'Development', range: 'all', exit: 'moved_on' } })) as unknown as {
+  const listed = (await call('workflow_runs_list', {
+    workflow: 'Standard',
+    match: { step: 'Development', range: 'all', exit: 'moved_on' },
+  })) as unknown as {
     runs: unknown[]
     total: number
   }
   assert.deepEqual([listed.runs.length, listed.total], [200, 205])
-  await assert.rejects(call('workflow_runs_list', { workflow: 'Standard', match: { step: 'Deploy' } }), /"Standard" has no step "Deploy"/)
+  await assert.rejects(
+    call('workflow_runs_list', { workflow: 'Standard', match: { step: 'Deploy' } }),
+    /"Standard" has no step "Deploy"/,
+  )
   await assert.rejects(call('workflow_runs_list', { match: { step: 'Development' } }), /"match" needs "workflow"/)
 })

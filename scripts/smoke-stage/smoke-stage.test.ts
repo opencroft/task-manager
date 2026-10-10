@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { type IncomingMessage, type ServerResponse, createServer } from 'node:http'
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { dirname, join } from 'node:path'
 import { describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { type SmokeConfig, checkCode, report, smokeChecks } from './checks.ts'
-import { McpSession, authorizationHeader, runCodeValue, sseEvents } from './mcp.ts'
+import { checkCode, report, type SmokeConfig, smokeChecks } from './checks.ts'
+import { authorizationHeader, McpSession, runCodeValue, sseEvents } from './mcp.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const source = (file: string) => readFileSync(join(here, 'browser', file), 'utf8')
@@ -53,7 +53,10 @@ describe('runCodeValue', () => {
   })
 
   it('throws the Error section', () => {
-    assert.throws(() => runCodeValue({ content: [{ type: 'text', text: '### Error\nTimeout 5000ms exceeded' }] }), /Timeout 5000ms/)
+    assert.throws(
+      () => runCodeValue({ content: [{ type: 'text', text: '### Error\nTimeout 5000ms exceeded' }] }),
+      /Timeout 5000ms/,
+    )
   })
 })
 
@@ -72,9 +75,26 @@ describe('smokeChecks', () => {
 
   it('builds, for each check, one function the browser can parse', () => {
     for (const check of smokeChecks(CONFIG)) {
-      const code = checkCode(check, { helpers: source('helpers.js'), check: source(check.file) }, { config: CONFIG, shots: true })
+      const code = checkCode(
+        check,
+        { helpers: source('helpers.js'), check: source(check.file) },
+        { config: CONFIG, shots: true },
+      )
       assert.equal(typeof new Function(`return (${code})`)(), 'function', check.id)
     }
+  })
+
+  it('refuses a browser file that does not default-export its function', () => {
+    const [check] = smokeChecks(CONFIG)
+    assert.throws(
+      () =>
+        checkCode(
+          check,
+          { helpers: source('helpers.js'), check: 'async (page) => {}' },
+          { config: CONFIG, shots: false },
+        ),
+      /must `export default` its function/,
+    )
   })
 })
 
@@ -87,7 +107,11 @@ describe('browser sources', () => {
         .split('\n')
         .filter((line) => !line.trim().startsWith('//'))
         .join('\n')
-      assert.doesNotMatch(code, /\bBuffer\.|\batob\(|\bbtoa\(|\bTextDecoder\b|\bsetTimeout\(|\bsetInterval\(|\bnew URL\(/, file)
+      assert.doesNotMatch(
+        code,
+        /\bBuffer\.|\batob\(|\bbtoa\(|\bTextDecoder\b|\bsetTimeout\(|\bsetInterval\(|\bnew URL\(/,
+        file,
+      )
     }
   })
 })
@@ -112,7 +136,10 @@ describe('report', () => {
     assert.match(table, /\| load app-a\/tasks \| 0 App calls in 5 s idle \| pass \| 0 \(4 on load\) \|/)
     assert.match(table, /\| load app-a\/tasks \| host calls in 5 s idle \| info \| listSessionActivity ×2 \|/)
     assert.match(table, /\| back-scroll app-a 300 via task \| Back gives 300 \| \*\*FAIL\*\* \| \/tasks at 0 \|/)
-    assert.match(table, /1 of 2 assertions failed:\n- back-scroll app-a 300 via task, "Back gives 300": at step "Back to the list", screenshot smoke-results\/x\/back-0.jpg/)
+    assert.match(
+      table,
+      /1 of 2 assertions failed:\n- back-scroll app-a 300 via task, "Back gives 300": at step "Back to the list", screenshot smoke-results\/x\/back-0.jpg/,
+    )
   })
 })
 
@@ -149,7 +176,9 @@ describe('McpSession', () => {
         response.write('event: message\ndata: {"jsonrpc":"2.0","id":0,"method":"ping"}\n\n')
         await ponged
         const text = '### Result\n{"rows":[{"name":"ok","pass":true,"detail":""}]}'
-        response.end(`event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text }] } })}\n\n`)
+        response.end(
+          `event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text }] } })}\n\n`,
+        )
       } else {
         if (message.id === 0 && message.result) {
           pong()

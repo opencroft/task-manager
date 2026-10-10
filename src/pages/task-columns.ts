@@ -17,7 +17,10 @@ export function isDefaultColumns(columns: readonly TaskColumn[]): boolean {
  * dropped; the baseline stands in for no value, and for a list without the
  * required columns.
  */
-export function columnsOfParam(cols: string | null, baseline: readonly TaskColumn[] = DEFAULT_TASK_COLUMNS): TaskColumn[] {
+export function columnsOfParam(
+  cols: string | null,
+  baseline: readonly TaskColumn[] = DEFAULT_TASK_COLUMNS,
+): TaskColumn[] {
   const named = [...new Set((cols ?? '').split(',').filter(Boolean))].filter((column): column is TaskColumn =>
     TASK_COLUMNS.includes(column as TaskColumn),
   )
@@ -25,6 +28,9 @@ export function columnsOfParam(cols: string | null, baseline: readonly TaskColum
 }
 
 /** The `cols` value for `columns`: none when they are the baseline, so a plain link stays plain. */
-export function columnsParam(columns: readonly TaskColumn[], baseline: readonly TaskColumn[] = DEFAULT_TASK_COLUMNS): string | null {
+export function columnsParam(
+  columns: readonly TaskColumn[],
+  baseline: readonly TaskColumn[] = DEFAULT_TASK_COLUMNS,
+): string | null {
   return sameColumns(columns, baseline) ? null : columns.join(',')
 }

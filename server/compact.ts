@@ -4,14 +4,14 @@
 // bounds the lists that grow without end (a task's comments, the tasks
 // assigned to the caller) by the limits the call gives.
 
-import type { AppActionContext, AppActionHandler } from '@opencroft/server'
+import type { AppActionContext, AppActionHandler } from '@opencroft/server/apps'
 
 import {
+  COMMENTS_MAX,
   type CommentRow,
   DETAIL_ACTIONS,
   type Detail,
   type DetailAction,
-  COMMENTS_MAX,
   MY_WORK_ASSIGNED,
   MY_WORK_ASSIGNED_MAX,
   type NotificationRow,
@@ -32,7 +32,10 @@ import { limitParam } from './service.ts'
 /** The same object without its null, undefined, empty-string and empty-array fields. */
 export function withoutEmpty<T extends object>(value: T): Partial<T> {
   return Object.fromEntries(
-    Object.entries(value).filter(([, field]) => field !== null && field !== undefined && field !== '' && !(Array.isArray(field) && field.length === 0)),
+    Object.entries(value).filter(
+      ([, field]) =>
+        field !== null && field !== undefined && field !== '' && !(Array.isArray(field) && field.length === 0),
+    ),
   ) as Partial<T>
 }
 
@@ -137,17 +140,23 @@ function mutation<T>(result: MutationResult<T>, row: (value: T) => unknown): unk
 /** The parameters that bound a compact answer; `detail: "full"` is the page's whole shape and ignores them. */
 type Limits = Record<string, unknown>
 
-// biome-ignore lint/suspicious/noExplicitAny: each entry knows its own action's full shape
-const COMPACT: Record<DetailAction, (full: any, limits: Limits) => unknown> = {
+// Each entry declares its own action's full answer. A `never` parameter is what
+// every one of those signatures is assignable to; the one place an answer comes
+// in untyped, withDetail, says which action it belongs to.
+const COMPACT: Record<DetailAction, (full: never, limits: Limits) => unknown> = {
   task_list: (full: TaskListResult) => ({
     tasks: full.tasks.map((task) => withApp(taskRow(task), task)),
     total: full.total,
     ...(full.projects ? { projects: full.projects } : {}),
   }),
-  task_get: (full: Task, limits) => compactTask(full, limitParam('commentsLimit', limits.commentsLimit, TASK_GET_COMMENTS, COMMENTS_MAX)),
+  task_get: (full: Task, limits) =>
+    compactTask(full, limitParam('commentsLimit', limits.commentsLimit, TASK_GET_COMMENTS, COMMENTS_MAX)),
   my_work: (full: MyWorkResult, limits) => {
     // Across projects the cap is on the merged list: the first rows of all of them.
-    const assigned = full.assigned.slice(0, limitParam('assignedLimit', limits.assignedLimit, MY_WORK_ASSIGNED, MY_WORK_ASSIGNED_MAX))
+    const assigned = full.assigned.slice(
+      0,
+      limitParam('assignedLimit', limits.assignedLimit, MY_WORK_ASSIGNED, MY_WORK_ASSIGNED_MAX),
+    )
     const shown = new Set(assigned.map((task) => task.key))
     // Every task starting soon is one of the caller's assigned tasks: by key, not
     // again in full. Those past the cap are named, so no key points at a missing row.
@@ -197,13 +206,8 @@ const COMPACT: Record<DetailAction, (full: any, limits: Limits) => unknown> = {
     })),
 }
 
-function detailOf(params: Record<string, unknown>): Detail {
-  const detail = params.detail ?? 'compact'
-  if (detail !== 'compact' && detail !== 'full') {
-    throw new Error('"detail" must be "compact" (the default) or "full"')
-  }
-  return detail
-}
+/** The answer's shape the call asked for; the boundary check holds `detail` to its enum. */
+const detailOf = (params: Record<string, unknown>): Detail => (params.detail === 'full' ? 'full' : 'compact')
 
 /** The actions, with `detail` taken off the parameters of those that have it and applied to what they return. */
 export function withDetail(actions: Record<string, AppActionHandler>): Record<string, AppActionHandler> {
@@ -217,11 +221,11 @@ export function withDetail(actions: Record<string, AppActionHandler>): Record<st
       return [
         id,
         async (ctx: AppActionContext, params: Record<string, unknown>) => {
-          // Checked before the handler runs, so a bad value never follows a write.
           const detail = detailOf(params ?? {})
           const { detail: _detail, ...rest } = params ?? {}
           const full = await handler(ctx, rest)
-          return detail === 'full' ? full : compact(full, rest)
+          // `full` is what this action's own handler returned: the shape its COMPACT entry declares.
+          return detail === 'full' ? full : compact(full as never, rest)
         },
       ]
     }),

@@ -4,6 +4,7 @@
 // has the boards someone set up. The actions' shapes, shared by the server
 // seam (server/boards) and the UI.
 
+import type { ActionInputs } from './action-inputs.ts'
 import type { Status, StatusRef } from './types.ts'
 import type { ViewFilter, ViewFilterInput } from './views.ts'
 import type { WorkflowDef } from './workflows.ts'
@@ -17,9 +18,15 @@ export type BoardFilter = Omit<ViewFilter, 'status' | 'sort'>
 /** A preset filter as `board_save` takes it: each list-valued field also as a plain list of values to include. */
 export type BoardFilterInput = Omit<ViewFilterInput, 'status' | 'sort'>
 
-export const BOARD_FILTER_KEYS = ['query', 'assignee', 'type', 'priority', 'label', 'version', 'parent'] as const satisfies ReadonlyArray<
-  keyof BoardFilter
->
+export const BOARD_FILTER_KEYS = [
+  'query',
+  'assignee',
+  'type',
+  'priority',
+  'label',
+  'version',
+  'parent',
+] as const satisfies ReadonlyArray<keyof BoardFilter>
 
 /** A status on a board, by id and its current name. */
 export interface BoardStatus {
@@ -57,7 +64,8 @@ export interface BoardDetail extends Board {
   workflowFit: BoardWorkflowFit[]
 }
 
-export interface BoardColumnInput {
+/** A type rather than an interface, so it is assignable to the `Record<string, unknown>` of `board_save`'s generated input. */
+export type BoardColumnInput = {
   /** Omitted, null or blank: named after its first status. */
   name?: string | null
   /** Status names or ids, top to bottom. A status sits in at most one column of a board. */
@@ -75,16 +83,11 @@ export interface BoardSaveInput {
   filter?: BoardFilterInput
 }
 
-export interface BoardRefInput {
-  /** The board's id or name. */
-  board: string
-}
-
 export interface BoardActionMap {
-  board_list: { input: Record<string, never>; output: Board[] }
-  board_get: { input: BoardRefInput; output: BoardDetail }
+  board_list: { input: ActionInputs['board_list']; output: Board[] }
+  board_get: { input: ActionInputs['board_get']; output: BoardDetail }
   board_save: { input: BoardSaveInput; output: Board }
-  board_delete: { input: BoardRefInput; output: { deleted: string } }
+  board_delete: { input: ActionInputs['board_delete']; output: { deleted: string } }
 }
 
 export type BoardActionId = keyof BoardActionMap
@@ -117,7 +120,9 @@ export function workflowFit(
 ): BoardWorkflowFit[] {
   const byId = new Map(statuses.map((status) => [status.id, status]))
   return workflows.map((workflow) => {
-    const used = new Set(workflow.steps.flatMap((step) => [step.triggerStatus, ...step.transitions.map((t) => t.status)]))
+    const used = new Set(
+      workflow.steps.flatMap((step) => [step.triggerStatus, ...step.transitions.map((t) => t.status)]),
+    )
     const missing = [...used]
       .filter((id) => !onBoard.has(id))
       .map((id) => byId.get(id))

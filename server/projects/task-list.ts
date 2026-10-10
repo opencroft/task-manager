@@ -1,8 +1,9 @@
 // `task_list` across projects: which filters it takes, and how the projects'
 // pages merge into one. Pure, like ./across.ts.
 
+import type { ActionInputs } from '../../shared/action-inputs.ts'
 import { ACROSS_LIST_DEFAULT, ACROSS_LIST_MAX, type ProjectRef } from '../../shared/projects.ts'
-import type { TaskListInput, TaskListResult, TaskSummary } from '../../shared/types.ts'
+import type { TaskListResult, TaskSummary } from '../../shared/types.ts'
 import { readTaskKeyQuery } from '../../src/components/ui/navigation/task-key-query.ts'
 import { TaskError } from '../service.ts'
 import { tagged } from './across.ts'
@@ -11,15 +12,18 @@ import { tagged } from './across.ts'
 const PROJECT_SPECIFIC = ['status', 'version', 'parent', 'board', 'sort', 'offset'] as const
 
 /** What each project is asked, and how many rows the merged answer keeps. */
-export function acrossListInput(input: TaskListInput): { perProject: TaskListInput; limit: number } {
-  const given = PROJECT_SPECIFIC.filter((name) => input[name] !== undefined && input[name] !== null)
+export function acrossListInput(input: ActionInputs['task_list']): {
+  perProject: Omit<ActionInputs['task_list'], 'scope'>
+  limit: number
+} {
+  const given = PROJECT_SPECIFIC.filter((name) => input[name] !== undefined)
   if (given.length > 0) {
     throw new TaskError(
       `With scope "all", ${given.map((name) => `"${name}"`).join(', ')} cannot be used: ${given.length === 1 ? 'it names' : 'they name'} something of one project. ` +
         "Filter by statusCategory instead of status, or call that project's task_list.",
     )
   }
-  const requested = Math.trunc(Number(input.limit ?? ACROSS_LIST_DEFAULT))
+  const requested = Math.trunc(input.limit ?? ACROSS_LIST_DEFAULT)
   if (!Number.isFinite(requested) || requested < 1 || requested > ACROSS_LIST_MAX) {
     throw new TaskError(`limit is 1–${ACROSS_LIST_MAX} with scope "all"`)
   }

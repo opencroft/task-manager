@@ -4,12 +4,11 @@
 // match (see runs-match.ts) shows the runs one statistic counted instead of
 // the state filter's.
 
-import { legacy } from '@opencroft/client'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 
+import { type WorkflowRunsFilter, WorkflowRunsTable } from '@/components/ui/workflows/workflow-runs-table'
 import { describeRunsMatch } from '@/components/ui/workflows/workflow-stats-chart'
-import { WorkflowRunsTable, type WorkflowRunsFilter } from '@/components/ui/workflows/workflow-runs-table'
-
 import type { WorkflowDef, WorkflowRun } from '../../shared/workflows'
 import { useProject } from '../app/project'
 import { openTask } from '../app/task-opener'
@@ -31,7 +30,9 @@ export function WorkflowRunsView({ instanceId, workflow }: { instanceId: string;
   const load = useCallback(async () => {
     try {
       const result = await api.workflow_runs_list(
-        match ? { workflow: workflow.id, match } : { workflow: workflow.id, state: filter === 'all' ? undefined : filter },
+        match
+          ? { workflow: workflow.id, match }
+          : { workflow: workflow.id, state: filter === 'all' ? undefined : filter },
       )
       setRuns(result.runs)
       setTotal(result.total ?? null)
@@ -48,10 +49,15 @@ export function WorkflowRunsView({ instanceId, workflow }: { instanceId: string;
 
   useTasksLive(instanceId, () => void load())
 
-  const described = match ? describeRunsMatch(match, workflow.steps.find((s) => s.id === match.step)?.name ?? 'a removed step', match.range) : ''
+  const described = match
+    ? describeRunsMatch(match, workflow.steps.find((s) => s.id === match.step)?.name ?? 'a removed step', match.range)
+    : ''
   const scope = match
     ? {
-        label: runs && total !== null && total > runs.length ? `${described} · showing the newest ${runs.length} of ${total}` : described,
+        label:
+          runs && total !== null && total > runs.length
+            ? `${described} · showing the newest ${runs.length} of ${total}`
+            : described,
         onClear: () => navigateQuery(runsMatchParams(null), { replace: true }),
       }
     : undefined
@@ -76,12 +82,16 @@ export function WorkflowRunsView({ instanceId, workflow }: { instanceId: string;
           destructive: true,
           onConfirm: async () => {
             await api.workflow_run_cancel({ task: run.taskKey })
-            legacy.toast.success(`Cancelled the run on ${run.taskKey}`)
+            toast.success(`Cancelled the run on ${run.taskKey}`)
             await load()
           },
         })
       }
-      emptyText={!match && filter === 'active' ? `No task is running ${workflow.name} now. Start it from a task’s page.` : undefined}
+      emptyText={
+        !match && filter === 'active'
+          ? `No task is running ${workflow.name} now. Start it from a task’s page.`
+          : undefined
+      }
     />
   )
 }

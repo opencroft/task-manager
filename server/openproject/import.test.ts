@@ -2,28 +2,33 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { test } from 'node:test'
 
-import { type OpenProjectImportResult, type OpenProjectPreview, isImportResult, isPreview } from '../../shared/openproject.ts'
+import {
+  isImportResult,
+  isPreview,
+  type OpenProjectImportResult,
+  type OpenProjectPreview,
+} from '../../shared/openproject.ts'
 import { incomingDir } from '../attachments/files.ts'
 import { deleteAttachment, listAttachments, readAttachment } from '../attachments/store.ts'
-import { PNG, type TestScope, makeScope } from '../attachments/testing.ts'
+import { makeScope, PNG, type TestScope } from '../attachments/testing.ts'
+import { linkTasks, unlinkTasks } from '../dependencies/store.ts'
 import { changeStatus, getTask, listStatuses, listTasks, moveTask, updateTask } from '../service.ts'
 import { normalizeBaseUrl } from './api.ts'
 import {
-  BASE,
-  TOKEN,
   type AttachmentFixture,
-  type WorkPackageFixture,
   activitiesBody,
   attachmentsBody,
+  BASE,
   commentFixtures,
   extraUsers,
   projectBody,
   statusesBody,
+  TOKEN,
   typesBody,
+  type WorkPackageFixture,
   workPackageFixtures,
   workPackagesPage,
 } from './fixtures.ts'
-import { linkTasks, unlinkTasks } from '../dependencies/store.ts'
 import { type ImportDeps, importOpenProject, syncOpenProject } from './import.ts'
 import { pointAtCopies } from './mapping.ts'
 import { readState, recordSyncTry, saveSync, syncDue } from './store.ts'
@@ -63,7 +68,8 @@ function fakeOpenProject(
   },
 ) {
   const calls: Call[] = []
-  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/hal+json' } })
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/hal+json' } })
   const fetch = async (input: string, init: RequestInit): Promise<Response> => {
     calls.push({ url: input, init })
     if ((init.headers as Record<string, string>).authorization !== AUTHORIZATION) {
@@ -86,7 +92,12 @@ function fakeOpenProject(
         type,
         _links: { from: { href: `/api/v3/work_packages/${from}` }, to: { href: `/api/v3/work_packages/${to}` } },
       }))
-      return json({ _type: 'Collection', total: state.relations.length, count: elements.length, _embedded: { elements } })
+      return json({
+        _type: 'Collection',
+        total: state.relations.length,
+        count: elements.length,
+        _embedded: { elements },
+      })
     }
     if (path === '/statuses') return json(statusesBody())
     if (path === '/projects/4/types') return json(typesBody())
@@ -112,7 +123,8 @@ function fakeOpenProject(
       return json({ _type: 'Error', message: 'failed' }, found ? 500 : 404)
     }
     const user = /^\/users\/(\d+)$/.exec(path)
-    if (user && extraUsers[Number(user[1])]) return json({ _type: 'User', id: Number(user[1]), name: extraUsers[Number(user[1])] })
+    if (user && extraUsers[Number(user[1])])
+      return json({ _type: 'User', id: Number(user[1]), name: extraUsers[Number(user[1])] })
     return json({ _type: 'Error', message: 'not found' }, 404)
   }
   return { fetch, calls, state }
@@ -128,7 +140,10 @@ function scopeWithTeam(): TestScope {
   return scope
 }
 
-const asPerson = (server: ReturnType<typeof fakeOpenProject>, secrets: Record<string, string> = { [KEY]: TOKEN }): ImportDeps => ({
+const asPerson = (
+  server: ReturnType<typeof fakeOpenProject>,
+  secrets: Record<string, string> = { [KEY]: TOKEN },
+): ImportDeps => ({
   byPerson: true,
   resolveSecret: async (key) => secrets[key] ?? null,
   fetch: server.fetch,
@@ -149,7 +164,8 @@ async function run(scope: TestScope, deps: ImportDeps, input = {}): Promise<Open
   return result
 }
 
-const statusId = (scope: TestScope, name: string) => listStatuses(scope).find((status) => status.name === name)?.id as number
+const statusId = (scope: TestScope, name: string) =>
+  listStatuses(scope).find((status) => status.name === name)?.id as number
 
 test('the address is https only, without credentials, and /api/v3 is dropped', () => {
   assert.equal(normalizeBaseUrl('https://op.example.com/api/v3/'), 'https://op.example.com')
@@ -171,11 +187,23 @@ test('preview: counts, the suggested mapping, nothing imported; the token only i
   assert.equal(result.alreadyImported, 0)
   assert.deepEqual(
     result.byType.map((entry) => [entry.name, entry.count]),
-    [['Task', 3], ['Milestone', 1], ['Summary task', 1], ['Bug', 1], ['Design', 1]],
+    [
+      ['Task', 3],
+      ['Milestone', 1],
+      ['Summary task', 1],
+      ['Bug', 1],
+      ['Design', 1],
+    ],
   )
   assert.deepEqual(
     result.byStatus.map((entry) => [entry.name, entry.count, entry.isClosed]),
-    [['Backlog', 3, false], ['In progress', 1, false], ['In testing', 1, false], ['Closed', 1, true], ['Rejected', 1, true]],
+    [
+      ['Backlog', 3, false],
+      ['In progress', 1, false],
+      ['In testing', 1, false],
+      ['Closed', 1, true],
+      ['Rejected', 1, true],
+    ],
   )
   // Matched by name where we have one; otherwise a new status in a guessed category.
   assert.deepEqual(result.mapping.statuses, {
@@ -212,7 +240,9 @@ test('import: hierarchy, numbers, fields, markdown and comments, with a summary 
   const server = fakeOpenProject()
   const result = await run(scope, asPerson(server), {
     ...CONNECT,
-    mapping: { statuses: { '12': { status: statusId(scope, 'Done') }, '14': { status: statusId(scope, 'Cancelled') } } },
+    mapping: {
+      statuses: { '12': { status: statusId(scope, 'Done') }, '14': { status: statusId(scope, 'Cancelled') } },
+    },
   })
 
   assert.deepEqual(result, {
@@ -221,10 +251,21 @@ test('import: hierarchy, numbers, fields, markdown and comments, with a summary 
     unchanged: 0,
     conflicts: [],
     comments: 4,
-    relations: { found: 0, added: { blocks: 0, relates: 0, duplicates: 0, follows: 0 }, importedBefore: 0, alreadyHere: 0 },
+    relations: {
+      found: 0,
+      added: { blocks: 0, relates: 0, duplicates: 0, follows: 0 },
+      importedBefore: 0,
+      alreadyHere: 0,
+    },
     attachments: { added: 0, bytes: 0, importedBefore: 0, rewritten: 0 },
     statusesCreated: ['Backlog', 'In testing'],
-    skipped: [{ source: 'Comments', summary: '1 internal comment', reason: 'Internal in OpenProject: only some members may read them there' }],
+    skipped: [
+      {
+        source: 'Comments',
+        summary: '1 internal comment',
+        reason: 'Internal in OpenProject: only some members may read them there',
+      },
+    ],
     notes: [
       '1 work package has its parent outside the project: imported as top-level tasks.',
       '1 automatic note ("Updated automatically by changing values within child work package") left out.',
@@ -262,7 +303,10 @@ test('import: hierarchy, numbers, fields, markdown and comments, with a summary 
   assert.equal(page.status.name, 'Done')
   assert.equal(page.priority, 'high')
   assert.deepEqual(page.assignee, { kind: 'agent', id: 'agent-carol', name: 'Carol' })
-  assert.equal(page.description, `Ask @Jane Doe for copy. Mock-up: [design](${BASE}/api/v3/attachments/9/content), spec in #103.`)
+  assert.equal(
+    page.description,
+    `Ask @Jane Doe for copy. Mock-up: [design](${BASE}/api/v3/attachments/9/content), spec in #103.`,
+  )
   // The internal comment is left out; a commenter met nowhere else is named by OpenProject.
   assert.deepEqual(
     page.comments.map((comment) => [comment.author.name, comment.body]),
@@ -279,7 +323,10 @@ test('import: hierarchy, numbers, fields, markdown and comments, with a summary 
   assert.deepEqual([getTask(scope, 'TASK-5').startDate, getTask(scope, 'TASK-5').endDate], ['2026-09-30', '2026-09-30'])
   assert.equal(getTask(scope, 'TASK-4').startDate, null)
   const palette = getTask(scope, 'TASK-6')
-  assert.deepEqual([palette.status.name, palette.priority, palette.assignee], ['Cancelled', 'low', { kind: 'person', name: 'Pat Outsider' }])
+  assert.deepEqual(
+    [palette.status.name, palette.priority, palette.assignee],
+    ['Cancelled', 'low', { kind: 'person', name: 'Pat Outsider' }],
+  )
 
   // Records of work done elsewhere: nobody is notified, the list refreshes once.
   assert.equal((scope.db.prepare('SELECT count(*) AS n FROM inbox').get() as { n: number }).n, 0)
@@ -300,8 +347,14 @@ test('a re-run changes only what OpenProject changed, and never adds a comment t
   const commentReads = () => server.calls.filter((call) => call.url.includes('/activities')).length
   const readsBefore = commentReads()
   const again = await run(scope, asAgent(server))
-  assert.deepEqual([again.created, again.updated, again.unchanged, again.comments, again.statusesCreated], [0, 0, 7, 0, []])
-  assert.deepEqual(listTasks(scope).tasks.map((task) => [task.key, task.rank]), before)
+  assert.deepEqual(
+    [again.created, again.updated, again.unchanged, again.comments, again.statusesCreated],
+    [0, 0, 7, 0, []],
+  )
+  assert.deepEqual(
+    listTasks(scope).tasks.map((task) => [task.key, task.rank]),
+    before,
+  )
   // Nothing changed in OpenProject, so no work package's comments are read again.
   assert.equal(commentReads(), readsBefore)
   const unchangedPreview = await preview(scope, asAgent(server))
@@ -312,7 +365,15 @@ test('a re-run changes only what OpenProject changed, and never adds a comment t
   const bug = server.state.workPackages.find((wp) => wp.id === 103) as WorkPackageFixture
   Object.assign(bug, { status: [12, 'Closed'], updatedAt: '2026-09-20T08:00:00.000Z' })
   server.state.comments[103]?.push({ id: 5007, user: 21, body: 'Fixed in 1.0.1.', at: '2026-09-20T08:00:00.000Z' })
-  server.state.workPackages.push({ id: 108, number: 8, subject: 'Press release', type: [1, 'Task'], status: [1, 'Backlog'], author: [5, 'Bob (Lead Agent)'], parent: 101 })
+  server.state.workPackages.push({
+    id: 108,
+    number: 8,
+    subject: 'Press release',
+    type: [1, 'Task'],
+    status: [1, 'Backlog'],
+    author: [5, 'Bob (Lead Agent)'],
+    parent: 101,
+  })
 
   // The preview counts what confirming would do, and writes none of it.
   const changedPreview = await preview(scope, asAgent(server))
@@ -323,7 +384,10 @@ test('a re-run changes only what OpenProject changed, and never adds a comment t
 
   const readsBeforeThird = commentReads()
   const third = await run(scope, asAgent(server))
-  assert.deepEqual([third.created, third.updated, third.unchanged, third.comments, third.statusesCreated], [1, 1, 6, 1, []])
+  assert.deepEqual(
+    [third.created, third.updated, third.unchanged, third.comments, third.statusesCreated],
+    [1, 1, 6, 1, []],
+  )
   // Only the changed bug's and the new work package's comments are read.
   assert.equal(commentReads() - readsBeforeThird, 2)
   const fixed = getTask(scope, 'TASK-3')
@@ -332,7 +396,10 @@ test('a re-run changes only what OpenProject changed, and never adds a comment t
     fixed.activity.filter((entry) => entry.field === 'status').map((entry) => [entry.from, entry.to]),
     [['In testing', 'Closed']],
   )
-  assert.deepEqual(fixed.comments.map((comment) => comment.body), ['Reproduced on Safari 17 only.', 'Fixed in 1.0.1.'])
+  assert.deepEqual(
+    fixed.comments.map((comment) => comment.body),
+    ['Reproduced on Safari 17 only.', 'Fixed in 1.0.1.'],
+  )
   assert.equal(getTask(scope, 'TASK-8').parentKey, 'TASK-1')
   // The new task comes after everything that was here.
   assert.equal(listTasks(scope).tasks.at(-1)?.key, 'TASK-8')
@@ -342,7 +409,11 @@ test('a skipped type leaves its work packages out, and their children move up to
   const scope = scopeWithTeam()
   const result = await run(scope, asPerson(fakeOpenProject()), { ...CONNECT, mapping: { types: { '8': 'skip' } } })
   assert.equal(result.created, 6)
-  assert.deepEqual(result.skipped[0], { source: 'DEMO-4', summary: 'Visual design', reason: 'Type "Design" is set to skip' })
+  assert.deepEqual(result.skipped[0], {
+    source: 'DEMO-4',
+    summary: 'Visual design',
+    reason: 'Type "Design" is set to skip',
+  })
   assert.equal(getTask(scope, 'TASK-6').parentKey, 'TASK-1')
   assert.ok(!listTasks(scope).tasks.some((task) => task.key === 'TASK-4'))
 })
@@ -366,8 +437,14 @@ test('only a person sets the address and the key; an agent uses the saved connec
   assert.equal(server.calls.length, 0)
 
   await preview(scope, asPerson(server), CONNECT)
-  await assert.rejects(importOpenProject(scope, { url: 'https://evil.example.com' }, asAgent(server)), /Only a person sets/)
-  await assert.rejects(importOpenProject(scope, { secretKey: 'OPENPROJECT_OTHER' }, asAgent(server)), /Only a person sets/)
+  await assert.rejects(
+    importOpenProject(scope, { url: 'https://evil.example.com' }, asAgent(server)),
+    /Only a person sets/,
+  )
+  await assert.rejects(
+    importOpenProject(scope, { secretKey: 'OPENPROJECT_OTHER' }, asAgent(server)),
+    /Only a person sets/,
+  )
   // Restating the saved values is allowed, and so is choosing the project.
   assert.equal((await preview(scope, asAgent(server), { url: BASE, secretKey: KEY, project: '4' })).project.id, 4)
   // An agent's call does not change what is saved.
@@ -378,21 +455,42 @@ test('only an OpenProject key is read from the Secrets Store, and errors name th
   const scope = scopeWithTeam()
   const server = fakeOpenProject()
   const asked: string[] = []
-  const deps: ImportDeps = { byPerson: true, resolveSecret: async (key) => (asked.push(key), key === 'OPENPROJECT_WRONG' ? 'not-the-token' : null), fetch: server.fetch }
+  const deps: ImportDeps = {
+    byPerson: true,
+    resolveSecret: async (key) => {
+      asked.push(key)
+      return key === 'OPENPROJECT_WRONG' ? 'not-the-token' : null
+    },
+    fetch: server.fetch,
+  }
 
-  await assert.rejects(importOpenProject(scope, { ...CONNECT, secretKey: 'MY_KEY' }, deps), /must start with OPENPROJECT_/)
-  await assert.rejects(importOpenProject(scope, { ...CONNECT, secretKey: 'FORGE_PASSWORD' }, deps), /must start with OPENPROJECT_/)
+  await assert.rejects(
+    importOpenProject(scope, { ...CONNECT, secretKey: 'MY_KEY' }, deps),
+    /must start with OPENPROJECT_/,
+  )
+  await assert.rejects(
+    importOpenProject(scope, { ...CONNECT, secretKey: 'FORGE_PASSWORD' }, deps),
+    /must start with OPENPROJECT_/,
+  )
   assert.deepEqual(asked, [])
 
-  await assert.rejects(importOpenProject(scope, { ...CONNECT, secretKey: 'OPENPROJECT_MISSING' }, deps), /Secrets Store has no key "OPENPROJECT_MISSING"/)
-  await assert.rejects(importOpenProject(scope, { ...CONNECT, secretKey: 'OPENPROJECT_WRONG' }, deps), (error: Error) => {
-    assert.match(error.message, /refused the token stored under "OPENPROJECT_WRONG" \(401\)/)
-    assert.ok(!error.message.includes('not-the-token'))
-    return true
-  })
+  await assert.rejects(
+    importOpenProject(scope, { ...CONNECT, secretKey: 'OPENPROJECT_MISSING' }, deps),
+    /Secrets Store has no key "OPENPROJECT_MISSING"/,
+  )
+  await assert.rejects(
+    importOpenProject(scope, { ...CONNECT, secretKey: 'OPENPROJECT_WRONG' }, deps),
+    (error: Error) => {
+      assert.match(error.message, /refused the token stored under "OPENPROJECT_WRONG" \(401\)/)
+      assert.ok(!error.message.includes('not-the-token'))
+      return true
+    },
+  )
 
-  // A key saved before the prefix rule is checked again before it is read.
-  scope.db.prepare("INSERT INTO openproject_import (id, url, project, secret_key) VALUES (1, ?, 'demo', 'MY_KEY')").run(BASE)
+  // A stored key that breaks the prefix rule is checked again, and refused, before it is read.
+  scope.db
+    .prepare("INSERT INTO openproject_import (id, url, project, secret_key) VALUES (1, ?, 'demo', 'MY_KEY')")
+    .run(BASE)
   await assert.rejects(importOpenProject(scope, {}, asAgent(server)), /must start with OPENPROJECT_/)
   assert.deepEqual(asked, ['OPENPROJECT_MISSING', 'OPENPROJECT_WRONG'])
 })
@@ -401,10 +499,14 @@ test('a redirect is refused rather than followed, and the project is found in ei
   const scope = scopeWithTeam()
   const server = fakeOpenProject()
   const redirecting = async (input: string, init: RequestInit) => {
-    if (init.redirect === 'error' && input.includes('/statuses')) throw new TypeError('fetch failed: redirect mode is set to error')
+    if (init.redirect === 'error' && input.includes('/statuses'))
+      throw new TypeError('fetch failed: redirect mode is set to error')
     return server.fetch(input, init)
   }
-  await assert.rejects(importOpenProject(scope, CONNECT, { ...asPerson(server), fetch: redirecting }), /Could not reach OpenProject at https:\/\/openproject.example.com: fetch failed/)
+  await assert.rejects(
+    importOpenProject(scope, CONNECT, { ...asPerson(server), fetch: redirecting }),
+    /Could not reach OpenProject at https:\/\/openproject.example.com: fetch failed/,
+  )
   assert.equal(listTasks(scope).tasks.length, 0)
 
   const lower = server.calls.filter((call) => call.url.endsWith('/projects/demo'))
@@ -415,11 +517,31 @@ test('a redirect is refused rather than followed, and the project is found in ei
 test('mapping input is checked: unknown statuses, types and people are refused', async () => {
   const scope = scopeWithTeam()
   const server = fakeOpenProject()
-  await assert.rejects(importOpenProject(scope, { ...CONNECT, mapping: { statuses: { '1': { status: 999 } } } }, asPerson(server)), /there is no status 999/)
-  await assert.rejects(importOpenProject(scope, { ...CONNECT, mapping: { types: { '1': 'feature' as never } } }, asPerson(server)), /must be one of: /)
-  await assert.rejects(importOpenProject(scope, { ...CONNECT, mapping: { people: { '5': { kind: 'agent', id: 'nobody', name: 'Nobody' } } } }, asPerson(server)), /no agent "nobody"/)
   await assert.rejects(
-    importOpenProject(scope, { ...CONNECT, mapping: { statuses: { '1': { create: { name: 'x'.repeat(41), category: 'todo', color: null } } } } }, asPerson(server)),
+    importOpenProject(scope, { ...CONNECT, mapping: { statuses: { '1': { status: 999 } } } }, asPerson(server)),
+    /there is no status 999/,
+  )
+  await assert.rejects(
+    importOpenProject(scope, { ...CONNECT, mapping: { types: { '1': 'feature' as never } } }, asPerson(server)),
+    /must be one of: /,
+  )
+  await assert.rejects(
+    importOpenProject(
+      scope,
+      { ...CONNECT, mapping: { people: { '5': { kind: 'agent', id: 'nobody', name: 'Nobody' } } } },
+      asPerson(server),
+    ),
+    /no agent "nobody"/,
+  )
+  await assert.rejects(
+    importOpenProject(
+      scope,
+      {
+        ...CONNECT,
+        mapping: { statuses: { '1': { create: { name: 'x'.repeat(41), category: 'todo', color: null } } } },
+      },
+      asPerson(server),
+    ),
     /at most 40 characters/,
   )
   // A person mapped to null is kept by name only: unassigned.
@@ -427,7 +549,8 @@ test('mapping input is checked: unknown statuses, types and people are refused',
   assert.equal(getTask(scope, 'TASK-2').assignee, null)
 })
 
-const workPackageOf = (server: ReturnType<typeof fakeOpenProject>, id: number) => server.state.workPackages.find((wp) => wp.id === id) as WorkPackageFixture
+const workPackageOf = (server: ReturnType<typeof fakeOpenProject>, id: number) =>
+  server.state.workPackages.find((wp) => wp.id === id) as WorkPackageFixture
 
 test('edits made here stay; OpenProject changes to other fields come through; a field changed on both sides is a conflict', async () => {
   const scope = scopeWithTeam()
@@ -440,7 +563,12 @@ test('edits made here stay; OpenProject changes to other fields come through; a 
   const bug = workPackageOf(server, 103)
   Object.assign(bug, { status: [12, 'Closed'], priority: 'Low', updatedAt: '2026-09-20T08:00:00.000Z' })
 
-  const conflict = { key: 'TASK-3', summary: 'Login fails on Safari 17', fields: [{ field: 'status', here: 'Done', openProject: 'Closed' }], overwritten: false }
+  const conflict = {
+    key: 'TASK-3',
+    summary: 'Login fails on Safari 17',
+    fields: [{ field: 'status', here: 'Done', openProject: 'Closed' }],
+    overwritten: false,
+  }
   const planned = await preview(scope, asAgent(server))
   assert.deepEqual(planned.plan, { create: 0, update: 1, unchanged: 6 })
   assert.deepEqual(planned.conflicts, [conflict])
@@ -448,7 +576,11 @@ test('edits made here stay; OpenProject changes to other fields come through; a 
   const result = await run(scope, asAgent(server))
   assert.deepEqual([result.created, result.updated, result.unchanged], [0, 1, 6])
   assert.deepEqual(result.conflicts, [conflict])
-  assert.ok(result.notes.includes('1 task keeps the edits made here where OpenProject changed the same fields: see the conflicts.'))
+  assert.ok(
+    result.notes.includes(
+      '1 task keeps the edits made here where OpenProject changed the same fields: see the conflicts.',
+    ),
+  )
   const kept = getTask(scope, 'TASK-3')
   assert.deepEqual([kept.summary, kept.status.name, kept.priority], ['Login fails on Safari 17', 'Done', 'low'])
 
@@ -461,7 +593,9 @@ test('edits made here stay; OpenProject changes to other fields come through; a 
   // Named in overwrite, the task takes OpenProject's value; a key with no conflict is reported, not ignored.
   Object.assign(bug, { status: [14, 'Rejected'], updatedAt: '2026-09-22T08:00:00.000Z' })
   const forced = await run(scope, asAgent(server), { overwrite: ['task-3', 'TASK-99'] })
-  assert.deepEqual(forced.conflicts, [{ ...conflict, fields: [{ field: 'status', here: 'Done', openProject: 'Rejected' }], overwritten: true }])
+  assert.deepEqual(forced.conflicts, [
+    { ...conflict, fields: [{ field: 'status', here: 'Done', openProject: 'Rejected' }], overwritten: true },
+  ])
   assert.ok(forced.notes.includes('Nothing to overwrite on TASK-99: it has no conflict with OpenProject.'))
   const taken = getTask(scope, 'TASK-3')
   assert.deepEqual([taken.summary, taken.status.name], ['Login fails on Safari 17', 'Rejected'])
@@ -486,12 +620,22 @@ test('a parent chosen here stays; moved on both sides to different parents, it i
   Object.assign(palette, { subject: 'Pick the palette', updatedAt: '2026-09-20T08:00:00.000Z' })
   const renamed = await run(scope, asAgent(server))
   assert.deepEqual([renamed.updated, renamed.conflicts], [1, []])
-  assert.deepEqual([getTask(scope, 'TASK-6').summary, getTask(scope, 'TASK-6').parentKey], ['Pick the palette', 'TASK-1'])
+  assert.deepEqual(
+    [getTask(scope, 'TASK-6').summary, getTask(scope, 'TASK-6').parentKey],
+    ['Pick the palette', 'TASK-1'],
+  )
 
   // In OpenProject: it moves under Go live.
   Object.assign(palette, { parent: 105, updatedAt: '2026-09-21T08:00:00.000Z' })
   const moved = await run(scope, asAgent(server))
-  assert.deepEqual(moved.conflicts, [{ key: 'TASK-6', summary: 'Pick the palette', fields: [{ field: 'parent', here: 'TASK-1', openProject: 'TASK-5' }], overwritten: false }])
+  assert.deepEqual(moved.conflicts, [
+    {
+      key: 'TASK-6',
+      summary: 'Pick the palette',
+      fields: [{ field: 'parent', here: 'TASK-1', openProject: 'TASK-5' }],
+      overwritten: false,
+    },
+  ])
   assert.equal(moved.updated, 0)
   assert.equal(getTask(scope, 'TASK-6').parentKey, 'TASK-1')
 })
@@ -526,7 +670,10 @@ test('the schedule runs only after a first import and when due, and keeps the ed
   await changeStatus(scope, { key: 'TASK-3', status: 'Done' })
   Object.assign(workPackageOf(server, 103), { status: [12, 'Closed'], updatedAt: '2026-09-20T08:00:00.000Z' })
   const synced = await syncOpenProject(scope, deps)
-  assert.deepEqual(synced?.conflicts.map((conflict) => [conflict.key, conflict.overwritten]), [['TASK-3', false]])
+  assert.deepEqual(
+    synced?.conflicts.map((conflict) => [conflict.key, conflict.overwritten]),
+    [['TASK-3', false]],
+  )
   assert.equal(getTask(scope, 'TASK-3').status.name, 'Done')
   saveSync(scope, null)
   assert.deepEqual(readState(scope).sync, { minutes: null, error: null })
@@ -557,8 +704,16 @@ test('relations only: mapped by the work package each task came from, previewed 
     importedBefore: 0,
     alreadyHere: 0,
     skipped: [
-      { source: 'TASK-5 blocks TASK-3', summary: 'OpenProject relation 8', reason: 'TASK-5 cannot block TASK-3: that would make a loop (TASK-3 → TASK-5 → TASK-3)' },
-      { source: 'Relations', summary: '1 relation', reason: 'The work package at the other end is not imported here: in another project, or of a type left out' },
+      {
+        source: 'TASK-5 blocks TASK-3',
+        summary: 'OpenProject relation 8',
+        reason: 'TASK-5 cannot block TASK-3: that would make a loop (TASK-3 → TASK-5 → TASK-3)',
+      },
+      {
+        source: 'Relations',
+        summary: '1 relation',
+        reason: 'The work package at the other end is not imported here: in another project, or of a type left out',
+      },
       { source: 'Relations', summary: '1 "includes" relation', reason: 'No such relation here' },
     ],
   }
@@ -568,13 +723,26 @@ test('relations only: mapped by the work package each task came from, previewed 
   assert.deepEqual(getTask(scope, 'TASK-2').relatesTo, [], 'a preview writes nothing')
 
   assert.deepEqual(await relations(true), { imported: true, ...expected })
-  assert.equal(server.calls.filter((call) => call.url.includes('/work_packages?')).length, workPackageReads, 'no work package is read again')
+  assert.equal(
+    server.calls.filter((call) => call.url.includes('/work_packages?')).length,
+    workPackageReads,
+    'no work package is read again',
+  )
   const two = getTask(scope, 'TASK-2')
-  assert.deepEqual([two.relatesTo, two.duplicates].map((list) => list.map((task) => task.key)), [['TASK-3'], ['TASK-6']])
+  assert.deepEqual(
+    [two.relatesTo, two.duplicates].map((list) => list.map((task) => task.key)),
+    [['TASK-3'], ['TASK-6']],
+  )
   const five = getTask(scope, 'TASK-5')
   assert.deepEqual(five.blockers, [{ key: 'TASK-3', open: true }])
-  assert.deepEqual(five.follows.map((task) => task.key), ['TASK-4'])
-  assert.deepEqual(getTask(scope, 'TASK-6').duplicatedBy.map((task) => task.key), ['TASK-2'])
+  assert.deepEqual(
+    five.follows.map((task) => task.key),
+    ['TASK-4'],
+  )
+  assert.deepEqual(
+    getTask(scope, 'TASK-6').duplicatedBy.map((task) => task.key),
+    ['TASK-2'],
+  )
 
   // A re-run adds nothing twice, and a relation removed here stays removed.
   unlinkTasks(scope, { type: 'relates', from: 'TASK-3', to: 'TASK-2' })
@@ -597,21 +765,44 @@ const CAROL_OP: [number, string] = [10, 'Carol (Agent)']
 const JANE_OP: [number, string] = [21, 'Jane Doe']
 const TOO_LARGE = { source: 'DEMO-2', summary: 'demo.mp4 (30 MB)', reason: 'Over the 25 MB limit per file' }
 
-const contentReads = (server: ReturnType<typeof fakeOpenProject>) => server.calls.filter((call) => call.url.endsWith('/content')).length
-const listReads = (server: ReturnType<typeof fakeOpenProject>) => server.calls.filter((call) => call.url.endsWith('/attachments')).length
-const attachmentRows = (scope: TestScope) => (scope.db.prepare('SELECT count(*) AS n FROM task_attachment').get() as { n: number }).n
+const contentReads = (server: ReturnType<typeof fakeOpenProject>) =>
+  server.calls.filter((call) => call.url.endsWith('/content')).length
+const listReads = (server: ReturnType<typeof fakeOpenProject>) =>
+  server.calls.filter((call) => call.url.endsWith('/attachments')).length
+const attachmentRows = (scope: TestScope) =>
+  (scope.db.prepare('SELECT count(*) AS n FROM task_attachment').get() as { n: number }).n
 
 /** Attachments on the landing page (one too large) and on the bug, with images embedded in a description and a comment. */
 function withAttachments(server: ReturnType<typeof fakeOpenProject>) {
   server.state.attachments[102] = [
     { id: 301, fileName: 'mock-up.png', bytes: PNG, author: CAROL_OP, at: '2026-09-03T10:00:00.000Z' },
-    { id: 302, fileName: 'notes.txt', bytes: Buffer.from('hello'), author: [30, 'Pat Outsider'], at: '2026-09-03T11:00:00.000Z' },
-    { id: 303, fileName: 'demo.mp4', bytes: Buffer.from('x'), fileSize: 30 * 1024 * 1024, author: CAROL_OP, at: '2026-09-03T12:00:00.000Z' },
+    {
+      id: 302,
+      fileName: 'notes.txt',
+      bytes: Buffer.from('hello'),
+      author: [30, 'Pat Outsider'],
+      at: '2026-09-03T11:00:00.000Z',
+    },
+    {
+      id: 303,
+      fileName: 'demo.mp4',
+      bytes: Buffer.from('x'),
+      fileSize: 30 * 1024 * 1024,
+      author: CAROL_OP,
+      at: '2026-09-03T12:00:00.000Z',
+    },
   ]
-  server.state.attachments[103] = [{ id: 304, fileName: 'safari.jpg', bytes: JPEG, author: JANE_OP, at: '2026-09-11T09:00:00.000Z' }]
+  server.state.attachments[103] = [
+    { id: 304, fileName: 'safari.jpg', bytes: JPEG, author: JANE_OP, at: '2026-09-11T09:00:00.000Z' },
+  ]
   workPackageOf(server, 102).description =
     'See ![Mock-up](/api/v3/attachments/301/content) and <img src="/api/v3/attachments/301/content" alt="again">, notes [here](/api/v3/attachments/302/content).'
-  server.state.comments[103]?.push({ id: 5010, user: 21, body: `Screenshot:\n![Safari](${BASE}/api/v3/attachments/304/content)`, at: '2026-09-11T09:31:00.000Z' })
+  server.state.comments[103]?.push({
+    id: 5010,
+    user: 21,
+    body: `Screenshot:\n![Safari](${BASE}/api/v3/attachments/304/content)`,
+    at: '2026-09-11T09:31:00.000Z',
+  })
 }
 
 test('attachments: counted in the preview, imported with their name, type, time and uploader; embedded images show the copy', async () => {
@@ -625,8 +816,16 @@ test('attachments: counted in the preview, imported with their name, type, time 
   assert.equal(contentReads(server), 0, 'a preview reads no file')
 
   const result = await run(scope, asPerson(server), CONNECT)
-  assert.deepEqual(result.attachments, { added: 3, bytes: PNG.length + 5 + JPEG.length, importedBefore: 0, rewritten: 2 })
-  assert.deepEqual(result.skipped.filter((item) => item.source === 'DEMO-2'), [TOO_LARGE])
+  assert.deepEqual(result.attachments, {
+    added: 3,
+    bytes: PNG.length + 5 + JPEG.length,
+    importedBefore: 0,
+    rewritten: 2,
+  })
+  assert.deepEqual(
+    result.skipped.filter((item) => item.source === 'DEMO-2'),
+    [TOO_LARGE],
+  )
   assert.equal(contentReads(server), 3, 'the file over the limit is never read')
   assert.deepEqual(readState(scope).lastImport?.result, result)
 
@@ -660,11 +859,20 @@ test('attachments: counted in the preview, imported with their name, type, time 
 
   // One removed here stays removed; a new one in OpenProject is added.
   deleteAttachment(scope, mockUp)
-  server.state.attachments[102]?.push({ id: 305, fileName: 'final.png', bytes: PNG, author: CAROL_OP, at: '2026-09-20T08:00:00.000Z' })
+  server.state.attachments[102]?.push({
+    id: 305,
+    fileName: 'final.png',
+    bytes: PNG,
+    author: CAROL_OP,
+    at: '2026-09-20T08:00:00.000Z',
+  })
   workPackageOf(server, 102).updatedAt = '2026-09-20T08:00:00.000Z'
   const third = await run(scope, asAgent(server))
   assert.deepEqual(third.attachments, { added: 1, bytes: PNG.length, importedBefore: 3, rewritten: 0 })
-  assert.deepEqual(listAttachments(scope, 'TASK-2').map((file) => file.name), ['notes.txt', 'final.png'])
+  assert.deepEqual(
+    listAttachments(scope, 'TASK-2').map((file) => file.name),
+    ['notes.txt', 'final.png'],
+  )
   assert.deepEqual(third.conflicts, [])
 })
 
@@ -676,7 +884,9 @@ test('an already-imported project gets its attachments on a plain re-run, and im
   assert.equal(getTask(scope, 'TASK-3').description, `Seen here: ![Safari](${BASE}/api/v3/attachments/304/content)`)
   // As a project imported before attachments came along: no list read yet.
   scope.db.exec('UPDATE task_source SET attachments_read_at = NULL')
-  server.state.attachments[103] = [{ id: 304, fileName: 'safari.jpg', bytes: JPEG, author: JANE_OP, at: '2026-09-11T09:00:00.000Z' }]
+  server.state.attachments[103] = [
+    { id: 304, fileName: 'safari.jpg', bytes: JPEG, author: JANE_OP, at: '2026-09-11T09:00:00.000Z' },
+  ]
 
   const result = await run(scope, asAgent(server))
   assert.deepEqual([result.created, result.updated], [0, 0])
@@ -694,20 +904,32 @@ test('an already-imported project gets its attachments on a plain re-run, and im
 test('a file that cannot be read is listed, and the next run tries it again', async () => {
   const scope = scopeWithTeam()
   const server = fakeOpenProject()
-  server.state.attachments[104] = [{ id: 306, fileName: 'palette.png', bytes: PNG, author: JANE_OP, at: '2026-09-04T09:00:00.000Z' }]
+  server.state.attachments[104] = [
+    { id: 306, fileName: 'palette.png', bytes: PNG, author: JANE_OP, at: '2026-09-04T09:00:00.000Z' },
+  ]
   server.state.failing.add(306)
   const first = await run(scope, asPerson(server), CONNECT)
   assert.equal(first.attachments?.added, 0)
-  assert.deepEqual(first.skipped.filter((item) => item.source === 'DEMO-4'), [
-    { source: 'DEMO-4', summary: 'palette.png', reason: 'Could not be read: OpenProject answered 500 for attachment 306. The next import tries again.' },
-  ])
+  assert.deepEqual(
+    first.skipped.filter((item) => item.source === 'DEMO-4'),
+    [
+      {
+        source: 'DEMO-4',
+        summary: 'palette.png',
+        reason: 'Could not be read: OpenProject answered 500 for attachment 306. The next import tries again.',
+      },
+    ],
+  )
   assert.equal(attachmentRows(scope), 0)
   assert.deepEqual(fs.readdirSync(incomingDir(scope.dataDir)), [], 'nothing is left half-read')
 
   server.state.failing.delete(306)
   const second = await run(scope, asAgent(server))
   assert.equal(second.attachments?.added, 1)
-  assert.deepEqual(listAttachments(scope, 'TASK-4').map((file) => file.name), ['palette.png'])
+  assert.deepEqual(
+    listAttachments(scope, 'TASK-4').map((file) => file.name),
+    ['palette.png'],
+  )
 })
 
 test('the scheduled run brings new relations and attachments too, and never one removed here', async () => {
@@ -718,7 +940,9 @@ test('the scheduled run brings new relations and attachments too, and never one 
 
   // In OpenProject: a relation, and a file on the bug (which changes its updatedAt).
   server.state.relations.push([1, 'relates', 102, 103])
-  server.state.attachments[103] = [{ id: 307, fileName: 'trace.txt', bytes: Buffer.from('stack'), author: JANE_OP, at: '2026-09-20T08:00:00.000Z' }]
+  server.state.attachments[103] = [
+    { id: 307, fileName: 'trace.txt', bytes: Buffer.from('stack'), author: JANE_OP, at: '2026-09-20T08:00:00.000Z' },
+  ]
   workPackageOf(server, 103).updatedAt = '2026-09-20T08:00:00.000Z'
   const planned = await preview(scope, asAgent(server))
   assert.deepEqual([planned.relations, planned.attachments.count], [1, 1])
@@ -726,7 +950,10 @@ test('the scheduled run brings new relations and attachments too, and never one 
   const synced = await syncOpenProject(scope, deps)
   assert.deepEqual(synced?.relations?.added, { blocks: 0, relates: 1, duplicates: 0, follows: 0 })
   assert.equal(synced?.attachments?.added, 1)
-  assert.deepEqual(getTask(scope, 'TASK-2').relatesTo.map((task) => task.key), ['TASK-3'])
+  assert.deepEqual(
+    getTask(scope, 'TASK-2').relatesTo.map((task) => task.key),
+    ['TASK-3'],
+  )
   const [trace] = listAttachments(scope, 'TASK-3')
   assert.equal(trace?.name, 'trace.txt')
 
@@ -735,7 +962,10 @@ test('the scheduled run brings new relations and attachments too, and never one 
   deleteAttachment(scope, trace?.id)
   workPackageOf(server, 103).updatedAt = '2026-09-21T08:00:00.000Z'
   const next = await syncOpenProject(scope, deps)
-  assert.deepEqual([next?.relations?.importedBefore, next?.attachments?.importedBefore, next?.attachments?.added], [1, 1, 0])
+  assert.deepEqual(
+    [next?.relations?.importedBefore, next?.attachments?.importedBefore, next?.attachments?.added],
+    [1, 1, 0],
+  )
   assert.deepEqual(getTask(scope, 'TASK-2').relatesTo, [])
   assert.deepEqual(listAttachments(scope, 'TASK-3'), [])
 })
@@ -750,8 +980,18 @@ test('embedded images of imported attachments point at the copy, in every form O
   assert.equal(point('![a](/api/v3/attachments/7/content)'), `![a](${seven})`)
   assert.equal(point(`![a](${BASE}/api/v3/attachments/7/content "title")`), `![a](${seven})`)
   assert.equal(point('![](/attachments/7/shot.png)'), `![](${seven})`)
-  assert.equal(point('<img class="op-uc-image" src="/api/v3/attachments/8/content" alt="b">'), '![b](attachment:00000000-0000-4000-8000-000000000008)')
+  assert.equal(
+    point('<img class="op-uc-image" src="/api/v3/attachments/8/content" alt="b">'),
+    '![b](attachment:00000000-0000-4000-8000-000000000008)',
+  )
   assert.equal(point('![c](/api/v3/attachments/9/content)'), '![c](/api/v3/attachments/9/content)', 'not imported here')
-  assert.equal(point('[a](/api/v3/attachments/7/content)'), '[a](/api/v3/attachments/7/content)', 'a link, not an image')
-  assert.equal(point('![a](https://elsewhere.example.com/api/v3/attachments/7/content)'), '![a](https://elsewhere.example.com/api/v3/attachments/7/content)')
+  assert.equal(
+    point('[a](/api/v3/attachments/7/content)'),
+    '[a](/api/v3/attachments/7/content)',
+    'a link, not an image',
+  )
+  assert.equal(
+    point('![a](https://elsewhere.example.com/api/v3/attachments/7/content)'),
+    '![a](https://elsewhere.example.com/api/v3/attachments/7/content)',
+  )
 })

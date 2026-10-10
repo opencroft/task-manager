@@ -4,19 +4,18 @@
 // be worked off. The reads are batched: a task list gets every task's blockers
 // from one query, not one per row.
 
+import type { ActionInputs } from '../../shared/action-inputs.ts'
 import {
   INVERSE_RELATION_TYPES,
-  RELATION_GROUPS,
   RELATION_GROUP_OF,
-  RELATION_TYPES,
+  RELATION_GROUPS,
   RELATION_WORDS,
   type RelationGroup,
   type RelationType,
-  type TaskLinkInput,
 } from '../../shared/dependencies.ts'
 import type { StatusCategory, TaskSummary } from '../../shared/types.ts'
 import { transaction } from '../db.ts'
-import { type Scope, TaskError, keyOf, record, requireRow, touch } from '../service.ts'
+import { keyOf, record, requireRow, type Scope, TaskError, touch } from '../service.ts'
 
 interface RelationRow {
   from_id: number
@@ -33,7 +32,9 @@ const HISTORY_FIELD: Record<RelationType, { from: string; to: string }> = {
 }
 
 function blockEdges(scope: Scope): Array<{ from: number; to: number }> {
-  return scope.db.prepare("SELECT from_id AS 'from', to_id AS 'to' FROM task_relation WHERE type = 'blocks'").all() as Array<{
+  return scope.db
+    .prepare("SELECT from_id AS 'from', to_id AS 'to' FROM task_relation WHERE type = 'blocks'")
+    .all() as Array<{
     from: number
     to: number
   }>
@@ -83,15 +84,14 @@ export interface Relation {
 }
 
 /** The relation an input names, as it is stored. */
-function resolve(scope: Scope, input: TaskLinkInput): Relation {
-  const name = input?.type ?? 'blocks'
-  const inverse = Object.hasOwn(INVERSE_RELATION_TYPES, name) ? INVERSE_RELATION_TYPES[name as keyof typeof INVERSE_RELATION_TYPES] : null
-  if (!inverse && !(RELATION_TYPES as readonly string[]).includes(name)) {
-    throw new TaskError(`"${name}" is not a relation type; use one of: ${[...RELATION_TYPES, ...Object.keys(INVERSE_RELATION_TYPES)].join(', ')}`)
-  }
+function resolve(scope: Scope, input: ActionInputs['task_link']): Relation {
+  const name = input.type ?? 'blocks'
+  const inverse = Object.hasOwn(INVERSE_RELATION_TYPES, name)
+    ? INVERSE_RELATION_TYPES[name as keyof typeof INVERSE_RELATION_TYPES]
+    : null
   const type = inverse ?? (name as RelationType)
-  const first = requireRow(scope, input?.from)
-  const second = requireRow(scope, input?.to)
+  const first = requireRow(scope, input.from)
+  const second = requireRow(scope, input.to)
   const [from, to] = inverse ? [second, first] : [first, second]
   return relationOf(type, { id: from.id, key: keyOf(scope, from.number) }, { id: to.id, key: keyOf(scope, to.number) })
 }
@@ -102,7 +102,7 @@ export function relationOf(type: RelationType, from: Relation['from'], to: Relat
 }
 
 /** Record a relation between two tasks. Recording one already there changes nothing. */
-export function linkTasks(scope: Scope, input: TaskLinkInput): void {
+export function linkTasks(scope: Scope, input: ActionInputs['task_link']): void {
   const relation = resolve(scope, input)
   const added = transaction(scope.db, () => addRelation(scope, relation))
   if (added) {
@@ -120,7 +120,9 @@ export function addRelation(scope: Scope, relation: Relation): boolean {
   if (from.id === to.id) {
     throw new TaskError(`${from.key} cannot ${type === 'relates' ? 'relate to' : type.replace(/s$/, '')} itself`)
   }
-  const existing = scope.db.prepare('SELECT 1 FROM task_relation WHERE from_id = ? AND to_id = ? AND type = ?').get(from.id, to.id, type)
+  const existing = scope.db
+    .prepare('SELECT 1 FROM task_relation WHERE from_id = ? AND to_id = ? AND type = ?')
+    .get(from.id, to.id, type)
   if (existing) {
     return false
   }
@@ -132,7 +134,9 @@ export function addRelation(scope: Scope, relation: Relation): boolean {
       throw new TaskError(`${from.key} cannot block ${to.key}: that would make a loop (${chain})`)
     }
   }
-  scope.db.prepare('INSERT INTO task_relation (from_id, to_id, type, created_at) VALUES (?, ?, ?, ?)').run(from.id, to.id, type, new Date().toISOString())
+  scope.db
+    .prepare('INSERT INTO task_relation (from_id, to_id, type, created_at) VALUES (?, ?, ?, ?)')
+    .run(from.id, to.id, type, new Date().toISOString())
   record(scope, from.id, 'field', HISTORY_FIELD[type].from, null, to.key)
   record(scope, to.id, 'field', HISTORY_FIELD[type].to, null, from.key)
   touch(scope, from.id)
@@ -141,10 +145,12 @@ export function addRelation(scope: Scope, relation: Relation): boolean {
 }
 
 /** Remove a relation between two tasks. */
-export function unlinkTasks(scope: Scope, input: TaskLinkInput): void {
+export function unlinkTasks(scope: Scope, input: ActionInputs['task_unlink']): void {
   const { type, from, to } = resolve(scope, input)
   transaction(scope.db, () => {
-    const removed = scope.db.prepare('DELETE FROM task_relation WHERE from_id = ? AND to_id = ? AND type = ?').run(from.id, to.id, type)
+    const removed = scope.db
+      .prepare('DELETE FROM task_relation WHERE from_id = ? AND to_id = ? AND type = ?')
+      .run(from.id, to.id, type)
     if (removed.changes === 0) {
       throw new TaskError(`${from.key} ${HISTORY_FIELD[type].from} ${to.key} is not recorded`)
     }
@@ -158,8 +164,13 @@ export function unlinkTasks(scope: Scope, input: TaskLinkInput): void {
 
 /** The ids of the tasks related to one task, by group. */
 export function relatedIds(scope: Scope, taskId: number): Record<RelationGroup, number[]> {
-  const rows = scope.db.prepare('SELECT from_id, to_id, type FROM task_relation WHERE from_id = ? OR to_id = ?').all(taskId, taskId) as unknown as RelationRow[]
-  const groups = Object.fromEntries(RELATION_GROUPS.map((group) => [group, [] as number[]])) as Record<RelationGroup, number[]>
+  const rows = scope.db
+    .prepare('SELECT from_id, to_id, type FROM task_relation WHERE from_id = ? OR to_id = ?')
+    .all(taskId, taskId) as unknown as RelationRow[]
+  const groups = Object.fromEntries(RELATION_GROUPS.map((group) => [group, [] as number[]])) as Record<
+    RelationGroup,
+    number[]
+  >
   for (const group of RELATION_GROUPS) {
     const { type, taskIsFrom } = RELATION_GROUP_OF[group]
     for (const row of rows) {

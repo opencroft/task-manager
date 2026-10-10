@@ -2,8 +2,9 @@
 // shared by the server seam (server/my-work) and the UI; the kit's
 // `my-work-view` renders the sections as they are.
 
+import type { ActionInputs } from './action-inputs.ts'
 import type { TaskNotification } from './inbox.ts'
-import type { ProjectRef, ProjectScope, ProjectsRead } from './projects.ts'
+import type { ProjectRef, ProjectsRead } from './projects.ts'
 import type { CalendarDate, TaskKey, TaskSummary, TaskType } from './types.ts'
 
 /** How many days "Starting soon" looks ahead, today included. */
@@ -35,15 +36,6 @@ export interface MyWorkStep {
 /** A recent change, with the App its task is in across projects. */
 export type MyWorkNotification = TaskNotification & { project?: ProjectRef }
 
-export interface MyWorkInput {
-  /** The caller's today, for Starting soon. Default: today in UTC. */
-  today?: CalendarDate
-  /** How many recent changes to return, 1–50. Default 8. */
-  recentLimit?: number
-  /** `all`: every project the caller can see, merged section by section. Default `this`. */
-  scope?: ProjectScope
-}
-
 export interface MyWorkResult {
   /** Whose work this is: the calling agent, or the signed-in person. */
   viewer: { kind: 'agent' | 'person'; id?: string; name: string }
@@ -62,7 +54,7 @@ export interface MyWorkResult {
 }
 
 export interface MyWorkActionMap {
-  my_work: { input: MyWorkInput; output: MyWorkResult }
+  my_work: { input: ActionInputs['my_work']; output: MyWorkResult }
 }
 
 export type MyWorkActionId = keyof MyWorkActionMap

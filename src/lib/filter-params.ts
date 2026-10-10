@@ -8,14 +8,17 @@
 // "nothing", which is how a URL says it differs from a baseline that has
 // something.
 
-import { type FieldFilter, compactFieldFilter, fieldFilterOf } from '../../shared/filters'
+import { compactFieldFilter, type FieldFilter, fieldFilterOf } from '../../shared/filters'
 
 const excludeParam = (field: string) => `not.${field}`
 
 const list = (value: string | null) => (value ? value.split(',').filter(Boolean) : [])
 
 /** Both lists of `filter` as the URL (and the filter bar) spell its values. */
-export function selectionOf(filter: FieldFilter<string | number> | undefined): { include: string[]; exclude: string[] } {
+export function selectionOf(filter: FieldFilter<string | number> | undefined): {
+  include: string[]
+  exclude: string[]
+} {
   const { include, exclude } = fieldFilterOf(filter)
   return { include: include.map(String), exclude: exclude.map(String) }
 }

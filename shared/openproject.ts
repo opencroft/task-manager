@@ -4,6 +4,7 @@
 // alike. The API token never appears here: only the name of the Secrets Store
 // key it is kept under, resolved on the server.
 
+import type { ActionInputs } from './action-inputs.ts'
 import type { RelationType } from './dependencies.ts'
 import type { Assignee, StatusCategory, TaskType } from './types.ts'
 
@@ -26,7 +27,9 @@ export interface OpenProjectConnection {
 }
 
 /** What an OpenProject status becomes: one of ours (by id), or a new status created by the import. */
-export type OpenProjectStatusTarget = { status: number } | { create: { name: string; category: StatusCategory; color: string | null } }
+export type OpenProjectStatusTarget =
+  | { status: number }
+  | { create: { name: string; category: StatusCategory; color: string | null } }
 
 /** What an OpenProject type becomes: one of our types, or `skip` to leave its work packages out. */
 export type OpenProjectTypeTarget = TaskType | 'skip'
@@ -58,8 +61,21 @@ export interface OpenProjectStatusCount extends OpenProjectCount {
 /** How often the import may run on its own, in minutes. */
 export const OPENPROJECT_SYNC_MINUTES = [5, 15, 60] as const
 
+/** Whether `minutes` is one of `OPENPROJECT_SYNC_MINUTES`, the only intervals `import_openproject_sync` takes. */
+export function isSyncMinutes(minutes: number): minutes is (typeof OPENPROJECT_SYNC_MINUTES)[number] {
+  return (OPENPROJECT_SYNC_MINUTES as readonly number[]).includes(minutes)
+}
+
 /** The fields a re-run carries over from OpenProject, and compares with what was edited here. */
-export type OpenProjectField = 'summary' | 'description' | 'status' | 'type' | 'priority' | 'assignee' | 'dates' | 'parent'
+export type OpenProjectField =
+  | 'summary'
+  | 'description'
+  | 'status'
+  | 'type'
+  | 'priority'
+  | 'assignee'
+  | 'dates'
+  | 'parent'
 
 /**
  * A task edited here and changed in OpenProject since the last import, in the
@@ -207,9 +223,12 @@ export interface OpenProjectRelationsResult {
 }
 
 export interface OpenProjectActionMap {
-  import_openproject: { input: OpenProjectImportInput; output: OpenProjectPreview | OpenProjectImportResult | OpenProjectRelationsResult }
-  import_openproject_state: { input: Record<string, never>; output: OpenProjectImportState }
-  import_openproject_sync: { input: { minutes: number | null }; output: OpenProjectImportState }
+  import_openproject: {
+    input: OpenProjectImportInput
+    output: OpenProjectPreview | OpenProjectImportResult | OpenProjectRelationsResult
+  }
+  import_openproject_state: { input: ActionInputs['import_openproject_state']; output: OpenProjectImportState }
+  import_openproject_sync: { input: ActionInputs['import_openproject_sync']; output: OpenProjectImportState }
 }
 
 export type OpenProjectActionId = keyof OpenProjectActionMap

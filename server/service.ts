@@ -7,67 +7,54 @@
 // initial one, and every later change — an update, a board move, a status
 // deletion, the workflow engine — goes through it and its hooks.
 
+import type { ActionInputs } from '../shared/action-inputs.ts'
+import type { BoardRestriction } from '../shared/boards.ts'
+import { RELATION_GROUPS, type RelationGroup } from '../shared/dependencies.ts'
+import { type FieldFilterInput, fieldFilterOf, isFieldFilter } from '../shared/filters.ts'
 import {
-  type Actor,
   type ActivityEntry,
+  type Actor,
   type Assignee,
-  type AssigneeInput,
   type AssigneeOption,
   CALENDAR_DATE_PATTERN,
   type Comment,
   type MutationResult,
-  PRIORITIES,
   type PersonAvatar,
   type Position,
+  PRIORITIES,
   type Priority,
   STATUS_CATEGORIES,
   type Status,
   type StatusCategory,
-  type StatusCreateInput,
-  type StatusDeleteInput,
   type StatusRef,
-  type StatusReorderInput,
-  type StatusUpdateInput,
   TASK_KEY_PATTERN,
   TASK_LIST_MAX_LIMIT,
   TASK_TYPES,
   type Task,
-  type TaskChangeStatusInput,
-  type TaskCommentDeleteInput,
-  type TaskCommentInput,
-  type TaskCommentUpdateInput,
-  type TaskCreateInput,
-  type TaskDeleteInput,
   type TaskKey,
-  type TaskListInput,
   type TaskListResult,
-  type TaskMoveInput,
   type TaskParent,
   type TaskSortField,
   type TaskSummary,
-  type TaskType,
-  type TaskUpdateInput,
   type TasksEvent,
+  type TaskType,
 } from '../shared/types.ts'
-import type { BoardRestriction } from '../shared/boards.ts'
-import { type FieldFilterInput, fieldFilterOf, isFieldFilter } from '../shared/filters.ts'
-import { RELATION_GROUPS, type RelationGroup } from '../shared/dependencies.ts'
 import { readTaskKeyQuery } from '../src/components/ui/navigation/task-key-query.ts'
+import { removeGoneFiles } from './attachments/files.ts'
 import { didYouMean } from './closest-names.ts'
 import { type Db, transaction } from './db.ts'
+import { attachBlockers, relatedIds } from './dependencies/store.ts'
+import { countPullRequests, OPEN_PR_NUMBERS, pullRequestsOf } from './forge/store.ts'
 import {
   type Invocation,
-  type StatusChangeEvent,
-  type TaskEvent,
   runAfterStatusChange,
   runBeforeStatusChange,
   runTaskEvent,
+  type StatusChangeEvent,
+  type TaskEvent,
 } from './hooks.ts'
-import { removeGoneFiles } from './attachments/files.ts'
-import { attachBlockers, relatedIds } from './dependencies/store.ts'
 import { evenRanks, rankBetween } from './rank.ts'
 import { findStatus } from './status-refs.ts'
-import { OPEN_PR_NUMBERS, countPullRequests, pullRequestsOf } from './forge/store.ts'
 import { resolveVersion, versionIdFor } from './versions/store.ts'
 
 /** A refusal meant for the caller: wrong input, missing task, a rule. */
@@ -192,7 +179,13 @@ function toSummary(scope: Scope, row: TaskRow): TaskSummary {
     key: keyOf(scope, row.number),
     number: row.number,
     summary: row.summary,
-    status: { id: row.status_id, name: row.s_name, category: row.s_category, color: row.s_color, position: row.s_position },
+    status: {
+      id: row.status_id,
+      name: row.s_name,
+      category: row.s_category,
+      color: row.s_color,
+      position: row.s_position,
+    },
     type: row.type,
     priority: row.priority,
     assignee: toAssignee(row),
@@ -289,8 +282,8 @@ function subtreeIds(scope: Scope, id: number): number[] {
 
 // ─── Validation ────────────────────────────────────────────────────────────
 
-function cleanSummary(value: unknown): string {
-  if (typeof value !== 'string' || !value.trim()) {
+function cleanSummary(value: string): string {
+  if (!value.trim()) {
     throw new TaskError('A task needs a summary')
   }
   const summary = value.replace(/\s+/g, ' ').trim()
@@ -314,15 +307,9 @@ function cleanPriority(value: unknown): Priority {
   return value as Priority
 }
 
-function cleanLabels(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    throw new TaskError('Labels are a list of strings')
-  }
+function cleanLabels(value: string[]): string[] {
   const labels = new Set<string>()
   for (const raw of value) {
-    if (typeof raw !== 'string') {
-      throw new TaskError('Labels are a list of strings')
-    }
     const label = raw.replace(/\s+/g, ' ').trim()
     if (label.length > 50) {
       throw new TaskError(`Label "${label}" is longer than 50 characters`)
@@ -362,7 +349,8 @@ function isMe(name: string): boolean {
   return name.trim().toLowerCase() === 'me'
 }
 
-async function resolveAssignee(scope: Scope, input: AssigneeInput | null | undefined): Promise<Assignee | null> {
+/** The assignee `input` names. An object's fields are read here: the boundary only proves it is an object. */
+async function resolveAssignee(scope: Scope, input: ActionInputs['task_create']['assignee']): Promise<Assignee | null> {
   if (input === null || input === undefined || input === '') {
     return null
   }
@@ -379,7 +367,9 @@ async function resolveAssignee(scope: Scope, input: AssigneeInput | null | undef
       return { kind: 'agent', id: agent.id, name: agent.name }
     }
     // A bare name must be someone already known: a typo'd agent name would otherwise become a person.
-    const people = (await listAssignees(scope)).flatMap((option) => (option.assignee.kind === 'person' ? [option.assignee] : []))
+    const people = (await listAssignees(scope)).flatMap((option) =>
+      option.assignee.kind === 'person' ? [option.assignee] : [],
+    )
     const person = people.find((p) => p.name.toLowerCase() === wanted.toLowerCase())
     if (person) {
       return person
@@ -392,25 +382,32 @@ async function resolveAssignee(scope: Scope, input: AssigneeInput | null | undef
         'Use assignee_list to see who can be assigned; to assign a new person, pass {kind:"person", name}',
     )
   }
+  const id = typeof input.id === 'string' ? input.id : undefined
+  const named = typeof input.name === 'string' ? input.name : undefined
   if (input.kind === 'agent') {
-    const agent = input.id ? agents.find((a) => a.id === input.id) : input.name ? byName(input.name) : undefined
+    const agent = id ? agents.find((a) => a.id === id) : named ? byName(named) : undefined
     if (!agent) {
-      const hint = input.name ? didYouMean(input.name, agents.map((a) => a.name)) : ''
-      throw new TaskError(`No agent ${input.id ?? input.name ?? ''}.${hint} Use assignee_list to see who can be assigned`)
+      const hint = named
+        ? didYouMean(
+            named,
+            agents.map((a) => a.name),
+          )
+        : ''
+      throw new TaskError(`No agent ${id ?? named ?? ''}.${hint} Use assignee_list to see who can be assigned`)
     }
     return { kind: 'agent', id: agent.id, name: agent.name }
   }
   if (input.kind === 'person') {
     const people = await scope.people()
-    if (typeof input.id === 'string' && input.id) {
-      const person = people.find((p) => p.id === input.id)
+    if (id) {
+      const person = people.find((p) => p.id === id)
       if (!person) {
-        throw new TaskError(`No person with id ${input.id}. Use assignee_list to see who can be assigned`)
+        throw new TaskError(`No person with id ${id}. Use assignee_list to see who can be assigned`)
       }
       return { kind: 'person', id: person.id, name: person.name }
     }
-    if (typeof input.name === 'string' && input.name.trim()) {
-      const name = input.name.replace(/\s+/g, ' ').trim()
+    if (named?.trim()) {
+      const name = named.replace(/\s+/g, ' ').trim()
       const person = people.find((p) => p.name.toLowerCase() === name.toLowerCase())
       return person ? { kind: 'person', id: person.id, name: person.name } : { kind: 'person', name }
     }
@@ -447,10 +444,14 @@ const MAX_RANK_LENGTH = 12
 
 /** Respace every task's rank evenly, keeping the order. Runs inside the caller's transaction. */
 function rebalanceRanks(scope: Scope): void {
-  const ids = (scope.db.prepare('SELECT id FROM task ORDER BY rank, id').all() as Array<{ id: number }>).map((row) => row.id)
+  const ids = (scope.db.prepare('SELECT id FROM task ORDER BY rank, id').all() as Array<{ id: number }>).map(
+    (row) => row.id,
+  )
   const keys = evenRanks(ids.length)
   const set = scope.db.prepare('UPDATE task SET rank = ? WHERE id = ?')
-  ids.forEach((id, index) => set.run(keys[index], id))
+  for (const [index, id] of ids.entries()) {
+    set.run(keys[index], id)
+  }
 }
 
 /**
@@ -502,8 +503,7 @@ const SORT_SQL: Record<TaskSortField, string> = {
   summary: 't.summary COLLATE NOCASE',
   status: 's.position',
   type: "CASE t.type WHEN 'epic' THEN 0 WHEN 'story' THEN 1 WHEN 'task' THEN 2 ELSE 3 END",
-  priority:
-    "CASE t.priority WHEN 'lowest' THEN 0 WHEN 'low' THEN 1 WHEN 'medium' THEN 2 WHEN 'high' THEN 3 ELSE 4 END",
+  priority: "CASE t.priority WHEN 'lowest' THEN 0 WHEN 'low' THEN 1 WHEN 'medium' THEN 2 WHEN 'high' THEN 3 ELSE 4 END",
   assignee: 't.assignee_name IS NULL, t.assignee_name COLLATE NOCASE',
   reporter: 't.reporter_name COLLATE NOCASE',
   startDate: 't.start_date IS NULL, t.start_date',
@@ -511,6 +511,19 @@ const SORT_SQL: Record<TaskSortField, string> = {
   createdAt: 't.created_at',
   updatedAt: 't.updated_at',
 }
+
+const isSortField = (value: unknown): value is TaskSortField =>
+  typeof value === 'string' && Object.hasOwn(SORT_SQL, value)
+
+/** The list-valued filters, each read by `checkedFieldFilter`, which takes any value. */
+type FilterField = 'status' | 'statusCategory' | 'assignee' | 'type' | 'priority' | 'label' | 'version' | 'parent'
+
+/**
+ * What `listTasks` reads: `task_list`'s parameters, or a board's stored
+ * filter. Values below the top level are parsed here, so they are unknown.
+ */
+export type TaskListQuery = Omit<ActionInputs['task_list'], 'board' | 'sort' | FilterField> &
+  Partial<Record<FilterField, unknown>> & { sort?: { field?: unknown; dir?: unknown } }
 
 /** A piece of a WHERE clause and the values for its placeholders. */
 interface SqlCondition {
@@ -545,7 +558,9 @@ export function checkedFieldFilter<T>(name: string, value: unknown): { include: 
   if (isFieldFilter(value)) {
     const unknown = Object.keys(value).filter((key) => key !== 'include' && key !== 'exclude')
     if (unknown.length) {
-      throw new TaskError(`${name} takes a list, or { include, exclude } with a list in each; it has no ${unknown.map((key) => `"${key}"`).join(', ')}`)
+      throw new TaskError(
+        `${name} takes a list, or { include, exclude } with a list in each; it has no ${unknown.map((key) => `"${key}"`).join(', ')}`,
+      )
     }
     for (const key of ['include', 'exclude'] as const) {
       if (value[key] !== undefined && value[key] !== null && !Array.isArray(value[key])) {
@@ -559,18 +574,24 @@ export function checkedFieldFilter<T>(name: string, value: unknown): { include: 
 /** Summary or description containing `text`, case-insensitively: the trigram index from three characters, a scan below. */
 function textContains(text: string): SqlCondition {
   if (text.length >= 3) {
-    return { sql: 't.id IN (SELECT rowid FROM task_fts WHERE task_fts MATCH ?)', args: [`"${text.replace(/"/g, '""')}"`] }
+    return {
+      sql: 't.id IN (SELECT rowid FROM task_fts WHERE task_fts MATCH ?)',
+      args: [`"${text.replace(/"/g, '""')}"`],
+    }
   }
   const pattern = `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
   return { sql: `(t.summary LIKE ? ESCAPE '\\' OR t.description LIKE ? ESCAPE '\\')`, args: [pattern, pattern] }
 }
 
 /** SQL conditions over `t` (the task) and `s` (its status) for the filters of `input`, ANDed. */
-function filterClauses(scope: Scope, input: Omit<TaskListInput, 'board' | 'sort' | 'limit' | 'offset'>): { where: string[]; args: Array<string | number> } {
+function filterClauses(
+  scope: Scope,
+  input: Omit<TaskListQuery, 'sort' | 'limit' | 'offset'>,
+): { where: string[]; args: Array<string | number> } {
   const where: string[] = []
   const args: Array<string | number> = []
 
-  const query = typeof input.query === 'string' ? input.query.trim() : ''
+  const query = input.query?.trim() ?? ''
   if (query) {
     const key = readTaskKeyQuery(query)
     const parts: SqlCondition[] = []
@@ -602,7 +623,12 @@ function filterClauses(scope: Scope, input: Omit<TaskListInput, 'board' | 'sort'
     }
   }
 
-  field<StatusRef>('status', input.status, (refs) => inList('t.status_id', refs.map((ref) => resolveStatus(scope, ref).id)))
+  field<StatusRef>('status', input.status, (refs) =>
+    inList(
+      't.status_id',
+      refs.map((ref) => resolveStatus(scope, ref).id),
+    ),
+  )
   field<StatusCategory>('statusCategory', input.statusCategory, (categories) => {
     for (const category of categories) {
       if (!STATUS_CATEGORIES.includes(category)) {
@@ -622,18 +648,31 @@ function filterClauses(scope: Scope, input: Omit<TaskListInput, 'board' | 'sort'
   field<Priority>('priority', input.priority, (priorities) => inList('t.priority', priorities.map(cleanPriority)))
   field<string>('label', input.label, (labels) => {
     const labelsIn = inList('l.label', labels)
-    return { sql: `EXISTS (SELECT 1 FROM task_label l WHERE l.task_id = t.id AND ${labelsIn.sql})`, args: labelsIn.args }
+    return {
+      sql: `EXISTS (SELECT 1 FROM task_label l WHERE l.task_id = t.id AND ${labelsIn.sql})`,
+      args: labelsIn.args,
+    }
   })
   field<string>('version', input.version, (versions) =>
-    orNone('t.version_id', versions, (refs) => inList('t.version_id', refs.map((ref) => resolveVersion(scope, ref).id))),
+    orNone('t.version_id', versions, (refs) =>
+      inList(
+        't.version_id',
+        refs.map((ref) => resolveVersion(scope, ref).id),
+      ),
+    ),
   )
   field<TaskKey>('parent', input.parent, (parents) =>
-    orNone('t.parent_id', parents, (keys) => inList('t.parent_id', keys.map((key) => requireRow(scope, key).id))),
+    orNone('t.parent_id', parents, (keys) =>
+      inList(
+        't.parent_id',
+        keys.map((key) => requireRow(scope, key).id),
+      ),
+    ),
   )
-  if (typeof input.scheduled === 'boolean') {
+  if (input.scheduled !== undefined) {
     where.push(input.scheduled ? 't.start_date IS NOT NULL' : 't.start_date IS NULL')
   }
-  if (typeof input.hasOpenPr === 'boolean') {
+  if (input.hasOpenPr !== undefined) {
     where.push(`t.number ${input.hasOpenPr ? 'IN' : 'NOT IN'} (${OPEN_PR_NUMBERS})`)
   }
   return { where, args }
@@ -643,7 +682,7 @@ function filterClauses(scope: Scope, input: Omit<TaskListInput, 'board' | 'sort'
  * The tasks matching `input`, a page at a time. On a board, only those in its
  * statuses that also match its preset filter.
  */
-export function listTasks(scope: Scope, input: Omit<TaskListInput, 'board'> = {}, board?: BoardRestriction): TaskListResult {
+export function listTasks(scope: Scope, input: TaskListQuery = {}, board?: BoardRestriction): TaskListResult {
   const { where, args } = filterClauses(scope, input)
   if (board) {
     // A board with no statuses shows no tasks.
@@ -656,7 +695,7 @@ export function listTasks(scope: Scope, input: Omit<TaskListInput, 'board'> = {}
 
   const whereSql = where.length ? ` WHERE ${where.join(' AND ')}` : ''
   const sortField = input.sort?.field ?? 'rank'
-  if (!(sortField in SORT_SQL)) {
+  if (!isSortField(sortField)) {
     throw new TaskError(`Cannot sort by ${sortField}. Sort fields: ${Object.keys(SORT_SQL).join(', ')}`)
   }
   const dir = input.sort?.dir === 'desc' ? 'DESC' : 'ASC'
@@ -675,7 +714,13 @@ export function listTasks(scope: Scope, input: Omit<TaskListInput, 'board'> = {}
       .prepare(`SELECT count(*) AS n FROM task t JOIN status s ON s.id = t.status_id${whereSql}`)
       .get(...args) as { n: number }
   ).n
-  return { tasks: attachBlockers(scope, rows.map((row) => toSummary(scope, row))), total }
+  return {
+    tasks: attachBlockers(
+      scope,
+      rows.map((row) => toSummary(scope, row)),
+    ),
+    total,
+  }
 }
 
 /**
@@ -683,9 +728,19 @@ export function listTasks(scope: Scope, input: Omit<TaskListInput, 'board'> = {}
  * one that select tasks `listTasks` has no filter for. The condition and the
  * order are SQL over `t` (the task) and `s` (its status).
  */
-export function summariesWhere(scope: Scope, where: string, args: Array<string | number>, order: string): TaskSummary[] {
-  const rows = scope.db.prepare(`${SUMMARY_SELECT} WHERE ${where} ORDER BY ${order}`).all(...args) as unknown as TaskRow[]
-  return attachBlockers(scope, rows.map((row) => toSummary(scope, row)))
+export function summariesWhere(
+  scope: Scope,
+  where: string,
+  args: Array<string | number>,
+  order: string,
+): TaskSummary[] {
+  const rows = scope.db
+    .prepare(`${SUMMARY_SELECT} WHERE ${where} ORDER BY ${order}`)
+    .all(...args) as unknown as TaskRow[]
+  return attachBlockers(
+    scope,
+    rows.map((row) => toSummary(scope, row)),
+  )
 }
 
 export function getTask(scope: Scope, key: unknown): Task {
@@ -715,11 +770,14 @@ export function getTask(scope: Scope, key: unknown): Task {
             .prepare(`${SUMMARY_SELECT} WHERE t.id IN (${ids.map(() => '?').join(',')}) ORDER BY t.rank`)
             .all(...ids) as unknown as TaskRow[]
         ).map((linkedRow) => toSummary(scope, linkedRow))
-  const relations = Object.fromEntries(RELATION_GROUPS.map((group) => [group, summariesOf(related[group])])) as Record<RelationGroup, TaskSummary[]>
+  const relations = Object.fromEntries(RELATION_GROUPS.map((group) => [group, summariesOf(related[group])])) as Record<
+    RelationGroup,
+    TaskSummary[]
+  >
   attachBlockers(scope, [summary, ...subtasks, ...RELATION_GROUPS.flatMap((group) => relations[group])])
-  const comments = (scope.db.prepare('SELECT * FROM comment WHERE task_id = ? ORDER BY created_at, id').all(row.id) as CommentRow[]).map((c) =>
-    commentOf(scope, c),
-  )
+  const comments = (
+    scope.db.prepare('SELECT * FROM comment WHERE task_id = ? ORDER BY created_at, id').all(row.id) as CommentRow[]
+  ).map((c) => commentOf(scope, c))
   const activity = (
     scope.db.prepare('SELECT * FROM activity WHERE task_id = ? ORDER BY at, id').all(row.id) as Array<{
       id: number
@@ -769,7 +827,13 @@ function applyStatus(scope: Scope, row: TaskRow, to: StatusRow): PendingStatusCh
   if (row.status_id === to.id) {
     return null
   }
-  const from: Status = { id: row.status_id, name: row.s_name, category: row.s_category, color: row.s_color, position: row.s_position }
+  const from: Status = {
+    id: row.status_id,
+    name: row.s_name,
+    category: row.s_category,
+    color: row.s_color,
+    position: row.s_position,
+  }
   const event: StatusChangeEvent = {
     instanceId: scope.instanceId,
     projectKey: scope.projectKey,
@@ -805,15 +869,24 @@ type Announced = { kind: 'assigned'; assignee: Assignee } | { kind: 'commented';
 
 /** Tell the task-event listeners (the inbox) about a committed write. */
 function announce(scope: Scope, task: TaskSummary, what: Announced): Promise<void> {
-  const base = { instanceId: scope.instanceId, projectKey: scope.projectKey, task, actor: scope.inv.actor, inv: scope.inv }
+  const base = {
+    instanceId: scope.instanceId,
+    projectKey: scope.projectKey,
+    task,
+    actor: scope.inv.actor,
+    inv: scope.inv,
+  }
   return runTaskEvent({ ...base, ...what } as TaskEvent)
 }
 
 /** Change one task's status — the single path every status change takes. */
-export async function changeStatus(scope: Scope, input: TaskChangeStatusInput): Promise<MutationResult<Task>> {
+export async function changeStatus(
+  scope: Scope,
+  input: ActionInputs['task_change_status'],
+): Promise<MutationResult<Task>> {
   const row = requireRow(scope, input.key)
   const to = resolveStatus(scope, input.status)
-  const body = typeof input.comment === 'string' ? input.comment.trim() : ''
+  const body = input.comment?.trim() ?? ''
   const [pending, comment] = transaction(scope.db, () => {
     const change = applyStatus(scope, row, to)
     return [change, body ? insertComment(scope, row.id, body) : null] as const
@@ -832,13 +905,14 @@ export async function changeStatus(scope: Scope, input: TaskChangeStatusInput): 
 
 // ─── Writes ────────────────────────────────────────────────────────────────
 
-export async function createTask(scope: Scope, input: TaskCreateInput): Promise<MutationResult<Task>> {
+export async function createTask(scope: Scope, input: ActionInputs['task_create']): Promise<MutationResult<Task>> {
   const summary = cleanSummary(input.summary)
-  const description = typeof input.description === 'string' ? input.description : ''
-  const type = input.type === undefined ? 'task' : cleanType(input.type)
-  const priority = input.priority === undefined ? 'medium' : cleanPriority(input.priority)
-  const status = input.status === undefined || input.status === null || input.status === '' ? defaultStatus(scope) : resolveStatus(scope, input.status)
-  const labels = input.labels === undefined ? [] : cleanLabels(input.labels)
+  const description = input.description ?? ''
+  const type = input.type ?? 'task'
+  const priority = input.priority ?? 'medium'
+  const status =
+    input.status === undefined || input.status === '' ? defaultStatus(scope) : resolveStatus(scope, input.status)
+  const labels = cleanLabels(input.labels ?? [])
   const startDate = cleanDate(input.startDate, 'startDate')
   const endDate = cleanDate(input.endDate, 'endDate')
   checkDates(startDate, endDate)
@@ -904,7 +978,7 @@ function describeAssignee(assignee: Assignee | null): string | null {
   return assignee ? assignee.name : null
 }
 
-export async function updateTask(scope: Scope, input: TaskUpdateInput): Promise<MutationResult<Task>> {
+export async function updateTask(scope: Scope, input: ActionInputs['task_update']): Promise<MutationResult<Task>> {
   const row = requireRow(scope, input.key)
   const sets: string[] = []
   const args: Array<string | number | null> = []
@@ -919,30 +993,21 @@ export async function updateTask(scope: Scope, input: TaskUpdateInput): Promise<
     }
   }
   if (input.description !== undefined) {
-    if (typeof input.description !== 'string') {
-      throw new TaskError('description is markdown text')
-    }
     if (input.description !== row.description) {
       sets.push('description = ?')
       args.push(input.description)
       changes.push(['description', null, null])
     }
   }
-  if (input.type !== undefined) {
-    const type = cleanType(input.type)
-    if (type !== row.type) {
-      sets.push('type = ?')
-      args.push(type)
-      changes.push(['type', row.type, type])
-    }
+  if (input.type !== undefined && input.type !== row.type) {
+    sets.push('type = ?')
+    args.push(input.type)
+    changes.push(['type', row.type, input.type])
   }
-  if (input.priority !== undefined) {
-    const priority = cleanPriority(input.priority)
-    if (priority !== row.priority) {
-      sets.push('priority = ?')
-      args.push(priority)
-      changes.push(['priority', row.priority, priority])
-    }
+  if (input.priority !== undefined && input.priority !== row.priority) {
+    sets.push('priority = ?')
+    args.push(input.priority)
+    changes.push(['priority', row.priority, input.priority])
   }
   let assigned: Assignee | null = null
   if (input.assignee !== undefined) {
@@ -997,7 +1062,7 @@ export async function updateTask(scope: Scope, input: TaskUpdateInput): Promise<
       changes.push(['version', row.version_name, name])
     }
   }
-  const to = input.status !== undefined && input.status !== null && input.status !== '' ? resolveStatus(scope, input.status) : null
+  const to = input.status !== undefined && input.status !== '' ? resolveStatus(scope, input.status) : null
 
   const pending = transaction(scope.db, () => {
     if (sets.length) {
@@ -1028,12 +1093,12 @@ export async function updateTask(scope: Scope, input: TaskUpdateInput): Promise<
   return withWarnings(task, warnings)
 }
 
-export function moveTask(scope: Scope, input: TaskMoveInput): MutationResult<TaskSummary> {
+export function moveTask(scope: Scope, input: ActionInputs['task_move']): MutationResult<TaskSummary> {
   const row = requireRow(scope, input.key)
   let parentId = row.parent_id
   let newParent: TaskRow | null = null
   if (input.parent !== undefined) {
-    if (input.parent === null || input.parent === '' || String(input.parent).toLowerCase() === 'none') {
+    if (input.parent === null || input.parent === '' || input.parent.toLowerCase() === 'none') {
       parentId = null
     } else {
       newParent = requireRow(scope, input.parent)
@@ -1055,7 +1120,9 @@ export function moveTask(scope: Scope, input: TaskMoveInput): MutationResult<Tas
   const affected = new Set<TaskKey>([keyOf(scope, row.number)])
   transaction(scope.db, () => {
     const rank = repositions ? rankFor(scope, { before: input.before, after: input.after }, row.id) : row.rank
-    scope.db.prepare('UPDATE task SET parent_id = ?, rank = ?, updated_at = ? WHERE id = ?').run(parentId, rank, now(), row.id)
+    scope.db
+      .prepare('UPDATE task SET parent_id = ?, rank = ?, updated_at = ? WHERE id = ?')
+      .run(parentId, rank, now(), row.id)
     if (reparents) {
       const oldParent = row.parent_id === null ? null : rowById(scope, row.parent_id)
       record(
@@ -1082,7 +1149,7 @@ export function moveTask(scope: Scope, input: TaskMoveInput): MutationResult<Tas
   return { result: attachBlockers(scope, [toSummary(scope, rowById(scope, row.id))])[0] }
 }
 
-export function deleteTask(scope: Scope, input: TaskDeleteInput): MutationResult<{ deleted: TaskKey[] }> {
+export function deleteTask(scope: Scope, input: ActionInputs['task_delete']): MutationResult<{ deleted: TaskKey[] }> {
   const row = requireRow(scope, input.key)
   const ids = subtreeIds(scope, row.id)
   if (ids.length > 1 && input.withSubtasks !== true) {
@@ -1115,15 +1182,17 @@ export function deleteTask(scope: Scope, input: TaskDeleteInput): MutationResult
 function insertComment(scope: Scope, taskId: number, body: string): Comment {
   const stamp = now()
   const result = scope.db
-    .prepare('INSERT INTO comment (task_id, author_kind, author_name, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .prepare(
+      'INSERT INTO comment (task_id, author_kind, author_name, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+    )
     .run(taskId, scope.inv.actor.kind, scope.inv.actor.name, body, stamp, stamp)
   touch(scope, taskId)
   return { id: Number(result.lastInsertRowid), author: scope.inv.actor, body, createdAt: stamp, updatedAt: stamp }
 }
 
-export async function addComment(scope: Scope, input: TaskCommentInput): Promise<MutationResult<Comment>> {
+export async function addComment(scope: Scope, input: ActionInputs['task_comment']): Promise<MutationResult<Comment>> {
   const row = requireRow(scope, input.key)
-  const body = typeof input.body === 'string' ? input.body.trim() : ''
+  const body = input.body.trim()
   if (!body) {
     throw new TaskError('A comment needs a body')
   }
@@ -1134,7 +1203,15 @@ export async function addComment(scope: Scope, input: TaskCommentInput): Promise
   return { result: comment }
 }
 
-export type CommentRow = { id: number; task_id: number; author_kind: 'agent' | 'person'; author_name: string; body: string; created_at: string; updated_at: string }
+export type CommentRow = {
+  id: number
+  task_id: number
+  author_kind: 'agent' | 'person'
+  author_name: string
+  body: string
+  created_at: string
+  updated_at: string
+}
 
 /** Whether the caller wrote the comment. Comments carry the author's kind and name, as history does. */
 function isCallers(scope: Scope, comment: Pick<CommentRow, 'author_kind' | 'author_name'>): boolean {
@@ -1165,12 +1242,12 @@ export function limitParam(name: string, value: unknown, fallback: number, max: 
 }
 
 /** One of the caller's own comments on the task, or a refusal saying why not. */
-function ownComment(scope: Scope, taskId: number, key: string, id: unknown, verb: string): CommentRow {
+function ownComment(scope: Scope, taskId: number, key: string, id: number, verb: string): CommentRow {
   const comment = Number.isInteger(id)
-    ? (scope.db.prepare('SELECT * FROM comment WHERE id = ? AND task_id = ?').get(id as number, taskId) as CommentRow | undefined)
+    ? (scope.db.prepare('SELECT * FROM comment WHERE id = ? AND task_id = ?').get(id, taskId) as CommentRow | undefined)
     : undefined
   if (!comment) {
-    throw new TaskError(`${key} has no comment ${String(id)}`)
+    throw new TaskError(`${key} has no comment ${id}`)
   }
   if (!isCallers(scope, comment)) {
     throw new TaskError(`Only its author (${comment.author_name}) can ${verb} this comment`)
@@ -1179,10 +1256,10 @@ function ownComment(scope: Scope, taskId: number, key: string, id: unknown, verb
 }
 
 /** Change the text of your own comment. Mentions in the new text notify no one again. */
-export function updateComment(scope: Scope, input: TaskCommentUpdateInput): MutationResult<Comment> {
+export function updateComment(scope: Scope, input: ActionInputs['task_comment_update']): MutationResult<Comment> {
   const row = requireRow(scope, input.key)
   const key = keyOf(scope, row.number)
-  const body = typeof input.body === 'string' ? input.body.trim() : ''
+  const body = input.body.trim()
   if (!body) {
     throw new TaskError('A comment needs a body')
   }
@@ -1207,7 +1284,10 @@ export function updateComment(scope: Scope, input: TaskCommentUpdateInput): Muta
 }
 
 /** Delete your own comment. */
-export function deleteComment(scope: Scope, input: TaskCommentDeleteInput): MutationResult<{ deleted: number }> {
+export function deleteComment(
+  scope: Scope,
+  input: ActionInputs['task_comment_delete'],
+): MutationResult<{ deleted: number }> {
   const row = requireRow(scope, input.key)
   const key = keyOf(scope, row.number)
   const deleted = transaction(scope.db, () => {
@@ -1226,29 +1306,22 @@ export function listStatuses(scope: Scope): Status[] {
   return statuses(scope).map(toStatus)
 }
 
-function cleanStatusName(value: unknown): string {
-  if (typeof value !== 'string' || !value.trim()) {
+function cleanStatusName(value: string): string {
+  const name = value.replace(/\s+/g, ' ').trim()
+  if (!name) {
     throw new TaskError('A status needs a name')
   }
-  const name = value.replace(/\s+/g, ' ').trim()
   if (name.length > 40) {
     throw new TaskError('A status name is at most 40 characters')
   }
   return name
 }
 
-function cleanCategory(value: unknown): StatusCategory {
-  if (!STATUS_CATEGORIES.includes(value as StatusCategory)) {
-    throw new TaskError(`Category must be one of: ${STATUS_CATEGORIES.join(', ')}`)
-  }
-  return value as StatusCategory
-}
-
-function cleanColor(value: unknown): string | null {
+function cleanColor(value: string | null | undefined): string | null {
   if (value === null || value === undefined || value === '') {
     return null
   }
-  if (typeof value !== 'string' || !/^(#[0-9a-fA-F]{3,8}|[a-z-]{1,30})$/.test(value)) {
+  if (!/^(#[0-9a-fA-F]{3,8}|[a-z-]{1,30})$/.test(value)) {
     throw new TaskError('A color is a hex value (#3b82f6) or a color name (blue)')
   }
   return value
@@ -1261,9 +1334,9 @@ function assertNameFree(scope: Scope, name: string, selfId?: number): void {
   }
 }
 
-export function createStatus(scope: Scope, input: StatusCreateInput): MutationResult<Status> {
+export function createStatus(scope: Scope, input: ActionInputs['status_create']): MutationResult<Status> {
   const name = cleanStatusName(input.name)
-  const category = cleanCategory(input.category)
+  const category = input.category
   const color = cleanColor(input.color)
   assertNameFree(scope, name)
   const id = transaction(scope.db, () => {
@@ -1278,35 +1351,48 @@ export function createStatus(scope: Scope, input: StatusCreateInput): MutationRe
   return { result: toStatus(resolveStatus(scope, id)) }
 }
 
-export function updateStatus(scope: Scope, input: StatusUpdateInput): MutationResult<Status> {
+export function updateStatus(scope: Scope, input: ActionInputs['status_update']): MutationResult<Status> {
   const status = resolveStatus(scope, input.status)
   const name = input.name === undefined ? status.name : cleanStatusName(input.name)
-  const category = input.category === undefined ? status.category : cleanCategory(input.category)
+  const category = input.category ?? status.category
   const color = input.color === undefined ? status.color : cleanColor(input.color)
   assertNameFree(scope, name, status.id)
-  if (category !== status.category && category !== 'todo' && !statuses(scope).some((s) => s.id !== status.id && s.category === 'todo')) {
+  if (
+    category !== status.category &&
+    category !== 'todo' &&
+    !statuses(scope).some((s) => s.id !== status.id && s.category === 'todo')
+  ) {
     throw new TaskError('The project needs at least one to-do status, where new tasks start')
   }
-  scope.db.prepare('UPDATE status SET name = ?, category = ?, color = ? WHERE id = ?').run(name, category, color, status.id)
+  scope.db
+    .prepare('UPDATE status SET name = ?, category = ?, color = ? WHERE id = ?')
+    .run(name, category, color, status.id)
   scope.notify([], 'status')
   return { result: toStatus(resolveStatus(scope, status.id)) }
 }
 
-export function reorderStatuses(scope: Scope, input: StatusReorderInput): MutationResult<Status[]> {
+export function reorderStatuses(scope: Scope, input: ActionInputs['status_reorder']): MutationResult<Status[]> {
   const all = statuses(scope)
-  const order = Array.isArray(input.order) ? input.order.map((ref) => resolveStatus(scope, ref).id) : []
+  const order = input.order.map((ref) => resolveStatus(scope, ref).id)
   if (order.length !== all.length || new Set(order).size !== all.length) {
-    throw new TaskError(`order must list every status exactly once, by name or id: ${all.map((s) => s.name).join(', ')}`)
+    throw new TaskError(
+      `order must list every status exactly once, by name or id: ${all.map((s) => s.name).join(', ')}`,
+    )
   }
   transaction(scope.db, () => {
     const set = scope.db.prepare('UPDATE status SET position = ? WHERE id = ?')
-    order.forEach((id, position) => set.run(position, id))
+    for (const [position, id] of order.entries()) {
+      set.run(position, id)
+    }
   })
   scope.notify([], 'status')
   return { result: listStatuses(scope) }
 }
 
-export async function deleteStatus(scope: Scope, input: StatusDeleteInput): Promise<MutationResult<{ moved: number }>> {
+export async function deleteStatus(
+  scope: Scope,
+  input: ActionInputs['status_delete'],
+): Promise<MutationResult<{ moved: number }>> {
   const status = resolveStatus(scope, input.status)
   const target = resolveStatus(scope, input.moveTo)
   if (target.id === status.id) {
@@ -1355,10 +1441,12 @@ export async function listAssignees(scope: Scope): Promise<AssigneeOption[]> {
     ...agents
       .slice()
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map((agent): AssigneeOption => ({
-        assignee: { kind: 'agent', id: agent.id, name: agent.name },
-        ...(agent.detail ? { detail: agent.detail } : {}),
-      })),
+      .map(
+        (agent): AssigneeOption => ({
+          assignee: { kind: 'agent', id: agent.id, name: agent.name },
+          ...(agent.detail ? { detail: agent.detail } : {}),
+        }),
+      ),
     ...directory.map((p): AssigneeOption => ({ assignee: { kind: 'person', id: p.id, name: p.name } })),
     ...others.map((p): AssigneeOption => ({ assignee: { kind: 'person', name: p.name } })),
   ]
@@ -1381,15 +1469,19 @@ export async function listAvatars(scope: Scope): Promise<PersonAvatar[]> {
 /** Every task that has subtasks, by key and summary, in key order: what a parent filter offers. */
 export function listParents(scope: Scope): TaskParent[] {
   const rows = scope.db
-    .prepare('SELECT t.number, t.summary FROM task t WHERE EXISTS (SELECT 1 FROM task c WHERE c.parent_id = t.id) ORDER BY t.number')
+    .prepare(
+      'SELECT t.number, t.summary FROM task t WHERE EXISTS (SELECT 1 FROM task c WHERE c.parent_id = t.id) ORDER BY t.number',
+    )
     .all() as Array<{ number: number; summary: string }>
   return rows.map((row) => ({ key: keyOf(scope, row.number), summary: row.summary }))
 }
 
 export function listLabels(scope: Scope): string[] {
-  return (scope.db.prepare('SELECT DISTINCT label FROM task_label ORDER BY label COLLATE NOCASE').all() as Array<{ label: string }>).map(
-    (row) => row.label,
-  )
+  return (
+    scope.db.prepare('SELECT DISTINCT label FROM task_label ORDER BY label COLLATE NOCASE').all() as Array<{
+      label: string
+    }>
+  ).map((row) => row.label)
 }
 
 export type { Actor }

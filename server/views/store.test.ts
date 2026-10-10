@@ -3,6 +3,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 
 import { DEFAULT_TASK_COLUMNS } from '../../shared/views.ts'
+import { parseParams } from '../action-params.ts'
 import { allMigrations, migrate } from '../db.ts'
 import { deleteView, listViews, saveView, setDefaultView, type ViewOwner } from './store.ts'
 
@@ -25,17 +26,36 @@ test('a new view round-trips its filter and grouping, and its owner can edit it'
     {
       name: 'My open bugs',
       page: 'board',
-      filter: { type: { include: ['bug'] }, assignee: { include: ['me'] }, label: { exclude: ['wontfix'] }, sort: { field: 'priority', dir: 'desc' } },
+      filter: {
+        type: { include: ['bug'] },
+        assignee: { include: ['me'] },
+        label: { exclude: ['wontfix'] },
+        sort: { field: 'priority', dir: 'desc' },
+      },
       group: 'assignee',
     },
     NOW,
   )
   assert.deepEqual(
-    { name: view.name, page: view.page, filter: view.filter, group: view.group, shared: view.shared, owner: view.owner, editable: view.editable, isDefault: view.isDefault },
+    {
+      name: view.name,
+      page: view.page,
+      filter: view.filter,
+      group: view.group,
+      shared: view.shared,
+      owner: view.owner,
+      editable: view.editable,
+      isDefault: view.isDefault,
+    },
     {
       name: 'My open bugs',
       page: 'board',
-      filter: { type: { include: ['bug'] }, assignee: { include: ['me'] }, label: { exclude: ['wontfix'] }, sort: { field: 'priority', dir: 'desc' } },
+      filter: {
+        type: { include: ['bug'] },
+        assignee: { include: ['me'] },
+        label: { exclude: ['wontfix'] },
+        sort: { field: 'priority', dir: 'desc' },
+      },
       group: 'assignee',
       shared: false,
       owner: 'Ada',
@@ -53,19 +73,41 @@ test('a filter saved as plain lists is stored as what it includes, and a field t
   const view = saveView(
     db,
     ada,
-    { name: 'Plain', page: 'tasks', filter: { status: [3, 3], label: [], parent: 'TASK-1', priority: { include: ['high'], exclude: ['high', 'low'] } } },
+    {
+      name: 'Plain',
+      page: 'tasks',
+      filter: {
+        status: [3, 3],
+        label: [],
+        parent: 'TASK-1',
+        priority: { include: ['high'], exclude: ['high', 'low'] },
+      },
+    },
     NOW,
   )
-  assert.deepEqual(view.filter, { status: { include: [3] }, parent: { include: ['TASK-1'] }, priority: { exclude: ['high', 'low'] } })
+  assert.deepEqual(view.filter, {
+    status: { include: [3] },
+    parent: { include: ['TASK-1'] },
+    priority: { exclude: ['high', 'low'] },
+  })
 })
 
-const statusId = (db: DatabaseSync, name: string) => (db.prepare('SELECT id FROM status WHERE name = ?').get(name) as { id: number }).id
+const statusId = (db: DatabaseSync, name: string) =>
+  (db.prepare('SELECT id FROM status WHERE name = ?').get(name) as { id: number }).id
 
 test('a status saved by name is stored as its id, and an unknown one is refused with the close names', () => {
   const db = makeDb()
-  const view = saveView(db, ada, { name: 'Open', page: 'tasks', filter: { status: { include: ['in progress', '1'], exclude: ['Done'] } } }, NOW)
+  const view = saveView(
+    db,
+    ada,
+    { name: 'Open', page: 'tasks', filter: { status: { include: ['in progress', '1'], exclude: ['Done'] } } },
+    NOW,
+  )
   assert.deepEqual(view.filter.status, { include: [statusId(db, 'In Progress'), 1], exclude: [statusId(db, 'Done')] })
-  assert.throws(() => saveView(db, ada, { name: 'x', page: 'tasks', filter: { status: ['Dnoe'] } }, NOW), /No status "Dnoe"\. Did you mean "Done"/)
+  assert.throws(
+    () => saveView(db, ada, { name: 'x', page: 'tasks', filter: { status: ['Dnoe'] } }, NOW),
+    /No status "Dnoe"\. Did you mean "Done"/,
+  )
 })
 
 test('a view saved earlier with status names reads back with their ids, a name no status has dropped', () => {
@@ -89,8 +131,14 @@ test('a view saved earlier with status names reads back with their ids, a name n
 
 test('refuses a filter field that is neither a list nor { include, exclude } of lists', () => {
   const db = makeDb()
-  assert.throws(() => saveView(db, ada, { name: 'x', page: 'tasks', filter: { label: { only: ['ui'] } as never } }, NOW), /label takes a list, or \{ include, exclude \}.*"only"/)
-  assert.throws(() => saveView(db, ada, { name: 'x', page: 'tasks', filter: { label: { exclude: 'ui' } as never } }, NOW), /label\.exclude must be a list/)
+  assert.throws(
+    () => saveView(db, ada, { name: 'x', page: 'tasks', filter: { label: { only: ['ui'] } as never } }, NOW),
+    /label takes a list, or \{ include, exclude \}.*"only"/,
+  )
+  assert.throws(
+    () => saveView(db, ada, { name: 'x', page: 'tasks', filter: { label: { exclude: 'ui' } as never } }, NOW),
+    /label\.exclude must be a list/,
+  )
   assert.deepEqual(listViews(db, ada), [], 'nothing refused was saved')
 })
 
@@ -101,7 +149,14 @@ test('a view saved before filters had excludes keeps what it showed, as includes
     db,
     allMigrations().filter((migration) => migration.id !== 'views-0003-field-filters'),
   )
-  const old = { query: 'login', status: [2], assignee: ['none', 'alice'], label: [], parent: 'TASK-4', sort: { field: 'key', dir: 'asc' } }
+  const old = {
+    query: 'login',
+    status: [2],
+    assignee: ['none', 'alice'],
+    label: [],
+    parent: 'TASK-4',
+    sort: { field: 'key', dir: 'asc' },
+  }
   db.prepare(
     `INSERT INTO saved_view (id, page, name, filter, grouping, shared, owner_key, owner_name, created_at, updated_at)
      VALUES ('view-1', 'tasks', 'Old', ?, NULL, 0, ?, ?, ?, ?)`,
@@ -165,14 +220,23 @@ test('a tasks view saved before views had columns shows the default set', () => 
 
 test('refuses columns that cannot be a tasks table, naming the fix', () => {
   const db = makeDb()
-  assert.throws(() => saveView(db, ada, { name: 'x', page: 'board', columns: ['key', 'summary'] }, NOW), /Only a tasks view has columns/)
+  assert.throws(
+    () => saveView(db, ada, { name: 'x', page: 'board', columns: ['key', 'summary'] }, NOW),
+    /Only a tasks view has columns/,
+  )
   assert.throws(() => saveView(db, ada, { name: 'x', page: 'tasks', columns: [] }, NOW), /non-empty list/)
   assert.throws(
     () => saveView(db, ada, { name: 'x', page: 'tasks', columns: ['key', 'summary', 'stauts'] as never }, NOW),
     /No column "stauts".*Did you mean "status"\?/,
   )
-  assert.throws(() => saveView(db, ada, { name: 'x', page: 'tasks', columns: ['key', 'summary', 'key'] }, NOW), /more than once/)
-  assert.throws(() => saveView(db, ada, { name: 'x', page: 'tasks', columns: ['summary', 'status'] }, NOW), /must include key and summary/)
+  assert.throws(
+    () => saveView(db, ada, { name: 'x', page: 'tasks', columns: ['key', 'summary', 'key'] }, NOW),
+    /more than once/,
+  )
+  assert.throws(
+    () => saveView(db, ada, { name: 'x', page: 'tasks', columns: ['summary', 'status'] }, NOW),
+    /must include key and summary/,
+  )
   assert.deepEqual(listViews(db, ada), [], 'nothing refused was saved')
 })
 
@@ -222,12 +286,25 @@ test('refuses what cannot be a view, naming the fix', () => {
   const db = makeDb()
   assert.throws(() => saveView(db, ada, { name: 'x' }, NOW), /needs a name and a page/)
   assert.throws(() => saveView(db, ada, { name: ' ', page: 'tasks' }, NOW), /needs a name/)
-  assert.throws(() => saveView(db, ada, { name: 'x', page: 'timeline' as never }, NOW), /No page "timeline"/)
+  // A page outside the set is refused at the action boundary, before saveView runs.
+  assert.throws(
+    () => parseParams('view_save', { name: 'x', page: 'timeline' }),
+    /"page" must be one of "tasks" or "board", not "timeline"/,
+  )
   assert.throws(() => saveView(db, ada, { name: 'x', page: 'tasks', group: 'assignee' }, NOW), /Only a board view/)
-  assert.throws(() => saveView(db, ada, { name: 'x', page: 'tasks', filter: { statuses: [1] } as never }, NOW), /no field "statuses"/)
+  assert.throws(
+    () => saveView(db, ada, { name: 'x', page: 'tasks', filter: { statuses: [1] } as never }, NOW),
+    /no field "statuses"/,
+  )
   saveView(db, ada, { name: 'Mine', page: 'tasks' }, NOW)
-  assert.throws(() => saveView(db, ada, { name: 'mine', page: 'tasks' }, NOW), /already have a tasks view called "mine"/)
+  assert.throws(
+    () => saveView(db, ada, { name: 'mine', page: 'tasks' }, NOW),
+    /already have a tasks view called "mine"/,
+  )
   assert.doesNotThrow(() => saveView(db, ada, { name: 'Mine', page: 'board' }, NOW), 'names are per page')
-  assert.throws(() => setDefaultView(db, ada, { page: 'tasks', view: 'Mnie' }), /No view "Mnie"\. Did you mean "Mine"\?/)
+  assert.throws(
+    () => setDefaultView(db, ada, { page: 'tasks', view: 'Mnie' }),
+    /No view "Mnie"\. Did you mean "Mine"\?/,
+  )
   assert.equal(setDefaultView(db, ada, { page: 'tasks', view: null }), null)
 })

@@ -2,18 +2,17 @@
 // columns of statuses, its preset filter, and which workflows it serves.
 // Nothing is saved until Save; Cancel goes back to the board.
 
-import { legacy } from '@opencroft/client'
 import { Bookmark } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { ScrollArea } from '@/components/ui/layout/scroll-area'
-import { BoardSetupEditor, type BoardSetupColumn } from '@/components/ui/tasks/board-setup-editor'
+import { type BoardSetupColumn, BoardSetupEditor } from '@/components/ui/tasks/board-setup-editor'
 import { TaskFilterBar } from '@/components/ui/tasks/task-filter-bar'
-
 import { BOARD_FILTER_KEYS, type Board, type BoardFilter, workflowFit } from '../../shared/boards'
-import { type FieldFilter, compactFieldFilter } from '../../shared/filters'
+import { compactFieldFilter, type FieldFilter } from '../../shared/filters'
 import type { SavedView } from '../../shared/views'
 import type { WorkflowDef } from '../../shared/workflows'
 import { useProject } from '../app/project'
@@ -32,12 +31,18 @@ function editableColumns(board: Board | null): BoardSetupColumn[] {
   if (!board) {
     return [{ key: 'c0', name: null, statusIds: [] }]
   }
-  return board.columns.map((column, index) => ({ key: `c${index}`, name: column.name, statusIds: column.statuses.map((status) => status.id) }))
+  return board.columns.map((column, index) => ({
+    key: `c${index}`,
+    name: column.name,
+    statusIds: column.statuses.map((status) => status.id),
+  }))
 }
 
 /** A saved view's filter as a board's: its status and sort have no place on a board. */
 function presetOf(view: SavedView): BoardFilter {
-  return Object.fromEntries(Object.entries(view.filter).filter(([key]) => (BOARD_FILTER_KEYS as readonly string[]).includes(key))) as BoardFilter
+  return Object.fromEntries(
+    Object.entries(view.filter).filter(([key]) => (BOARD_FILTER_KEYS as readonly string[]).includes(key)),
+  ) as BoardFilter
 }
 
 export interface BoardSetupPageProps {
@@ -74,8 +79,13 @@ export function BoardSetupPage({ board, onSaved }: BoardSetupPageProps) {
       })),
     [columns, workflows, statuses],
   )
-  const filters = useMemo(() => taskFilterDefs(FILTER_IDS, { statuses, assignees, labels, versions }), [statuses, assignees, labels, versions])
-  const values = Object.fromEntries(FILTER_IDS.map((id) => [id, filter[id] as FieldFilter<string> | undefined])) as Record<FilterId, FieldFilter<string> | undefined>
+  const filters = useMemo(
+    () => taskFilterDefs(FILTER_IDS, { statuses, assignees, labels, versions }),
+    [statuses, assignees, labels, versions],
+  )
+  const values = Object.fromEntries(
+    FILTER_IDS.map((id) => [id, filter[id] as FieldFilter<string> | undefined]),
+  ) as Record<FilterId, FieldFilter<string> | undefined>
 
   const save = async () => {
     setSaving(true)
@@ -85,7 +95,9 @@ export function BoardSetupPage({ board, onSaved }: BoardSetupPageProps) {
         ...(board ? { id: board.id } : {}),
         name,
         // A column with no statuses would hold no task; it is left off the saved board.
-        columns: columns.filter((column) => column.statusIds.length > 0).map((column) => ({ name: column.name, statuses: column.statusIds })),
+        columns: columns
+          .filter((column) => column.statusIds.length > 0)
+          .map((column) => ({ name: column.name, statuses: column.statusIds })),
         filter,
       })
       await onSaved(saved)
@@ -107,7 +119,7 @@ export function BoardSetupPage({ board, onSaved }: BoardSetupPageProps) {
             try {
               await api.board_delete({ board: board.id })
               lastBoard(instanceId).set(null)
-              legacy.toast.success(`Deleted ${board.name}`)
+              toast.success(`Deleted ${board.name}`)
               navigate(hrefFor(['board']))
             } catch (failure) {
               fail(failure)
@@ -119,11 +131,11 @@ export function BoardSetupPage({ board, onSaved }: BoardSetupPageProps) {
   const fromView =
     views.length > 0 ? (
       <DropdownMenu>
-        <DropdownMenuTrigger render={<Button variant="outline" size="sm" />}>
+        <DropdownMenuTrigger render={<Button variant='outline' size='sm' />}>
           <Bookmark />
           From a saved view
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="max-h-72 min-w-48 overflow-y-auto">
+        <DropdownMenuContent align='start' className='max-h-72 min-w-48 overflow-y-auto'>
           {views.map((view) => (
             <DropdownMenuItem key={view.id} onClick={() => setFilter(presetOf(view))}>
               {view.name}
@@ -134,7 +146,7 @@ export function BoardSetupPage({ board, onSaved }: BoardSetupPageProps) {
     ) : null
 
   return (
-    <ScrollArea className="min-h-0 flex-1" innerClassName="mx-auto w-full max-w-6xl px-3 py-4 sm:px-6">
+    <ScrollArea className='min-h-0 flex-1' innerClassName='mx-auto w-full max-w-6xl px-3 py-4 sm:px-6'>
       <BoardSetupEditor
         isNew={board === null}
         name={name}
@@ -147,7 +159,7 @@ export function BoardSetupPage({ board, onSaved }: BoardSetupPageProps) {
           <TaskFilterBar
             query={filter.query ?? ''}
             onQueryChange={(query) => setFilter((current) => ({ ...current, query: query || undefined }))}
-            searchPlaceholder="Text in the summary or description"
+            searchPlaceholder='Text in the summary or description'
             filters={filters}
             values={values}
             onValuesChange={(id, next) => setFilter((current) => ({ ...current, [id]: compactFieldFilter(next) }))}

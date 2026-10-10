@@ -20,7 +20,9 @@ function step(id: string, name: string, triggerStatus: number, transitions: Draf
 }
 
 const steps = (): DraftStep[] => [
-  step('dev', 'Development', 2, [{ key: 't1', id: 'edge-1', label: 'Ready for review', toStep: 'review', status: 3, gate: null }]),
+  step('dev', 'Development', 2, [
+    { key: 't1', id: 'edge-1', label: 'Ready for review', toStep: 'review', status: 3, gate: null },
+  ]),
   step('review', 'Review', 3, [
     { key: 't2', id: 'edge-2', label: 'Approved', toStep: null, status: 4, gate: null },
     { key: 't3', id: 'edge-3', label: 'Changes requested', toStep: 'dev', status: 2, gate: 'fail' },
@@ -37,13 +39,13 @@ test('a duplicated step keeps its trigger status, and is inserted after the orig
       ['Review', 3],
     ],
   )
-  const copy = out[1]!
+  const copy = out[1]
   assert.notEqual(copy.id, 'dev')
   assert.notEqual(copy.key, 'k-dev')
 })
 
 test("a duplicated step's transitions lead where the original's do, as new transitions", () => {
-  const copy = duplicateStep(steps(), 1)[2]!
+  const copy = duplicateStep(steps(), 1)[2]
   assert.deepEqual(
     copy.transitions.map(({ key: _key, ...t }) => t),
     [

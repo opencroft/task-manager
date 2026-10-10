@@ -3,33 +3,34 @@
 // Agents reach its actions through `app_call`, the App's own UI through the
 // host's `callAppAction`; both run the handlers below.
 
-import host, {
+import {
   type AppActionContext,
   type AppActionHandler,
   type AppInstanceContext,
   type AppsExport,
-  type ExtensionRoutes,
-} from '@opencroft/server'
+  apps as hostApps,
+} from '@opencroft/server/apps'
+import type { ExtensionRoutes } from '@opencroft/server/routes'
 
 import { ATTACHMENTS_ROUTE } from '../shared/attachments.ts'
 import { withParamChecks } from './action-params.ts'
-import { scopeFor, taskActions, projectKeyOf } from './actions.ts'
+import { projectKeyOf, scopeFor, taskActions } from './actions.ts'
 import { sweepAttachmentFiles } from './attachments/files.ts'
-import { withDetail } from './compact.ts'
-import { type RouteScope, attachmentsRoute } from './attachments/http.ts'
+import { attachmentsRoute, type RouteScope } from './attachments/http.ts'
 import { attachmentActions } from './attachments/index.ts'
 import { boardActions } from './boards/index.ts'
+import { withDetail } from './compact.ts'
 import { closeInstanceDb, instanceDb } from './db.ts'
 import { dependencyActions } from './dependencies/index.ts'
 import { forgeActions, forgeHooks } from './forge/index.ts'
 import { inboxActions } from './inbox/index.ts'
 import { mentionActions } from './mentions/index.ts'
-import { viewActions } from './views/index.ts'
 import { myWorkActions } from './my-work/index.ts'
 import { openProjectActions, openProjectHooks } from './openproject/index.ts'
 import { referenceActions, withProjectScope } from './projects/index.ts'
 import { settingsActions } from './settings/index.ts'
 import { versionActions } from './versions/index.ts'
+import { viewActions } from './views/index.ts'
 import { recoverWorkflowsOnLoad, workflowActions } from './workflows/index.ts'
 
 /**
@@ -76,7 +77,7 @@ function unload(ctx: AppInstanceContext): void {
 // A route request acts on one of this extension's own `tasks` instances, in
 // the context an App action gets when the same person calls it from the UI.
 const routeScope: RouteScope = async (appId, person) => {
-  const instance = (await host.apps.listInstances('tasks')).find((candidate) => candidate.instanceId === appId)
+  const instance = (await hostApps.listInstances('tasks')).find((candidate) => candidate.instanceId === appId)
   return instance ? scopeFor({ ...instance, callerPerson: person } as unknown as AppActionContext) : null
 }
 

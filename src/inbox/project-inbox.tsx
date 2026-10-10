@@ -2,35 +2,23 @@
 // signed-in person's inbox for this project, kept fresh by `tasks.inbox`
 // events. The kit's `TaskInbox` renders it; this file only feeds it.
 
-import { callAppAction, legacy } from '@opencroft/client'
+import { extensionId } from '@opencroft/client/extension'
+import { getStream } from '@opencroft/client/streams'
 import { Bell, BellOff, ExternalLink, MailCheck, MailOpen } from 'lucide-react'
 import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 import { TaskInbox } from '@/components/ui/notifications/task-inbox'
 import type { ItemMenuEntries } from '@/components/ui/tasks/item-menu'
-
 import {
   INBOX_EVENT,
   type InboxEvent,
   type InboxFilter,
-  type InboxListInput,
-  type InboxListResult,
   type InboxMarkReadInput,
-  type InboxMarkUnreadInput,
-  type InboxMuteInput,
   type TaskNotification,
 } from '../../shared/inbox'
 import { openTask, taskHref } from '../app/task-opener'
-import { errorMessage, withFullDetail } from '../lib/api'
-
-function inboxApi(instanceId: string) {
-  return {
-    list: (input: InboxListInput) => callAppAction<InboxListResult>(instanceId, 'inbox_list', withFullDetail('inbox_list', { ...input })),
-    markRead: (input: InboxMarkReadInput) => callAppAction<{ unread: number }>(instanceId, 'inbox_mark_read', { ...input }),
-    markUnread: (input: InboxMarkUnreadInput) => callAppAction<{ unread: number }>(instanceId, 'inbox_mark_unread', { ...input }),
-    mute: (input: InboxMuteInput) => callAppAction<{ task: string; muted: boolean }>(instanceId, 'inbox_mute', { ...input }),
-  }
-}
+import { errorMessage, tasksApi } from '../lib/api'
 
 /**
  * A notification's menu, wherever it is listed (the inbox, My work): open its
@@ -38,13 +26,23 @@ function inboxApi(instanceId: string) {
  * refreshes every list after a change.
  */
 export function inboxRowMenu(instanceId: string, n: TaskNotification, onOpen: (key: string) => void): ItemMenuEntries {
-  const api = inboxApi(instanceId)
-  const fail = (failure: unknown) => legacy.toast.error(errorMessage(failure))
+  const api = tasksApi(instanceId)
+  const fail = (failure: unknown) => toast.error(errorMessage(failure))
   return [
     { id: 'open', label: 'Open task', icon: ExternalLink, group: 'open', onSelect: () => onOpen(n.task.key) },
     n.read
-      ? { id: 'unread', label: 'Mark unread', icon: MailOpen, onSelect: () => void api.markUnread({ ids: [n.id] }).catch(fail) }
-      : { id: 'read', label: 'Mark read', icon: MailCheck, onSelect: () => void api.markRead({ ids: [n.id] }).catch(fail) },
+      ? {
+          id: 'unread',
+          label: 'Mark unread',
+          icon: MailOpen,
+          onSelect: () => void api.inbox_mark_unread({ ids: [n.id] }).catch(fail),
+        }
+      : {
+          id: 'read',
+          label: 'Mark read',
+          icon: MailCheck,
+          onSelect: () => void api.inbox_mark_read({ ids: [n.id] }).catch(fail),
+        },
     n.muted
       ? {
           id: 'unmute',
@@ -52,8 +50,8 @@ export function inboxRowMenu(instanceId: string, n: TaskNotification, onOpen: (k
           icon: Bell,
           onSelect: () =>
             void api
-              .mute({ task: n.task.key, muted: false })
-              .then(() => legacy.toast.success(`${n.task.key} notifies you again`))
+              .inbox_mute({ task: n.task.key, muted: false })
+              .then(() => toast.success(`${n.task.key} notifies you again`))
               .catch(fail),
         }
       : {
@@ -62,15 +60,17 @@ export function inboxRowMenu(instanceId: string, n: TaskNotification, onOpen: (k
           icon: BellOff,
           onSelect: () =>
             void api
-              .mute({ task: n.task.key, muted: true })
-              .then(() => legacy.toast.success(`Muted ${n.task.key}: nothing new about it comes to your inbox`))
+              .inbox_mute({ task: n.task.key, muted: true })
+              .then(() => toast.success(`Muted ${n.task.key}: nothing new about it comes to your inbox`))
               .catch(fail),
         },
   ]
 }
 
-interface EventStream {
-  subscribe(fn: (chunk: { name?: string; payload?: Record<string, unknown> }) => void): () => void
+/** One chunk of the extension's `events` stream, as the server broadcasts it. */
+interface InboxEventChunk {
+  name?: string
+  payload?: InboxEvent
 }
 
 /** Call `onChange` when this instance's inbox changed, debounced. */
@@ -78,10 +78,10 @@ export function useInboxLive(instanceId: string | null, onChange: () => void, de
   const callback = useRef(onChange)
   callback.current = onChange
   useEffect(() => {
-    const stream = legacy.getStream(legacy.extensionId, 'events') as unknown as EventStream
+    const stream = getStream<InboxEventChunk>(extensionId, 'events')
     let timer: ReturnType<typeof setTimeout> | undefined
     const unsubscribe = stream.subscribe((chunk) => {
-      const event = chunk?.payload as unknown as InboxEvent | undefined
+      const event = chunk?.payload
       if (chunk?.name !== INBOX_EVENT || !event || (instanceId !== null && event.instanceId !== instanceId)) {
         return
       }
@@ -105,7 +105,7 @@ export function openInbox(instanceId: string): void {
 }
 
 export function ProjectInbox({ instanceId }: { instanceId: string }) {
-  const api = useMemo(() => inboxApi(instanceId), [instanceId])
+  const api = useMemo(() => tasksApi(instanceId), [instanceId])
   const [open, setOpen] = useState(false)
   const [filter, setFilter] = useState<InboxFilter>('all')
   const [items, setItems] = useState<TaskNotification[]>([])
@@ -121,7 +121,7 @@ export function ProjectInbox({ instanceId }: { instanceId: string }) {
     async (wanted: InboxFilter) => {
       const id = ++request.current
       try {
-        const page = await api.list({ filter: wanted })
+        const page = await api.inbox_list({ filter: wanted })
         if (id === request.current) {
           setItems(page.items)
           setUnread(page.unread)
@@ -166,7 +166,7 @@ export function ProjectInbox({ instanceId }: { instanceId: string }) {
     const id = request.current
     setLoadingMore(true)
     try {
-      const page = await api.list({ filter, before: nextBefore })
+      const page = await api.inbox_list({ filter, before: nextBefore })
       if (id === request.current) {
         setItems((current) => [...current, ...page.items])
         setUnread(page.unread)
@@ -187,9 +187,9 @@ export function ProjectInbox({ instanceId }: { instanceId: string }) {
       const ids = 'ids' in input ? new Set(input.ids) : null
       setItems((current) => current.map((n) => (!ids || ids.has(n.id) ? { ...n, read: true } : n)))
       try {
-        setUnread((await api.markRead(input)).unread)
+        setUnread((await api.inbox_mark_read(input)).unread)
       } catch (failure) {
-        legacy.toast.error(errorMessage(failure))
+        toast.error(errorMessage(failure))
         void load(filter)
       }
     },

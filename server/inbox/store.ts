@@ -7,14 +7,11 @@
 // ids against the directory when a notification is made; a person named in
 // free text, who is in no directory and cannot sign in, has no inbox.
 
+import type { ActionInputs } from '../../shared/action-inputs.ts'
 import {
   INBOX_FILTERS,
   type InboxFilter,
-  type InboxListInput,
   type InboxListResult,
-  type InboxMarkReadInput,
-  type InboxMarkUnreadInput,
-  type InboxMuteInput,
   type NotificationStatus,
   type TaskNotification,
   type TaskNotificationKind,
@@ -74,7 +71,7 @@ export async function recipientKey(dir: Directory, party: Party): Promise<string
   const list = party.kind === 'agent' ? await dir.agents() : await dir.people()
   const matches = list.filter((entry) => same(entry.name, party.name))
   // Two people with one name cannot be told apart by it: neither gets it rather than the wrong one.
-  return matches.length === 1 ? `${party.kind}:${matches[0]!.id}` : null
+  return matches.length === 1 ? `${party.kind}:${matches[0].id}` : null
 }
 
 /** A status as notifications keep it. */
@@ -93,52 +90,6 @@ export function excerptOf(text: string): string {
   return `${(space > EXCERPT_MAX * 0.6 ? cut.slice(0, space) : cut).trimEnd()}…`
 }
 
-const WORD_CHAR = /[\p{L}\p{N}_]/u
-
-/**
- * Who a comment `@names`: an agent or person by full name (`@Bot (Review)`,
- * `@Ada Lovelace`), case-insensitive, longest name first; or a person or agent
- * by the first word of their name when exactly one has it (`@Ada`). A name two
- * have notifies neither. An `@`
- * inside a word — an e-mail address — is not a mention.
- */
-export async function mentionedIn(body: string, dir: Directory): Promise<Party[]> {
-  if (!body.includes('@')) {
-    return []
-  }
-  const [agents, people] = await Promise.all([dir.agents(), dir.people()])
-  const candidates: Party[] = [
-    ...agents.map((a) => ({ kind: 'agent' as const, id: a.id, name: a.name })),
-    ...people.map((p) => ({ kind: 'person' as const, id: p.id, name: p.name })),
-  ]
-    .filter((c) => c.name.trim())
-    .sort((a, b) => b.name.length - a.name.length)
-  const lower = body.toLowerCase()
-  const found = new Map<string, Party>()
-  for (let at = lower.indexOf('@'); at !== -1; at = lower.indexOf('@', at + 1)) {
-    if (at > 0 && WORD_CHAR.test(lower[at - 1]!)) {
-      continue
-    }
-    const rest = lower.slice(at + 1)
-    const full = candidates.filter((c) => {
-      const name = c.name.trim().toLowerCase()
-      return rest.startsWith(name) && !WORD_CHAR.test(rest[name.length] ?? '')
-    })
-    // Longest first; two with that same name cannot be told apart, so neither is notified.
-    const longest = full.filter((c) => c.name.trim().length === full[0]?.name.trim().length)
-    let hit = longest.length === 1 ? longest[0] : undefined
-    if (!hit && full.length === 0) {
-      const word = /^[\p{L}\p{N}_]+/u.exec(rest)?.[0]
-      const byFirst = word ? candidates.filter((c) => c.name.trim().toLowerCase().split(/\s+/)[0] === word) : []
-      hit = byFirst.length === 1 ? byFirst[0] : undefined
-    }
-    if (hit) {
-      found.set(`${hit.kind}:${hit.id}`, hit)
-    }
-  }
-  return [...found.values()]
-}
-
 interface TaskPartiesRow {
   id: number
   reporter_kind: 'agent' | 'person'
@@ -155,7 +106,9 @@ interface TaskPartiesRow {
  */
 export async function deliver(db: Db, dir: Directory, draft: NotificationDraft, now: string): Promise<string[]> {
   const task = db
-    .prepare('SELECT id, reporter_kind, reporter_name, assignee_kind, assignee_id, assignee_name FROM task WHERE number = ?')
+    .prepare(
+      'SELECT id, reporter_kind, reporter_name, assignee_kind, assignee_id, assignee_name FROM task WHERE number = ?',
+    )
     .get(draft.taskNumber) as TaskPartiesRow | undefined
   if (!task) {
     return []
@@ -175,7 +128,9 @@ export async function deliver(db: Db, dir: Directory, draft: NotificationDraft, 
   const actorKey = draft.actor ? await recipientKey(dir, draft.actor) : null
   // Every producer comes through here, so a mute holds for all of them.
   const muted = new Set(
-    (db.prepare('SELECT recipient FROM inbox_mute WHERE task_id = ?').all(task.id) as Array<{ recipient: string }>).map((row) => row.recipient),
+    (db.prepare('SELECT recipient FROM inbox_mute WHERE task_id = ?').all(task.id) as Array<{ recipient: string }>).map(
+      (row) => row.recipient,
+    ),
   )
   const keys = new Set<string>()
   for (const party of parties) {
@@ -201,7 +156,15 @@ export async function deliver(db: Db, dir: Directory, draft: NotificationDraft, 
     )
     const prune = db.prepare('DELETE FROM inbox WHERE recipient = ? AND read_at IS NOT NULL AND created_at < ?')
     for (const key of keys) {
-      insert.run(key, draft.kind, task.id, draft.actor?.kind ?? null, draft.actor?.name ?? null, JSON.stringify(detail), now)
+      insert.run(
+        key,
+        draft.kind,
+        task.id,
+        draft.actor?.kind ?? null,
+        draft.actor?.name ?? null,
+        JSON.stringify(detail),
+        now,
+      )
       prune.run(key, expired)
     }
   })
@@ -223,21 +186,15 @@ interface InboxRow {
 }
 
 function unreadCount(db: Db, recipient: string): number {
-  return (db.prepare('SELECT COUNT(*) AS n FROM inbox WHERE recipient = ? AND read_at IS NULL').get(recipient) as { n: number }).n
+  return (
+    db.prepare('SELECT COUNT(*) AS n FROM inbox WHERE recipient = ? AND read_at IS NULL').get(recipient) as {
+      n: number
+    }
+  ).n
 }
 
-function cleanFilter(value: unknown): InboxFilter {
-  if (value === undefined || value === null || value === '') {
-    return 'all'
-  }
-  if (typeof value === 'string' && Object.hasOwn(INBOX_FILTERS, value)) {
-    return value as InboxFilter
-  }
-  throw new InboxError(`No filter "${String(value)}". Filters: ${Object.keys(INBOX_FILTERS).join(', ')}`)
-}
-
-function cleanId(value: unknown, field: string): number {
-  const text = String(value ?? '').trim()
+function cleanId(value: string, field: string): number {
+  const text = value.trim()
   if (!/^\d+$/.test(text)) {
     throw new InboxError(`${field} "${text}" is not a notification id; ids come from inbox_list`)
   }
@@ -245,9 +202,14 @@ function cleanId(value: unknown, field: string): number {
 }
 
 /** One page of a recipient's inbox, newest first. */
-export function listInbox(db: Db, projectKey: string, recipient: string, input: InboxListInput = {}): InboxListResult {
-  const filter = cleanFilter(input.filter)
-  const limit = input.limit === undefined ? LIMIT_DEFAULT : Math.trunc(Number(input.limit))
+export function listInbox(
+  db: Db,
+  projectKey: string,
+  recipient: string,
+  input: ActionInputs['inbox_list'] = {},
+): InboxListResult {
+  const filter: InboxFilter = input.filter ?? 'all'
+  const limit = input.limit === undefined ? LIMIT_DEFAULT : Math.trunc(input.limit)
   if (!Number.isFinite(limit) || limit < 1 || limit > LIMIT_MAX) {
     throw new InboxError(`limit is 1–${LIMIT_MAX}`)
   }
@@ -258,7 +220,7 @@ export function listInbox(db: Db, projectKey: string, recipient: string, input: 
     where.push(`i.kind IN (${kinds.map(() => '?').join(', ')})`)
     args.push(...kinds)
   }
-  if (input.before !== undefined && input.before !== null && input.before !== '') {
+  if (input.before !== undefined && input.before !== '') {
     where.push('i.id < ?')
     args.push(cleanId(input.before, 'before'))
   }
@@ -273,10 +235,11 @@ export function listInbox(db: Db, projectKey: string, recipient: string, input: 
     )
     .all(...args, limit + 1) as unknown as InboxRow[]
   const page = rows.slice(0, limit)
+  const last = page.at(-1)
   return {
     items: page.map((row) => toNotification(projectKey, row)),
     unread: unreadCount(db, recipient),
-    nextBefore: rows.length > limit ? String(page.at(-1)!.id) : null,
+    nextBefore: rows.length > limit && last ? String(last.id) : null,
   }
 }
 
@@ -295,12 +258,16 @@ function toNotification(projectKey: string, row: InboxRow): TaskNotification {
 }
 
 /** Mark some or all of a recipient's notifications read. Ids of anyone else's are ignored. */
-export function markRead(db: Db, recipient: string, input: InboxMarkReadInput, now: string): { unread: number } {
-  const all = (input as { all?: unknown }).all === true
-  const ids = (input as { ids?: unknown }).ids
-  if (all) {
+export function markRead(
+  db: Db,
+  recipient: string,
+  input: ActionInputs['inbox_mark_read'],
+  now: string,
+): { unread: number } {
+  const { all, ids } = input
+  if (all === true) {
     db.prepare('UPDATE inbox SET read_at = ? WHERE recipient = ? AND read_at IS NULL').run(now, recipient)
-  } else if (Array.isArray(ids) && ids.length > 0) {
+  } else if (ids && ids.length > 0) {
     const numbers = ids.map((id) => cleanId(id, 'id'))
     db.prepare(
       `UPDATE inbox SET read_at = ? WHERE recipient = ? AND read_at IS NULL AND id IN (${numbers.map(() => '?').join(', ')})`,
@@ -312,28 +279,39 @@ export function markRead(db: Db, recipient: string, input: InboxMarkReadInput, n
 }
 
 /** Mark some of a recipient's notifications unread again. Ids of anyone else's are ignored. */
-export function markUnread(db: Db, recipient: string, input: InboxMarkUnreadInput): { unread: number } {
-  const ids = (input as { ids?: unknown }).ids
-  if (!Array.isArray(ids) || ids.length === 0) {
+export function markUnread(db: Db, recipient: string, input: ActionInputs['inbox_mark_unread']): { unread: number } {
+  const { ids } = input
+  if (ids.length === 0) {
     throw new InboxError('Pass ids (from inbox_list) to mark those unread')
   }
   const numbers = ids.map((id) => cleanId(id, 'id'))
-  db.prepare(`UPDATE inbox SET read_at = NULL WHERE recipient = ? AND id IN (${numbers.map(() => '?').join(', ')})`).run(recipient, ...numbers)
+  db.prepare(
+    `UPDATE inbox SET read_at = NULL WHERE recipient = ? AND id IN (${numbers.map(() => '?').join(', ')})`,
+  ).run(recipient, ...numbers)
   return { unread: unreadCount(db, recipient) }
 }
 
 /** Mute or unmute a task for one recipient. */
-export function setMuted(db: Db, projectKey: string, recipient: string, input: InboxMuteInput, now: string): { task: string; muted: boolean } {
-  const match = new RegExp(`^${projectKey}-(\\d+)$`, 'i').exec(String(input.task ?? '').trim())
-  const task = match ? (db.prepare('SELECT id FROM task WHERE number = ?').get(Number(match[1])) as { id: number } | undefined) : undefined
+export function setMuted(
+  db: Db,
+  projectKey: string,
+  recipient: string,
+  input: ActionInputs['inbox_mute'],
+  now: string,
+): { task: string; muted: boolean } {
+  const match = new RegExp(`^${projectKey}-(\\d+)$`, 'i').exec(input.task.trim())
+  const task = match
+    ? (db.prepare('SELECT id FROM task WHERE number = ?').get(Number(match[1])) as { id: number } | undefined)
+    : undefined
   if (!task || !match) {
-    throw new InboxError(`No task "${String(input.task ?? '')}" in ${projectKey}`)
-  }
-  if (typeof input.muted !== 'boolean') {
-    throw new InboxError('Pass muted: true to mute the task, or false to unmute it')
+    throw new InboxError(`No task "${input.task}" in ${projectKey}`)
   }
   if (input.muted) {
-    db.prepare('INSERT OR IGNORE INTO inbox_mute (recipient, task_id, created_at) VALUES (?, ?, ?)').run(recipient, task.id, now)
+    db.prepare('INSERT OR IGNORE INTO inbox_mute (recipient, task_id, created_at) VALUES (?, ?, ?)').run(
+      recipient,
+      task.id,
+      now,
+    )
   } else {
     db.prepare('DELETE FROM inbox_mute WHERE recipient = ? AND task_id = ?').run(recipient, task.id)
   }

@@ -6,14 +6,15 @@
 // connection, sent to the forge and dropped; it is never stored, logged or
 // returned.
 
-import type { AppActionContext, AppActionHandler, AppInstanceContext } from '@opencroft/server'
-import host from '@opencroft/server'
+import { type AppActionContext, type AppInstanceContext, apps } from '@opencroft/server/apps'
+import { secrets } from '@opencroft/server/secrets'
 
 import type { ForgeActionId } from '../../shared/forge.ts'
+import { type TypedHandlers, typedActions } from '../action-params.ts'
 import { projectKeyOf, scopeFor } from '../actions.ts'
 import { instanceDb } from '../db.ts'
 import { broadcastTasksChanged } from '../live.ts'
-import { TaskError, requireRow } from '../service.ts'
+import { requireRow, TaskError } from '../service.ts'
 import { forgeClient } from './api.ts'
 import { checkConnection, usableConnection } from './connect.ts'
 import { type PollTarget, pollNow, setTick, startPolling, stopPolling } from './poller.ts'
@@ -31,17 +32,25 @@ async function tick(target: PollTarget): Promise<void> {
   if (!connection) {
     return
   }
-  const token = await host.secrets.resolve(connection.secretKey)
+  const token = await secrets.resolve(connection.secretKey)
   if (!token) {
     recordSync(db, { at: new Date().toISOString(), error: `The Secrets Store has no key "${connection.secretKey}"` })
     return
   }
   const projectKey = projectKeyOf(target.params)
   const first = readStatus(db).lastSyncAt === null
-  const { changed } = await syncOnce(db, projectKey, forgeClient({ url: connection.url, token, secretKey: connection.secretKey }))
+  const { changed } = await syncOnce(
+    db,
+    projectKey,
+    forgeClient({ url: connection.url, token, secretKey: connection.secretKey }),
+  )
   if (changed.length > 0 || first) {
     // After the first read even with no links, so a settings page waiting on it hears that it finished.
-    broadcastTasksChanged(target.instanceId, changed.map((number) => `${projectKey}-${number}`), 'task')
+    broadcastTasksChanged(
+      target.instanceId,
+      changed.map((number) => `${projectKey}-${number}`),
+      'task',
+    )
   }
 }
 
@@ -49,7 +58,7 @@ setTick(tick)
 
 // A deploy reloads this module but runs no onLoad: make sure every instance
 // already loaded has its timer, now running the tick above.
-void host.apps
+void apps
   .listInstances('tasks')
   .then((instances) => instances.forEach(startPolling))
   .catch(() => {
@@ -63,18 +72,20 @@ export const forgeHooks = {
 
 const byPerson = (ctx: AppActionContext) => ctx.callerPerson !== undefined
 
-const handlers: Record<ForgeActionId, (ctx: AppActionContext, params: Record<string, unknown>) => unknown> = {
-  task_prs: (ctx, params) => {
+const handlers: TypedHandlers<ForgeActionId, AppActionContext> = {
+  task_prs: (ctx, input) => {
     const scope = scopeFor(ctx)
-    const row = requireRow(scope, params.key)
+    const row = requireRow(scope, input.key)
     return { key: `${scope.projectKey}-${row.number}`, pullRequests: pullRequestsOf(scope, row.number) }
   },
   forge_status: (ctx) => readStatus(scopeFor(ctx).db),
-  forge_connect: async (ctx, params) => {
+  forge_connect: async (ctx, input) => {
     const scope = scopeFor(ctx)
-    const connection = checkConnection(params, byPerson(ctx))
-    if (!(await host.secrets.resolve(connection.secretKey))) {
-      throw new TaskError(`The Secrets Store has no key "${connection.secretKey}": store the forge token under it first`)
+    const connection = checkConnection(input, byPerson(ctx))
+    if (!(await secrets.resolve(connection.secretKey))) {
+      throw new TaskError(
+        `The Secrets Store has no key "${connection.secretKey}": store the forge token under it first`,
+      )
     }
     saveConnection(scope.db, connection)
     startPolling(ctx)
@@ -93,6 +104,4 @@ const handlers: Record<ForgeActionId, (ctx: AppActionContext, params: Record<str
   },
 }
 
-export const forgeActions: Record<string, AppActionHandler> = Object.fromEntries(
-  Object.entries(handlers).map(([id, handler]) => [id, (ctx: AppActionContext, params: Record<string, unknown>) => handler(ctx, params ?? {})]),
-)
+export const forgeActions = typedActions(handlers, (ctx) => ctx)

@@ -49,7 +49,9 @@ export const attachmentMigrations: Migration[] = [
       }>
       if (stored.length > 0) {
         if (!env.dataDir) {
-          throw new Error('attachments-0002-files moves stored files into the data directory, and this database has none')
+          throw new Error(
+            'attachments-0002-files moves stored files into the data directory, and this database has none',
+          )
         }
         fs.mkdirSync(attachmentsDir(env.dataDir), { recursive: true })
         for (const { attachment_id, bytes } of stored) {

@@ -5,8 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { WorkflowStats } from '@/components/ui/workflows/workflow-stats'
-
-import { STATS_RANGES, type StatsRange, type WorkflowDef, type WorkflowStats as Stats } from '../../shared/workflows'
+import { STATS_RANGES, type WorkflowStats as Stats, type StatsRange, type WorkflowDef } from '../../shared/workflows'
 import { errorMessage } from '../lib/api'
 import { useTasksLive } from '../lib/live'
 import { navigateQuery, useQueryParam } from '../lib/router'
@@ -17,7 +16,9 @@ export function WorkflowStatsView({ instanceId, workflow }: { instanceId: string
   const api = useMemo(() => workflowsApi(instanceId), [instanceId])
   // The range lives in the address, the same parameter a clicked count's runs carry, so Back from them returns to it.
   const [rangeParam, setRangeParam] = useQueryParam('range')
-  const range: StatsRange = (STATS_RANGES as readonly string[]).includes(rangeParam ?? '') ? (rangeParam as StatsRange) : '30d'
+  const range: StatsRange = (STATS_RANGES as readonly string[]).includes(rangeParam ?? '')
+    ? (rangeParam as StatsRange)
+    : '30d'
   const setRange = (next: StatsRange) => setRangeParam(next === '30d' ? null : next)
   const [stats, setStats] = useState<Stats | null>(null)
   const [loading, setLoading] = useState(true)
@@ -53,7 +54,7 @@ export function WorkflowStatsView({ instanceId, workflow }: { instanceId: string
 
   return (
     <WorkflowStats
-      className="max-w-4xl"
+      className='max-w-4xl'
       stats={stats}
       range={range}
       onRangeChange={setRange}

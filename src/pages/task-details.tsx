@@ -5,13 +5,13 @@
 // shown inline) and history. Links to other tasks open where this surface
 // opens tasks: the page moves on a task's page, the peek follows in a peek.
 
-import { MarkdownEditor } from '@opencroft/client'
+import { MarkdownEditor } from '@opencroft/client/markdown'
 import { cn } from 'cn'
 import { CircleDot, Copy, ExternalLink, Link2, ListFilter, Pencil, Trash2, Unlink } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { type ItemMenuAction, type ItemMenuEntries, ItemContextMenu } from '@/components/ui/tasks/item-menu'
+import { ItemContextMenu, type ItemMenuAction, type ItemMenuEntries } from '@/components/ui/tasks/item-menu'
 import { TaskActivity } from '@/components/ui/tasks/task-activity'
 import { TaskAssignee } from '@/components/ui/tasks/task-assignee'
 import { TaskAttachmentDropZone, TaskAttachments } from '@/components/ui/tasks/task-attachments'
@@ -28,9 +28,8 @@ import { TASK_PRIORITIES, TASK_PRIORITY_LABELS, TaskPriorityIcon } from '@/compo
 import { TaskPullRequests } from '@/components/ui/tasks/task-pull-requests'
 import { TaskStatusBadge } from '@/components/ui/tasks/task-status-badge'
 import { TaskSubtaskList } from '@/components/ui/tasks/task-subtask-list'
-import { TASK_TYPES, TASK_TYPE_LABELS, TaskTypeIcon } from '@/components/ui/tasks/task-type-icon'
+import { TASK_TYPE_LABELS, TASK_TYPES, TaskTypeIcon } from '@/components/ui/tasks/task-type-icon'
 import { taskVersionOptions } from '@/components/ui/tasks/task-version-chip'
-
 import { RELATION_GROUPS, RELATION_WORDS, type RelationGroup, relationInput } from '../../shared/dependencies'
 import type { Priority, Task, TaskSummary, TaskType } from '../../shared/types'
 import { copyText, useProject } from '../app/project'
@@ -39,14 +38,20 @@ import { CommentBody } from '../attachments/comment-body'
 import { useTaskAttachments } from '../attachments/use-task-attachments'
 import { errorMessage } from '../lib/api'
 import { assigneeInput, assigneeKey } from '../lib/assignees'
-import { toTaskVersion } from '../lib/versions'
 import { absoluteLink, hrefFor, navigate, useQueryParam } from '../lib/router'
+import { toTaskVersion } from '../lib/versions'
 import { MentionSessions } from '../mentions/mention-sessions'
 import { WorkflowPanel } from '../workflows/task-panel'
 import type { TaskDetailsState } from './use-task-details'
 
 function formatStamp(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return new Date(iso).toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 /**
@@ -101,10 +106,10 @@ function Description({
   if (!editing) {
     return (
       <TaskDetailsSection
-        title="Description"
+        title='Description'
         actions={
           task.description ? (
-            <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>
+            <Button variant='ghost' size='sm' onClick={() => setEditing(true)}>
               <Pencil />
               Edit
             </Button>
@@ -113,14 +118,12 @@ function Description({
       >
         {task.description ? (
           // biome-ignore lint/a11y/noStaticElementInteractions: a double-click shortcut; the Edit button is the keyboard path
-          <div onDoubleClick={() => setEditing(true)}>
-            {renderBody(task.description)}
-          </div>
+          <div onDoubleClick={() => setEditing(true)}>{renderBody(task.description)}</div>
         ) : (
           <button
-            type="button"
+            type='button'
             onClick={() => setEditing(true)}
-            className="rounded-md border border-dashed px-3 py-4 text-left text-sm text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+            className='rounded-md border border-dashed px-3 py-4 text-left text-sm text-muted-foreground hover:bg-muted/50 hover:text-foreground'
           >
             Add a description…
           </button>
@@ -140,10 +143,10 @@ function Description({
   }
 
   return (
-    <TaskDetailsSection title="Description">
+    <TaskDetailsSection title='Description'>
       {/* biome-ignore lint/a11y/noStaticElementInteractions: it takes no focus; it hears the keys typed in the editor inside it */}
       <div
-        className="flex flex-col gap-2"
+        className='flex flex-col gap-2'
         onKeyDown={(event) => {
           if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
             event.preventDefault()
@@ -154,12 +157,18 @@ function Description({
           }
         }}
       >
-        <MarkdownEditor value={draft} onChange={setDraft} autoFocus placeholder="Describe the task…" className="min-h-40 rounded-md border" />
-        <div className="flex items-center justify-end gap-2">
-          <span className="hidden text-xs text-muted-foreground sm:inline">Ctrl + Enter to save · Esc to cancel</span>
+        <MarkdownEditor
+          value={draft}
+          onChange={setDraft}
+          autoFocus
+          placeholder='Describe the task…'
+          className='min-h-40 rounded-md border'
+        />
+        <div className='flex items-center justify-end gap-2'>
+          <span className='hidden text-xs text-muted-foreground sm:inline'>Ctrl + Enter to save · Esc to cancel</span>
           <Button
-            variant="ghost"
-            size="sm"
+            variant='ghost'
+            size='sm'
             disabled={saving}
             onClick={() => {
               setDraft(task.description)
@@ -168,7 +177,7 @@ function Description({
           >
             Cancel
           </Button>
-          <Button size="sm" disabled={saving} onClick={() => void save()}>
+          <Button size='sm' disabled={saving} onClick={() => void save()}>
             Save
           </Button>
         </div>
@@ -214,7 +223,9 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
     }
     setTab('comments')
     requestAnimationFrame(() =>
-      commentsRef.current?.querySelector(`[data-comment-id="${linkedComment}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }),
+      commentsRef.current
+        ?.querySelector(`[data-comment-id="${linkedComment}"]`)
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' }),
     )
   }, [linkedComment])
 
@@ -229,9 +240,19 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
         label: 'Copy link',
         icon: Link2,
         group: 'open',
-        onSelect: () => void copyText(absoluteLink(hrefFor(['task', task.key], { comment: String(comment.id) })), 'link to the comment'),
+        onSelect: () =>
+          void copyText(
+            absoluteLink(hrefFor(['task', task.key], { comment: String(comment.id) })),
+            'link to the comment',
+          ),
       },
-      { id: 'copy-text', label: 'Copy text', icon: Copy, group: 'open', onSelect: () => void copyText(comment.body, 'the comment') },
+      {
+        id: 'copy-text',
+        label: 'Copy text',
+        icon: Copy,
+        group: 'open',
+        onSelect: () => void copyText(comment.body, 'the comment'),
+      },
       comment.mine && { id: 'edit', label: 'Edit', icon: Pencil, onSelect: () => setEditingComment(comment.id) },
       comment.mine && {
         id: 'delete',
@@ -258,9 +279,27 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
     const input = relationInput(relation, task.key, item.key)
     return [
       { id: 'open', label: 'Open', icon: ExternalLink, group: 'open', onSelect: () => openTask(item.key) },
-      { id: 'copy-key', label: 'Copy key', icon: Copy, group: 'open', onSelect: () => void copyText(item.key, item.key) },
-      { id: 'copy-link', label: 'Copy link', icon: Link2, group: 'open', onSelect: () => void copyText(absoluteLink(taskHref(item.key)), `link to ${item.key}`) },
-      { id: 'status', label: 'Status', icon: CircleDot, group: 'change', entries: taskFieldEntries(menuFor(item), 'status') as ItemMenuAction[] },
+      {
+        id: 'copy-key',
+        label: 'Copy key',
+        icon: Copy,
+        group: 'open',
+        onSelect: () => void copyText(item.key, item.key),
+      },
+      {
+        id: 'copy-link',
+        label: 'Copy link',
+        icon: Link2,
+        group: 'open',
+        onSelect: () => void copyText(absoluteLink(taskHref(item.key)), `link to ${item.key}`),
+      },
+      {
+        id: 'status',
+        label: 'Status',
+        icon: CircleDot,
+        group: 'change',
+        entries: taskFieldEntries(menuFor(item), 'status') as ItemMenuAction[],
+      },
       {
         id: 'unlink',
         label: 'Remove relation…',
@@ -269,7 +308,10 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
         onSelect: () =>
           confirm({
             title: `Remove "${input.from} ${RELATION_WORDS[input.type]} ${input.to}"?`,
-            description: input.type === 'blocks' ? `${input.to} will no longer wait for ${input.from}.` : 'Both tasks stay as they are.',
+            description:
+              input.type === 'blocks'
+                ? `${input.to} will no longer wait for ${input.from}.`
+                : 'Both tasks stay as they are.',
             action: 'Remove relation',
             onConfirm: async () => {
               await api.task_unlink(input)
@@ -294,10 +336,10 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
             <TaskTypeIcon type={task.type} />
             <TaskContextMenu {...menu} render={<span />}>
               <button
-                type="button"
+                type='button'
                 onClick={menu.onCopyKey}
-                title="Copy key"
-                className="rounded px-1 font-mono text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                title='Copy key'
+                className='rounded px-1 font-mono text-sm text-muted-foreground hover:bg-muted hover:text-foreground'
               >
                 {task.key}
               </button>
@@ -308,7 +350,7 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
       actions={
         inPeek ? null : (
           <>
-            <Button variant="ghost" size="icon-sm" aria-label="Copy link" title="Copy link" onClick={menu.onCopyLink}>
+            <Button variant='ghost' size='icon-sm' aria-label='Copy link' title='Copy link' onClick={menu.onCopyLink}>
               <Link2 />
             </Button>
             <TaskActionsMenu {...menu} onOpen={undefined} onAddSubtask={() => setAdd('subtask')} />
@@ -319,8 +361,8 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
         <TaskEditableText
           value={task.summary}
           required
-          variant="title"
-          placeholder="Summary"
+          variant='title'
+          placeholder='Summary'
           onSave={(summary) => update({ summary })}
           editing={edit === 'summary'}
           onEditingChange={(editing) => setEdit(editing ? 'summary' : null)}
@@ -328,9 +370,9 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
       }
       fields={
         <>
-          <TaskDetailsField label="Status">
+          <TaskDetailsField label='Status'>
             <TaskFieldPicker
-              label="Status"
+              label='Status'
               value={String(task.status.id)}
               options={statuses.map((status) => ({
                 value: String(status.id),
@@ -340,16 +382,16 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
               onChange={(id) => void update({ status: Number(id) }).catch(() => {})}
             />
           </TaskDetailsField>
-          <TaskDetailsField label="Assignee">
+          <TaskDetailsField label='Assignee'>
             <TaskFieldPicker
-              label="Assignee"
+              label='Assignee'
               value={assigneeKey(task.assignee)}
               options={[
-                { value: 'none', text: 'Unassigned', display: <TaskAssignee assignee={null} withName size="sm" /> },
+                { value: 'none', text: 'Unassigned', display: <TaskAssignee assignee={null} withName size='sm' /> },
                 ...assignees.map((option) => ({
                   value: assigneeKey(option.assignee),
                   text: option.assignee.name,
-                  display: <TaskAssignee assignee={option.assignee} withName size="sm" />,
+                  display: <TaskAssignee assignee={option.assignee} withName size='sm' />,
                 })),
               ]}
               onChange={(value) => {
@@ -358,9 +400,9 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
               }}
             />
           </TaskDetailsField>
-          <TaskDetailsField label="Priority">
+          <TaskDetailsField label='Priority'>
             <TaskFieldPicker
-              label="Priority"
+              label='Priority'
               value={task.priority}
               options={TASK_PRIORITIES.map((priority) => ({
                 value: priority,
@@ -370,68 +412,96 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
               onChange={(priority) => void update({ priority: priority as Priority }).catch(() => {})}
             />
           </TaskDetailsField>
-          <TaskDetailsField label="Type">
+          <TaskDetailsField label='Type'>
             <TaskFieldPicker
-              label="Type"
+              label='Type'
               value={task.type}
-              options={TASK_TYPES.map((type) => ({ value: type, text: TASK_TYPE_LABELS[type], display: <TaskTypeIcon type={type} withLabel /> }))}
+              options={TASK_TYPES.map((type) => ({
+                value: type,
+                text: TASK_TYPE_LABELS[type],
+                display: <TaskTypeIcon type={type} withLabel />,
+              }))}
               onChange={(type) => void update({ type: type as TaskType }).catch(() => {})}
             />
           </TaskDetailsField>
-          <TaskDetailsField label="Dates">
-            <TaskDateRange startDate={task.startDate} endDate={task.endDate} onChange={(range) => void update(range).catch(() => {})} />
+          <TaskDetailsField label='Dates'>
+            <TaskDateRange
+              startDate={task.startDate}
+              endDate={task.endDate}
+              onChange={(range) => void update(range).catch(() => {})}
+            />
           </TaskDetailsField>
-          <TaskDetailsField label="Labels">
+          <TaskDetailsField label='Labels'>
             <TaskLabelsEditor
               labels={task.labels}
               suggestions={labels}
               onChange={(next) => void update({ labels: next }).catch(() => {})}
               labelMenu={(label) => [
-                { id: 'filter', label: 'Show tasks with this label', icon: ListFilter, group: 'open', onSelect: () => navigate(hrefFor(['tasks'], { label })) },
+                {
+                  id: 'filter',
+                  label: 'Show tasks with this label',
+                  icon: ListFilter,
+                  group: 'open',
+                  onSelect: () => navigate(hrefFor(['tasks'], { label })),
+                },
               ]}
             />
           </TaskDetailsField>
-          <TaskDetailsField label="Version">
+          <TaskDetailsField label='Version'>
             <TaskFieldPicker
-              label="Version"
+              label='Version'
               value={versionId}
               options={taskVersionOptions(kitVersions, versionId)}
-              placeholder="No version"
+              placeholder='No version'
               onChange={(id) => void update({ version: id ? Number(id) : null }).catch(() => {})}
             />
           </TaskDetailsField>
-          <TaskDetailsField label="Parent">
+          <TaskDetailsField label='Parent'>
             {task.parentKey ? (
               <ItemContextMenu
                 entries={[
-                  { id: 'open', label: 'Open', icon: ExternalLink, group: 'open', onSelect: () => openTask(task.parentKey as string) },
-                  { id: 'copy-key', label: 'Copy key', icon: Copy, group: 'open', onSelect: () => void copyText(task.parentKey as string, task.parentKey as string) },
+                  {
+                    id: 'open',
+                    label: 'Open',
+                    icon: ExternalLink,
+                    group: 'open',
+                    onSelect: () => openTask(task.parentKey as string),
+                  },
+                  {
+                    id: 'copy-key',
+                    label: 'Copy key',
+                    icon: Copy,
+                    group: 'open',
+                    onSelect: () => void copyText(task.parentKey as string, task.parentKey as string),
+                  },
                   {
                     id: 'copy-link',
                     label: 'Copy link',
                     icon: Link2,
                     group: 'open',
-                    onSelect: () => void copyText(absoluteLink(taskHref(task.parentKey as string)), `link to ${task.parentKey}`),
+                    onSelect: () =>
+                      void copyText(absoluteLink(taskHref(task.parentKey as string)), `link to ${task.parentKey}`),
                   },
                 ]}
+                // biome-ignore lint/a11y/useAnchorContent: the menu trigger renders as this anchor, so the parent key below is its content
                 render={<a href={linkTo(task.parentKey)} />}
-                className="font-mono text-sm text-primary hover:underline"
+                className='font-mono text-sm text-primary hover:underline'
               >
                 {task.parentKey}
               </ItemContextMenu>
             ) : (
-              <span className="text-sm text-muted-foreground">None</span>
+              <span className='text-sm text-muted-foreground'>None</span>
             )}
           </TaskDetailsField>
-          <div className="my-2 border-t" />
-          <TaskDetailsField label="Reporter">
-            <TaskAssignee assignee={task.reporter} withName size="sm" />
+          <div className='my-2 border-t' />
+          <TaskDetailsField label='Reporter'>
+            <TaskAssignee assignee={task.reporter} withName size='sm' />
           </TaskDetailsField>
-          <TaskDetailsField label="Created">
-            <span className="text-sm text-muted-foreground">{formatStamp(task.createdAt)}</span>
+          <TaskDetailsField label='Created'>
+            <span className='text-sm text-muted-foreground'>{formatStamp(task.createdAt)}</span>
           </TaskDetailsField>
-          <TaskDetailsField label="Updated">
-            <span className="text-sm text-muted-foreground">{formatStamp(task.updatedAt)}</span>
+          <TaskDetailsField label='Updated'>
+            <span className='text-sm text-muted-foreground'>{formatStamp(task.updatedAt)}</span>
           </TaskDetailsField>
         </>
       }
@@ -439,7 +509,9 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
       <Description
         task={task}
         onSave={(description) => update({ description })}
-        renderBody={(body) => <CommentBody body={body} attachment={attachments.attachment} preview={attachments.preview} />}
+        renderBody={(body) => (
+          <CommentBody body={body} attachment={attachments.attachment} preview={attachments.preview} />
+        )}
       />
 
       <TaskDetailsSection title={attachments.count ? `Attachments (${attachments.count})` : 'Attachments'}>
@@ -455,8 +527,8 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
             footer={
               <TaskInlineCreate
                 key={add === 'subtask' ? 'open' : 'closed'}
-                label="Add subtask"
-                placeholder="Subtask summary"
+                label='Add subtask'
+                placeholder='Subtask summary'
                 defaultOpen={add === 'subtask'}
                 onClose={() => setAdd(null)}
                 // A refusal shows in the create row itself.
@@ -470,7 +542,7 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
         </TaskDetailsSection>
       </div>
 
-      <TaskDetailsSection title="Relations">
+      <TaskDetailsSection title='Relations'>
         <TaskDependencies
           relations={Object.fromEntries(RELATION_GROUPS.map((group) => [group, task[group]]))}
           task={{ key: task.key, startDate: task.startDate, endDate: task.endDate }}
@@ -503,18 +575,20 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
 
       <MentionSessions api={api} instanceId={instanceId} taskKey={task.key} />
 
-      <section ref={commentsRef} className="flex flex-col gap-3">
-        <div className="flex items-center gap-1 border-b" role="tablist">
+      <section ref={commentsRef} className='flex flex-col gap-3'>
+        <div className='flex items-center gap-1 border-b' role='tablist'>
           {(['comments', 'activity'] as const).map((id) => (
             <button
               key={id}
-              type="button"
-              role="tab"
+              type='button'
+              role='tab'
               aria-selected={tab === id}
               onClick={() => setTab(id)}
               className={cn(
                 '-mb-px border-b-2 px-3 py-2 text-sm transition-colors',
-                tab === id ? 'border-primary font-medium text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground',
+                tab === id
+                  ? 'border-primary font-medium text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground',
               )}
             >
               {id === 'comments' ? `Comments${task.comments.length ? ` (${task.comments.length})` : ''}` : 'History'}
@@ -524,7 +598,9 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
         {tab === 'comments' ? (
           <TaskComments
             comments={task.comments}
-            renderBody={(body) => <CommentBody body={body} attachment={attachments.attachment} preview={attachments.preview} />}
+            renderBody={(body) => (
+              <CommentBody body={body} attachment={attachments.attachment} preview={attachments.preview} />
+            )}
             onPasteImage={attachments.pasteImage}
             // A refusal shows beside the Comment button.
             onPost={async (body) => {
@@ -547,7 +623,13 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
             entries={task.activity}
             rowMenu={(_entry, line) => [
               { id: 'copy', label: 'Copy', icon: Copy, group: 'open', onSelect: () => void copyText(line, 'the line') },
-              { id: 'copy-link', label: 'Copy link to task', icon: Link2, group: 'open', onSelect: () => void copyText(absoluteLink(taskHref(task.key)), `link to ${task.key}`) },
+              {
+                id: 'copy-link',
+                label: 'Copy link to task',
+                icon: Link2,
+                group: 'open',
+                onSelect: () => void copyText(absoluteLink(taskHref(task.key)), `link to ${task.key}`),
+              },
             ]}
           />
         )}

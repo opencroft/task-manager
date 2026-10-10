@@ -4,23 +4,20 @@
 // service; everything that is about the versions themselves lives here. No
 // host in sight: the whole module runs under `node --test`.
 
+import type { ActionInputs } from '../../shared/action-inputs.ts'
 import { replaceFilterValue } from '../../shared/filters.ts'
 import type { MutationResult, TaskKey, TaskType } from '../../shared/types.ts'
 import {
+  compareVersionNames,
   VERSION_NAME_PATTERN,
   VERSION_STATES,
   type Version,
-  type VersionCreateInput,
-  type VersionListInput,
-  type VersionReleaseInput,
   type VersionReleaseResult,
   type VersionState,
-  type VersionUpdateInput,
-  compareVersionNames,
 } from '../../shared/versions.ts'
 import { didYouMean } from '../closest-names.ts'
 import { transaction } from '../db.ts'
-import { type Scope, TaskError, cleanDate, keyOf, record, summariesWhere, touch } from '../service.ts'
+import { cleanDate, keyOf, record, type Scope, summariesWhere, TaskError, touch } from '../service.ts'
 import { rewriteStoredFilters } from '../views/stored-filters.ts'
 
 const DESCRIPTION_MAX = 200
@@ -76,11 +73,8 @@ function versionById(scope: Scope, id: number): Version {
 }
 
 /** Every version, lowest first by semver precedence, optionally only those in some states. */
-export function listVersions(scope: Scope, input: VersionListInput = {}): { versions: Version[] } {
-  const states = input.state === undefined ? undefined : Array.isArray(input.state) ? input.state : [input.state]
-  for (const state of states ?? []) {
-    cleanState(state, VERSION_STATES)
-  }
+export function listVersions(scope: Scope, input: ActionInputs['version_list'] = {}): { versions: Version[] } {
+  const states = input.state?.map(cleanState)
   const count = counts(scope)
   return {
     versions: rows(scope)
@@ -97,22 +91,21 @@ export function cleanVersionName(value: unknown, field = 'name'): string {
   }
   const name = /^v\d/i.test(raw) ? raw.slice(1) : raw
   if (!VERSION_NAME_PATTERN.test(name)) {
-    throw new TaskError(`"${raw}" is not a semantic version: write MAJOR.MINOR.PATCH, optionally with a -pre part, e.g. 1.4.0 or 2.0.0-beta.1`)
+    throw new TaskError(
+      `"${raw}" is not a semantic version: write MAJOR.MINOR.PATCH, optionally with a -pre part, e.g. 1.4.0 or 2.0.0-beta.1`,
+    )
   }
   return name
 }
 
-function cleanState(value: unknown, allowed: readonly VersionState[]): VersionState {
-  if (!allowed.includes(value as VersionState)) {
-    throw new TaskError(`state must be one of: ${allowed.join(', ')}`)
+function cleanState(value: string): VersionState {
+  if (!VERSION_STATES.includes(value as VersionState)) {
+    throw new TaskError(`state must be one of: ${VERSION_STATES.join(', ')}`)
   }
   return value as VersionState
 }
 
-function cleanDescription(value: unknown): string {
-  if (typeof value !== 'string') {
-    throw new TaskError('description is one line of text')
-  }
+function cleanDescription(value: string): string {
   const description = value.replace(/\s+/g, ' ').trim()
   if (description.length > DESCRIPTION_MAX) {
     throw new TaskError(`A version's description is at most ${DESCRIPTION_MAX} characters`)
@@ -133,7 +126,8 @@ export function resolveVersion(scope: Scope, ref: unknown, field = 'version'): V
   }
   const wanted = ref.trim().replace(/^v(?=\d)/i, '')
   const all = rows(scope)
-  const found = all.find((row) => row.name === wanted) ?? all.find((row) => row.name.toLowerCase() === wanted.toLowerCase())
+  const found =
+    all.find((row) => row.name === wanted) ?? all.find((row) => row.name.toLowerCase() === wanted.toLowerCase())
   if (!found) {
     const names = all.map((row) => row.name)
     throw new TaskError(
@@ -153,7 +147,9 @@ export function versionIdFor(scope: Scope, ref: unknown): number | null {
   }
   const row = resolveVersion(scope, ref)
   if (row.state === 'archived') {
-    throw new TaskError(`Version ${row.name} is archived; set it back to planned (version_update) to plan tasks into it`)
+    throw new TaskError(
+      `Version ${row.name} is archived; set it back to planned (version_update) to plan tasks into it`,
+    )
   }
   return row.id
 }
@@ -165,7 +161,7 @@ function assertNameFree(scope: Scope, name: string, selfId?: number): void {
   }
 }
 
-export function createVersion(scope: Scope, input: VersionCreateInput): MutationResult<Version> {
+export function createVersion(scope: Scope, input: ActionInputs['version_create']): MutationResult<Version> {
   const name = cleanVersionName(input.name)
   const targetDate = cleanDate(input.targetDate, 'targetDate')
   const description = input.description === undefined ? '' : cleanDescription(input.description)
@@ -185,7 +181,7 @@ function renameInViews(scope: Scope, from: string, to: string): void {
   rewriteStoredFilters(scope.db, (filter) => replaceFilterValue(filter, 'version', from, to))
 }
 
-export function updateVersion(scope: Scope, input: VersionUpdateInput): MutationResult<Version> {
+export function updateVersion(scope: Scope, input: ActionInputs['version_update']): MutationResult<Version> {
   const row = resolveVersion(scope, input.version)
   const sets: string[] = []
   const args: Array<string | null> = []
@@ -208,10 +204,7 @@ export function updateVersion(scope: Scope, input: VersionUpdateInput): Mutation
     args.push(cleanDescription(input.description))
   }
   if (input.state !== undefined) {
-    if (input.state === ('released' as VersionState)) {
-      throw new TaskError('Release a version with version_release: it sets the release date and returns the release notes')
-    }
-    const state = cleanState(input.state, ['planned', 'archived'])
+    const state = input.state
     if (state !== row.state) {
       sets.push('state = ?')
       args.push(state)
@@ -267,7 +260,12 @@ export function releaseNotes(scope: Scope, versionId: number): string {
 }
 
 /** Put the tasks with these ids into another version (or none), with a history entry on each. */
-function moveTasks(scope: Scope, tasks: Array<{ id: number; number: number }>, from: string, to: VersionRow | null): TaskKey[] {
+function moveTasks(
+  scope: Scope,
+  tasks: Array<{ id: number; number: number }>,
+  from: string,
+  to: VersionRow | null,
+): TaskKey[] {
   const set = scope.db.prepare('UPDATE task SET version_id = ? WHERE id = ?')
   for (const task of tasks) {
     set.run(to?.id ?? null, task.id)
@@ -277,7 +275,10 @@ function moveTasks(scope: Scope, tasks: Array<{ id: number; number: number }>, f
   return tasks.map((task) => keyOf(scope, task.number))
 }
 
-export function releaseVersion(scope: Scope, input: VersionReleaseInput): MutationResult<VersionReleaseResult> {
+export function releaseVersion(
+  scope: Scope,
+  input: ActionInputs['version_release'],
+): MutationResult<VersionReleaseResult> {
   const row = resolveVersion(scope, input.version)
   if (row.state === 'released') {
     throw new TaskError(`Version ${row.name} was already released on ${row.released_at}`)
@@ -304,7 +305,9 @@ export function releaseVersion(scope: Scope, input: VersionReleaseInput): Mutati
     )
     .all(row.id) as Array<{ id: number; number: number }>
   const moved = transaction(scope.db, () => {
-    scope.db.prepare(`UPDATE version SET state = 'released', released_at = ?, updated_at = ? WHERE id = ?`).run(date, now(), row.id)
+    scope.db
+      .prepare(`UPDATE version SET state = 'released', released_at = ?, updated_at = ? WHERE id = ?`)
+      .run(date, now(), row.id)
     return moving ? moveTasks(scope, openTasks, row.name, target) : []
   })
   if (moved.length) {

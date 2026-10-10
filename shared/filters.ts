@@ -6,14 +6,31 @@
  * One field's filter. A task passes when it has none of `exclude` and, if
  * `include` has any values, at least one of them: an exclude wins over an
  * include.
+ *
+ * A type rather than an interface, as every object shape `task_list` takes:
+ * an interface is not assignable to the `Record<string, unknown>` its
+ * generated input gives a nested object.
  */
-export interface FieldFilter<T> {
+export type FieldFilter<T> = {
   include?: T[]
   exclude?: T[]
 }
 
-/** A field as `task_list` takes it: a plain list, or a single value, is the values to include. */
-export type FieldFilterInput<T> = FieldFilter<T> | T[] | T
+/**
+ * A field's filter in any form the server reads: a plain list, or a single
+ * value, is the values to include. `task_list` takes a single value for
+ * `parent` only; `fieldFilterOf`, `compactFilter` and the server's
+ * `checkedFieldFilter` read every form.
+ */
+export type FieldFilterInput<T> = FieldFilterList<T> | T
+
+/**
+ * A field as the pages send most of them, to `task_list` and in a saved
+ * view's or a board's filter: a plain list is the values to include.
+ * `task_list`'s schema refuses a single value; the stored filters would take
+ * one, but the pages share `task_list`'s type for them.
+ */
+export type FieldFilterList<T> = FieldFilter<T> | T[]
 
 /** The fields of a saved view's filter that are a `FieldFilter`. */
 export const VIEW_FIELD_FILTER_KEYS = ['status', 'assignee', 'type', 'priority', 'label', 'version', 'parent'] as const
@@ -72,7 +89,12 @@ export function compactFilter<F extends object>(filter: F): F {
  * `filter` with `from` in `key`'s lists replaced by `to`, or dropped when
  * `to` is null; the same filter when `from` is not in them.
  */
-export function replaceFilterValue<F extends object>(filter: F, key: (typeof VIEW_FIELD_FILTER_KEYS)[number], from: string, to: string | null): F {
+export function replaceFilterValue<F extends object>(
+  filter: F,
+  key: (typeof VIEW_FIELD_FILTER_KEYS)[number],
+  from: string,
+  to: string | null,
+): F {
   const { include, exclude } = fieldFilterOf((filter as Record<string, unknown>)[key] as FieldFilterInput<string>)
   if (!include.includes(from) && !exclude.includes(from)) {
     return filter

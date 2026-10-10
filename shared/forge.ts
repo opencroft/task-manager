@@ -3,6 +3,7 @@
 // them on the tasks they already load. The connection holds the name of a
 // Secrets Store key, never the token, and only a person sets it.
 
+import type { ActionInputs } from './action-inputs.ts'
 import type { LinkedPullRequest, TaskKey } from './types.ts'
 
 /** Where pull requests are read from. `secretKey` names the Secrets Store key holding a read token. */
@@ -26,10 +27,10 @@ export interface ForgeStatus {
 }
 
 export interface ForgeActionMap {
-  task_prs: { input: { key: TaskKey }; output: { key: TaskKey; pullRequests: LinkedPullRequest[] } }
-  forge_status: { input: Record<string, never>; output: ForgeStatus }
-  forge_connect: { input: ForgeConnection; output: ForgeStatus }
-  forge_disconnect: { input: Record<string, never>; output: ForgeStatus }
+  task_prs: { input: ActionInputs['task_prs']; output: { key: TaskKey; pullRequests: LinkedPullRequest[] } }
+  forge_status: { input: ActionInputs['forge_status']; output: ForgeStatus }
+  forge_connect: { input: ActionInputs['forge_connect']; output: ForgeStatus }
+  forge_disconnect: { input: ActionInputs['forge_disconnect']; output: ForgeStatus }
 }
 
 export type ForgeActionId = keyof ForgeActionMap

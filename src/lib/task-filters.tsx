@@ -1,13 +1,12 @@
 // The filter menus a task list offers (the Tasks page, the Board, a board's
 // preset filter), each built one way from the project's own values.
 
-import type { TaskFilterDef } from '@/components/ui/tasks/task-filter-bar'
 import { TaskAssignee } from '@/components/ui/tasks/task-assignee'
+import type { TaskFilterDef } from '@/components/ui/tasks/task-filter-bar'
 import { TaskLabelChip } from '@/components/ui/tasks/task-label-chip'
 import { TASK_PRIORITIES, TASK_PRIORITY_LABELS, TaskPriorityIcon } from '@/components/ui/tasks/task-priority-icon'
 import { TaskStatusBadge } from '@/components/ui/tasks/task-status-badge'
-import { TASK_TYPES, TASK_TYPE_LABELS, TaskTypeIcon } from '@/components/ui/tasks/task-type-icon'
-
+import { TASK_TYPE_LABELS, TASK_TYPES, TaskTypeIcon } from '@/components/ui/tasks/task-type-icon'
 import type { AssigneeOption, Status, TaskParent } from '../../shared/types'
 import type { Version } from '../../shared/versions'
 import { versionFilter } from './versions'
@@ -32,7 +31,7 @@ function filterDef(id: TaskFilterId, sources: TaskFilterSources): TaskFilterDef 
         options: sources.statuses.map((status) => ({
           value: String(status.id),
           label: status.name,
-          icon: <TaskStatusBadge name={status.name} category={status.category} color={status.color} size="sm" />,
+          icon: <TaskStatusBadge name={status.name} category={status.category} color={status.color} size='sm' />,
         })),
       }
     case 'assignee':
@@ -40,11 +39,11 @@ function filterDef(id: TaskFilterId, sources: TaskFilterSources): TaskFilterDef 
         id,
         label: 'Assignee',
         options: [
-          { value: 'none', label: 'Unassigned', icon: <TaskAssignee assignee={null} withName size="sm" /> },
+          { value: 'none', label: 'Unassigned', icon: <TaskAssignee assignee={null} withName size='sm' /> },
           ...sources.assignees.map((option) => ({
             value: option.assignee.name,
             label: option.assignee.name,
-            icon: <TaskAssignee assignee={option.assignee} withName size="sm" />,
+            icon: <TaskAssignee assignee={option.assignee} withName size='sm' />,
           })),
         ],
       }
@@ -52,7 +51,11 @@ function filterDef(id: TaskFilterId, sources: TaskFilterSources): TaskFilterDef 
       return {
         id,
         label: 'Type',
-        options: TASK_TYPES.map((type) => ({ value: type, label: TASK_TYPE_LABELS[type], icon: <TaskTypeIcon type={type} withLabel /> })),
+        options: TASK_TYPES.map((type) => ({
+          value: type,
+          label: TASK_TYPE_LABELS[type],
+          icon: <TaskTypeIcon type={type} withLabel />,
+        })),
       }
     case 'priority':
       return {
@@ -68,7 +71,11 @@ function filterDef(id: TaskFilterId, sources: TaskFilterSources): TaskFilterDef 
       return {
         id,
         label: 'Label',
-        options: sources.labels.map((label) => ({ value: label, label, icon: <TaskLabelChip name={label} variant="outline" /> })),
+        options: sources.labels.map((label) => ({
+          value: label,
+          label,
+          icon: <TaskLabelChip name={label} variant='outline' />,
+        })),
         emptyText: 'No labels used yet',
       }
     case 'version':

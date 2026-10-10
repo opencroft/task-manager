@@ -12,7 +12,7 @@
 // table) hands that scroller over through `PageScrollerContext`; while it is
 // mounted, it is what is kept and restored instead of the pane.
 
-import { type RefObject, createContext, useEffect, useLayoutEffect, useRef } from 'react'
+import { createContext, type RefObject, useEffect, useLayoutEffect, useRef } from 'react'
 
 import { takeAppMove, useTasksLocation } from '../lib/router'
 
@@ -99,7 +99,7 @@ export function usePageScrollMemory(scroller: RefObject<HTMLElement | null>): vo
     return () => document.removeEventListener('scroll', save, { capture: true })
   }, [scroller])
 
-  // `query` is a trigger only: a Back that changes just the query restores too.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `query` is a trigger only, so a Back that changes just the query restores too
   useLayoutEffect(() => {
     const element = scroller.current
     const pageChanged = page !== lastPage.current

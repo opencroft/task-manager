@@ -58,12 +58,17 @@ export type MatchResult = { kind: 'match'; ids: string[] } | { kind: 'pending' }
  * typed, or `none`.
  */
 export function createKeyMatcher(shortcuts: ShortcutDef[], timeoutMs = SEQUENCE_TIMEOUT_MS) {
-  const sequences = shortcuts.map((shortcut) => ({ id: shortcut.id, steps: shortcut.keys.map((chord) => chord.join('+')) }))
+  const sequences = shortcuts.map((shortcut) => ({
+    id: shortcut.id,
+    steps: shortcut.keys.map((chord) => chord.join('+')),
+  }))
   let pending: string[] = []
   let pendingAt = 0
 
   const lookup = (steps: string[]): MatchResult => {
-    const ids = sequences.filter((s) => s.steps.length === steps.length && s.steps.every((step, i) => step === steps[i])).map((s) => s.id)
+    const ids = sequences
+      .filter((s) => s.steps.length === steps.length && s.steps.every((step, i) => step === steps[i]))
+      .map((s) => s.id)
     if (ids.length > 0) {
       return { kind: 'match', ids }
     }

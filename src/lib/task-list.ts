@@ -23,7 +23,10 @@ function pageOffsets(from: number, to: number): number[] {
  * one round trip; a second round asks only for the pages past those, when the
  * project has grown since.
  */
-export async function listAllTasks(api: TasksApi, input: Omit<TaskListInput, 'limit' | 'offset'> = {}): Promise<TaskSummary[]> {
+export async function listAllTasks(
+  api: TasksApi,
+  input: Omit<TaskListInput, 'limit' | 'offset'> = {},
+): Promise<TaskSummary[]> {
   const totals = knownTotals.get(api) ?? new Map<string, number>()
   knownTotals.set(api, totals)
   const query = JSON.stringify(input)

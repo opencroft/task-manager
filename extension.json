@@ -1,7 +1,7 @@
 {
   "id": "opencroft.task-manager",
   "name": "Task Manager",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Task manager: tasks with subtasks, statuses, a timeline, a board and workflows, usable by people and agents alike.",
   "provides": {
     "apps": [
@@ -26,29 +26,94 @@
             "inputSchema": {
               "type": "object",
               "properties": {
-                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the rows above; full: every field of each task." },
-                "query": { "type": "string", "description": "Text to find in summary or description (substring, case-insensitive), or a task key such as TASK-12. A key is read however it was copied: any dash, surrounding punctuation (TASK-12:), a space (TASK 12), or #12 for a number in this project." },
-                "status": { "type": ["array", "object"], "items": { "type": ["string", "number"] }, "description": "Status names or ids (see status_list). Like every list filter here: a list to include, or {\"include\": [...], \"exclude\": [...]}." },
-                "statusCategory": { "type": ["array", "object"], "items": { "type": "string", "enum": ["todo", "in_progress", "done"] }, "description": "Match by status category instead of exact status." },
-                "assignee": { "type": ["array", "object"], "items": { "type": "string" }, "description": "Assignee names; \"me\" is you, \"none\" matches unassigned tasks." },
-                "type": { "type": ["array", "object"], "items": { "type": "string", "enum": ["task", "bug", "story", "epic"] } },
-                "priority": { "type": ["array", "object"], "items": { "type": "string", "enum": ["lowest", "low", "medium", "high", "highest"] } },
+                "detail": {
+                  "type": "string",
+                  "enum": ["compact", "full"],
+                  "description": "compact (default): the rows above; full: every field of each task."
+                },
+                "query": {
+                  "type": "string",
+                  "description": "Text to find in summary or description (substring, case-insensitive), or a task key such as TASK-12. A key is read however it was copied: any dash, surrounding punctuation (TASK-12:), a space (TASK 12), or #12 for a number in this project."
+                },
+                "status": {
+                  "type": ["array", "object"],
+                  "items": { "type": ["string", "number"] },
+                  "description": "Status names or ids (see status_list). Like every list filter here: a list to include, or {\"include\": [...], \"exclude\": [...]}."
+                },
+                "statusCategory": {
+                  "type": ["array", "object"],
+                  "items": { "type": "string", "enum": ["todo", "in_progress", "done"] },
+                  "description": "Match by status category instead of exact status."
+                },
+                "assignee": {
+                  "type": ["array", "object"],
+                  "items": { "type": "string" },
+                  "description": "Assignee names; \"me\" is you, \"none\" matches unassigned tasks."
+                },
+                "type": {
+                  "type": ["array", "object"],
+                  "items": { "type": "string", "enum": ["task", "bug", "story", "epic"] }
+                },
+                "priority": {
+                  "type": ["array", "object"],
+                  "items": { "type": "string", "enum": ["lowest", "low", "medium", "high", "highest"] }
+                },
                 "label": { "type": ["array", "object"], "items": { "type": "string" } },
-                "version": { "type": ["array", "object"], "items": { "type": "string" }, "description": "Version names (see version_list); \"none\" matches tasks in no version." },
-                "parent": { "type": ["string", "array", "object"], "items": { "type": "string" }, "description": "Only direct subtasks of these task keys; \"none\" matches top-level tasks. One key, a list, or {\"include\", \"exclude\"}." },
-                "scheduled": { "type": "boolean", "description": "true: only tasks with start and end dates; false: only tasks without." },
-                "hasOpenPr": { "type": "boolean", "description": "true: only tasks an open pull request mentions (see task_prs); false: only tasks none does." },
+                "version": {
+                  "type": ["array", "object"],
+                  "items": { "type": "string" },
+                  "description": "Version names (see version_list); \"none\" matches tasks in no version."
+                },
+                "parent": {
+                  "type": ["string", "array", "object"],
+                  "items": { "type": "string" },
+                  "description": "Only direct subtasks of these task keys; \"none\" matches top-level tasks. One key, a list, or {\"include\", \"exclude\"}."
+                },
+                "scheduled": {
+                  "type": "boolean",
+                  "description": "true: only tasks with start and end dates; false: only tasks without."
+                },
+                "hasOpenPr": {
+                  "type": "boolean",
+                  "description": "true: only tasks an open pull request mentions (see task_prs); false: only tasks none does."
+                },
                 "sort": {
                   "type": "object",
                   "properties": {
-                    "field": { "type": "string", "enum": ["rank", "key", "summary", "status", "type", "priority", "assignee", "reporter", "startDate", "endDate", "createdAt", "updatedAt"] },
+                    "field": {
+                      "type": "string",
+                      "enum": [
+                        "rank",
+                        "key",
+                        "summary",
+                        "status",
+                        "type",
+                        "priority",
+                        "assignee",
+                        "reporter",
+                        "startDate",
+                        "endDate",
+                        "createdAt",
+                        "updatedAt"
+                      ]
+                    },
                     "dir": { "type": "string", "enum": ["asc", "desc"] }
                   }
                 },
-                "board": { "type": "string", "description": "A board's id or name (see board_list): only the tasks it shows, those in its columns' statuses that match its preset filter. The other filters narrow it further." },
-                "limit": { "type": "number", "description": "Page size, default 200, max 1000; with scope \"all\" default 50, max 200." },
+                "board": {
+                  "type": "string",
+                  "description": "A board's id or name (see board_list): only the tasks it shows, those in its columns' statuses that match its preset filter. The other filters narrow it further."
+                },
+                "limit": {
+                  "type": "number",
+                  "description": "Page size, default 200, max 1000; with scope \"all\" default 50, max 200."
+                },
                 "offset": { "type": "number" },
-                "scope": { "type": "string", "enum": ["this", "all"], "description": "this (default): this project. all: every task-manager App you can see, exact key matches first, then the most recently changed; each row adds app (its <space>.<app> address, for app_call), and projects says how many were read. With all, status, version, parent, sort and offset are refused (they name things of one project): use statusCategory." }
+                "scope": {
+                  "type": "string",
+                  "enum": ["this", "all"],
+                  "description": "this (default): this project. all: every task-manager App you can see, exact key matches first, then the most recently changed; each row adds app (its <space>.<app> address, for app_call), and projects says how many were read. With all, status, version, parent, sort and offset are refused (they name things of one project): use statusCategory."
+                }
               }
             }
           },
@@ -59,8 +124,15 @@
               "type": "object",
               "properties": {
                 "key": { "type": "string", "description": "Task key, e.g. TASK-12." },
-                "commentsLimit": { "type": "number", "description": "How many of the latest comments to return, 1–50. Default 5." },
-                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the answer above; full: the whole task with every comment." }
+                "commentsLimit": {
+                  "type": "number",
+                  "description": "How many of the latest comments to return, 1–50. Default 5."
+                },
+                "detail": {
+                  "type": "string",
+                  "enum": ["compact", "full"],
+                  "description": "compact (default): the answer above; full: the whole task with every comment."
+                }
               },
               "required": ["key"]
             }
@@ -72,7 +144,10 @@
               "type": "object",
               "properties": {
                 "key": { "type": "string", "description": "Task key, e.g. TASK-12." },
-                "before": { "type": "string", "description": "The next of the page before. Omitted: the newest comments." },
+                "before": {
+                  "type": "string",
+                  "description": "The next of the page before. Omitted: the newest comments."
+                },
                 "limit": { "type": "number", "description": "Comments per page, 1–50. Default 10." }
               },
               "required": ["key"]
@@ -84,18 +159,34 @@
             "inputSchema": {
               "type": "object",
               "properties": {
-                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the task as a row; full: the whole task." },
+                "detail": {
+                  "type": "string",
+                  "enum": ["compact", "full"],
+                  "description": "compact (default): the task as a row; full: the whole task."
+                },
                 "summary": { "type": "string", "description": "One-line title." },
                 "description": { "type": "string", "description": "Markdown." },
                 "type": { "type": "string", "enum": ["task", "bug", "story", "epic"] },
                 "priority": { "type": "string", "enum": ["lowest", "low", "medium", "high", "highest"] },
                 "status": { "type": ["string", "number"], "description": "Status name or id (see status_list)." },
-                "assignee": { "type": ["string", "object", "null"], "description": "A plain name from assignee_list, agent or person alike, e.g. \"Alice\"; \"me\" is you. The object assignee_list gives works too. Only someone not in the user directory and not listed yet needs {\"kind\":\"person\",\"name\":\"...\"}." },
+                "assignee": {
+                  "type": ["string", "object", "null"],
+                  "description": "A plain name from assignee_list, agent or person alike, e.g. \"Alice\"; \"me\" is you. The object assignee_list gives works too. Only someone not in the user directory and not listed yet needs {\"kind\":\"person\",\"name\":\"...\"}."
+                },
                 "parent": { "type": ["string", "null"], "description": "Parent task key, making this a subtask." },
                 "labels": { "type": "array", "items": { "type": "string" } },
-                "version": { "type": ["string", "number", "null"], "description": "A version's name (see version_list) to plan the task into." },
-                "startDate": { "type": ["string", "null"], "description": "YYYY-MM-DD. Give both startDate and endDate, or neither." },
-                "endDate": { "type": ["string", "null"], "description": "YYYY-MM-DD, inclusive, not before startDate." },
+                "version": {
+                  "type": ["string", "number", "null"],
+                  "description": "A version's name (see version_list) to plan the task into."
+                },
+                "startDate": {
+                  "type": ["string", "null"],
+                  "description": "YYYY-MM-DD. Give both startDate and endDate, or neither."
+                },
+                "endDate": {
+                  "type": ["string", "null"],
+                  "description": "YYYY-MM-DD, inclusive, not before startDate."
+                },
                 "before": { "type": "string", "description": "Place just before this task key in the backlog order." },
                 "after": { "type": "string", "description": "Place just after this task key in the backlog order." }
               },
@@ -108,16 +199,26 @@
             "inputSchema": {
               "type": "object",
               "properties": {
-                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the task as a row; full: the whole task." },
+                "detail": {
+                  "type": "string",
+                  "enum": ["compact", "full"],
+                  "description": "compact (default): the task as a row; full: the whole task."
+                },
                 "key": { "type": "string" },
                 "summary": { "type": "string" },
                 "description": { "type": "string", "description": "Markdown; replaces the whole description." },
                 "type": { "type": "string", "enum": ["task", "bug", "story", "epic"] },
                 "priority": { "type": "string", "enum": ["lowest", "low", "medium", "high", "highest"] },
                 "status": { "type": ["string", "number"], "description": "Status name or id (see status_list)." },
-                "assignee": { "type": ["string", "object", "null"], "description": "A plain name from assignee_list, agent or person alike, e.g. \"Alice\"; \"me\" is you; null unassigns. The object assignee_list gives works too. Only someone not in the user directory and not listed yet needs {\"kind\":\"person\",\"name\":\"...\"}." },
+                "assignee": {
+                  "type": ["string", "object", "null"],
+                  "description": "A plain name from assignee_list, agent or person alike, e.g. \"Alice\"; \"me\" is you; null unassigns. The object assignee_list gives works too. Only someone not in the user directory and not listed yet needs {\"kind\":\"person\",\"name\":\"...\"}."
+                },
                 "labels": { "type": "array", "items": { "type": "string" }, "description": "Replaces all labels." },
-                "version": { "type": ["string", "number", "null"], "description": "A version's name (see version_list); null or \"none\" takes the task out of its version." },
+                "version": {
+                  "type": ["string", "number", "null"],
+                  "description": "A version's name (see version_list); null or \"none\" takes the task out of its version."
+                },
                 "startDate": { "type": ["string", "null"] },
                 "endDate": { "type": ["string", "null"] }
               },
@@ -130,9 +231,16 @@
             "inputSchema": {
               "type": "object",
               "properties": {
-                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the task as a row; full: the whole task." },
+                "detail": {
+                  "type": "string",
+                  "enum": ["compact", "full"],
+                  "description": "compact (default): the task as a row; full: the whole task."
+                },
                 "key": { "type": "string" },
-                "status": { "type": ["string", "number"], "description": "Target status name or id (see status_list)." },
+                "status": {
+                  "type": ["string", "number"],
+                  "description": "Target status name or id (see status_list)."
+                },
                 "comment": { "type": "string", "description": "Markdown comment recorded with the change." }
               },
               "required": ["key", "status"]
@@ -144,7 +252,11 @@
             "inputSchema": {
               "type": "object",
               "properties": {
-                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the task as a row; full: every field of it." },
+                "detail": {
+                  "type": "string",
+                  "enum": ["compact", "full"],
+                  "description": "compact (default): the task as a row; full: every field of it."
+                },
                 "key": { "type": "string" },
                 "parent": { "type": ["string", "null"] },
                 "before": { "type": "string" },
@@ -167,7 +279,7 @@
           },
           {
             "id": "task_comment",
-            "description": "Add a markdown comment to a task, attributed to you. @Name (an agent or person from assignee_list, full name or a first name only one has) puts it in their inbox.",
+            "description": "Add a markdown comment to a task, attributed to you. @<username> mentions that person or agent (a person's handle, or an agent's agent.<name>): the comment goes to their inbox, and an agent gets it in its session on the task. A display name is not a mention, and nothing inside inline code or a code block mentions, so quote a mention in backticks to show it without sending it.",
             "inputSchema": {
               "type": "object",
               "properties": {
@@ -184,7 +296,10 @@
               "type": "object",
               "properties": {
                 "key": { "type": "string" },
-                "id": { "type": "number", "description": "The comment's id, a whole number from task_get or task_comments." },
+                "id": {
+                  "type": "number",
+                  "description": "The comment's id, a whole number from task_get or task_comments."
+                },
                 "body": { "type": "string", "description": "Markdown." }
               },
               "required": ["key", "id", "body"]
@@ -197,7 +312,10 @@
               "type": "object",
               "properties": {
                 "key": { "type": "string" },
-                "id": { "type": "number", "description": "The comment's id, a whole number from task_get or task_comments." }
+                "id": {
+                  "type": "number",
+                  "description": "The comment's id, a whole number from task_get or task_comments."
+                }
               },
               "required": ["key", "id"]
             }
@@ -215,7 +333,10 @@
               "properties": {
                 "name": { "type": "string" },
                 "category": { "type": "string", "enum": ["todo", "in_progress", "done"] },
-                "color": { "type": ["string", "null"], "description": "Hex (#3b82f6) or a color name; omit for the category default." }
+                "color": {
+                  "type": ["string", "null"],
+                  "description": "Hex (#3b82f6) or a color name; omit for the category default."
+                }
               },
               "required": ["name", "category"]
             }
@@ -307,7 +428,91 @@
             "inputSchema": {
               "type": "object",
               "properties": {
-                "workflow": { "type": "object", "properties": { "id": { "type": "string", "description": "Pass to replace an existing workflow; omit to create one." }, "name": { "type": "string" }, "description": { "type": "string" }, "isDefault": { "type": "boolean", "description": "The workflow a task runs when workflow_start names none. The project's first workflow is always the default." }, "steps": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "string", "description": "Keep an existing step's id when editing it, so running tasks still match it. Omit for a new step." }, "name": { "type": "string" }, "triggerStatus": { "type": ["string", "number"], "description": "The status whose entry starts this step when a person moves the task there, by name or id (see status_list). Several steps may share one: that move opens the first of them, and a transition reaches the others." }, "kind": { "type": "string", "enum": ["agent", "approval"], "description": "agent (default): an agent's session works the step. approval: people decide it, approving or rejecting the task; it has approval instead of worker, instructions, folder and sessionOptions." }, "approval": { "type": "object", "description": "An approval step's approvers: { \"approvers\": [{ \"personId\"?: directory user id, \"name\"?: the person's name (when no id), \"required\"?: true when they must approve }], \"needed\"?: approvals that pass the step, from the required count (at least 1) to every approver; omitted: the required count, at least 1 }. Only people (see assignee_list). The step passes once every required approver approved and the approvals reach needed; any one Reject rejects it. Approve leaves by a pass-gated transition, Reject by a fail-gated one, so the step needs at least one of each." }, "worker": { "type": "object", "description": "An agent step's worker: { \"kind\":\"assignee\" } for the task's agent assignee, or { \"kind\":\"agent\",\"agentNodeId\":\"...\" } for a fixed agent (see space_chat for the agents it can be). Omitted: the assignee." }, "instructions": { "type": "string", "description": "Markdown sent as the session's opening message exactly as written, placeholders filled: nothing about the task is added, so name it here (e.g. {{task.key}}: {{task.summary}}). Omitted: \"{{ task.key }}: {{ task.summary }}\"; an empty string stays empty. Placeholders: {{task.key}}, {{task.summary}}, {{task.description}}, {{task.status}}, {{task.type}}, {{task.priority}}, {{task.assignee}}, {{task.url}}, {{step.name}}, {{workflow.name}}, and for an EARLIER step {{steps.<step-name-slug>.outcome}} (or .summary, .agent, .thread). Only how to finish the step is appended after them." }, "transitions": { "type": "array", "items": { "type": ["object", "string", "number"] }, "description": "The ways the step's agent may finish it, in the order offered: { \"id\"?: keep an existing one's, \"label\"?: what the agent picks it by and the run shows, e.g. \"Back to Design\" (distinct within the step; omitted: made from where it leads), \"toStep\"?: the step that opens next, by name or id, or \"end\" (or null) to finish the run (omitted: the first step that status starts, else the end), \"status\": the status (name or id) the task moves to, \"gate\"?: \"pass\" or \"fail\", the round's result shown on the run (omitted or null: pass into a later step or the end, fail back to the same or an earlier one) }. A bare status is { \"status\": it }. Never into the step itself." }, "folder": { "type": "string", "description": "The folder of the space chat's thread list to file the step's thread in, by its name as shown there (as group_chat_start_thread's folder): an exact name match goes into that folder; with none, the folder is created. Omit or leave empty for the top level. A step that comes back reuses its thread, which stays where it is." }, "sessionOptions": { "type": "object", "description": "The chat command bar's settings applied to the step's session every time the step is entered, before its message is sent. Each optional; one left out leaves the session's own setting as it is. A value the session's agent does not offer is skipped then (the run's round records it) and the others still apply.", "properties": { "effort": { "type": "string", "enum": ["max", "extra", "high", "medium", "low", "default", "off"], "description": "Reasoning effort." }, "presence": { "type": "object", "description": "How often the agent reads what is sent to it: { \"kind\": \"high-attention\" | \"realtime\" | \"online\" | \"minutes\" | \"hourly\" | \"daily\" }, or { \"kind\": \"custom\", \"intervalMs\": minutes × 60000 }. The step's own message is read at that cadence too." }, "permissionMode": { "type": "string", "enum": ["auto", "plan", "manual-edits", "accept-edits", "reject-edits", "bypass"], "description": "Permission mode." }, "compactAbove": { "type": "integer", "minimum": 0, "description": "The step's own, not the command bar's: when the step comes back to a session it already has (a rework, or the agent's next step on the task) and that session holds more context than this many tokens, the session is compacted before the step's message, and the message then gives the step's instructions again. Omitted: 200000. 0: never. The run's round records the compaction (context before and after); a failed one still sends the message." } } } }, "required": ["name", "triggerStatus", "transitions"] } } }, "required": ["name", "steps"] }
+                "workflow": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "Pass to replace an existing workflow; omit to create one."
+                    },
+                    "name": { "type": "string" },
+                    "description": { "type": "string" },
+                    "isDefault": {
+                      "type": "boolean",
+                      "description": "The workflow a task runs when workflow_start names none. The project's first workflow is always the default."
+                    },
+                    "steps": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "Keep an existing step's id when editing it, so running tasks still match it. Omit for a new step."
+                          },
+                          "name": { "type": "string" },
+                          "triggerStatus": {
+                            "type": ["string", "number"],
+                            "description": "The status whose entry starts this step when a person moves the task there, by name or id (see status_list). Several steps may share one: that move opens the first of them, and a transition reaches the others."
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": ["agent", "approval"],
+                            "description": "agent (default): an agent's session works the step. approval: people decide it, approving or rejecting the task; it has approval instead of worker, instructions, folder and sessionOptions."
+                          },
+                          "approval": {
+                            "type": "object",
+                            "description": "An approval step's approvers: { \"approvers\": [{ \"personId\"?: directory user id, \"name\"?: the person's name (when no id), \"required\"?: true when they must approve }], \"needed\"?: approvals that pass the step, from the required count (at least 1) to every approver; omitted: the required count, at least 1 }. Only people (see assignee_list). The step passes once every required approver approved and the approvals reach needed; any one Reject rejects it. Approve leaves by a pass-gated transition, Reject by a fail-gated one, so the step needs at least one of each."
+                          },
+                          "worker": {
+                            "type": "object",
+                            "description": "An agent step's worker: { \"kind\":\"assignee\" } for the task's agent assignee, or { \"kind\":\"agent\",\"agentNodeId\":\"...\" } for a fixed agent (see space_chat for the agents it can be). Omitted: the assignee."
+                          },
+                          "instructions": {
+                            "type": "string",
+                            "description": "Markdown sent as the session's opening message exactly as written, placeholders filled: nothing about the task is added, so name it here (e.g. {{task.key}}: {{task.summary}}). Omitted: \"{{ task.key }}: {{ task.summary }}\"; an empty string stays empty. Placeholders: {{task.key}}, {{task.summary}}, {{task.description}}, {{task.status}}, {{task.type}}, {{task.priority}}, {{task.assignee}}, {{task.url}}, {{step.name}}, {{workflow.name}}, and for an EARLIER step {{steps.<step-name-slug>.outcome}} (or .summary, .agent, .thread). Only how to finish the step is appended after them."
+                          },
+                          "transitions": {
+                            "type": "array",
+                            "items": { "type": ["object", "string", "number"] },
+                            "description": "The ways the step's agent may finish it, in the order offered: { \"id\"?: keep an existing one's, \"label\"?: what the agent picks it by and the run shows, e.g. \"Back to Design\" (distinct within the step; omitted: made from where it leads), \"toStep\"?: the step that opens next, by name or id, or \"end\" (or null) to finish the run (omitted: the first step that status starts, else the end), \"status\": the status (name or id) the task moves to, \"gate\"?: \"pass\" or \"fail\", the round's result shown on the run (omitted or null: pass into a later step or the end, fail back to the same or an earlier one) }. A bare status is { \"status\": it }. Never into the step itself."
+                          },
+                          "folder": {
+                            "type": "string",
+                            "description": "The folder of the space chat's thread list to file the step's thread in, by its name as shown there (as group_chat_start_thread's folder): an exact name match goes into that folder; with none, the folder is created. Omit or leave empty for the top level. A step that comes back reuses its thread, which stays where it is."
+                          },
+                          "sessionOptions": {
+                            "type": "object",
+                            "description": "The chat command bar's settings applied to the step's session every time the step is entered, before its message is sent. Each optional; one left out leaves the session's own setting as it is. A value the session's agent does not offer is skipped then (the run's round records it) and the others still apply.",
+                            "properties": {
+                              "effort": {
+                                "type": "string",
+                                "enum": ["max", "extra", "high", "medium", "low", "default", "off"],
+                                "description": "Reasoning effort."
+                              },
+                              "presence": {
+                                "type": "object",
+                                "description": "How often the agent reads what is sent to it: { \"kind\": \"high-attention\" | \"realtime\" | \"online\" | \"minutes\" | \"hourly\" | \"daily\" }, or { \"kind\": \"custom\", \"intervalMs\": minutes × 60000 }. The step's own message is read at that cadence too."
+                              },
+                              "permissionMode": {
+                                "type": "string",
+                                "enum": ["auto", "plan", "manual-edits", "accept-edits", "reject-edits", "bypass"],
+                                "description": "Permission mode."
+                              },
+                              "compactAbove": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "description": "The step's own, not the command bar's: when the step comes back to a session it already has (a rework, or the agent's next step on the task) and that session holds more context than this many tokens, the session is compacted before the step's message, and the message then gives the step's instructions again. Omitted: 200000. 0: never. The run's round records the compaction (context before and after); a failed one still sends the message."
+                              }
+                            }
+                          }
+                        },
+                        "required": ["name", "triggerStatus", "transitions"]
+                      }
+                    }
+                  },
+                  "required": ["name", "steps"]
+                }
               },
               "required": ["workflow"]
             }
@@ -318,7 +523,91 @@
             "inputSchema": {
               "type": "object",
               "properties": {
-                "workflow": { "type": "object", "properties": { "id": { "type": "string", "description": "Pass to replace an existing workflow; omit to create one." }, "name": { "type": "string" }, "description": { "type": "string" }, "isDefault": { "type": "boolean", "description": "The workflow a task runs when workflow_start names none. The project's first workflow is always the default." }, "steps": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "string", "description": "Keep an existing step's id when editing it, so running tasks still match it. Omit for a new step." }, "name": { "type": "string" }, "triggerStatus": { "type": ["string", "number"], "description": "The status whose entry starts this step when a person moves the task there, by name or id (see status_list). Several steps may share one: that move opens the first of them, and a transition reaches the others." }, "kind": { "type": "string", "enum": ["agent", "approval"], "description": "agent (default): an agent's session works the step. approval: people decide it, approving or rejecting the task; it has approval instead of worker, instructions, folder and sessionOptions." }, "approval": { "type": "object", "description": "An approval step's approvers: { \"approvers\": [{ \"personId\"?: directory user id, \"name\"?: the person's name (when no id), \"required\"?: true when they must approve }], \"needed\"?: approvals that pass the step, from the required count (at least 1) to every approver; omitted: the required count, at least 1 }. Only people (see assignee_list). The step passes once every required approver approved and the approvals reach needed; any one Reject rejects it. Approve leaves by a pass-gated transition, Reject by a fail-gated one, so the step needs at least one of each." }, "worker": { "type": "object", "description": "An agent step's worker: { \"kind\":\"assignee\" } for the task's agent assignee, or { \"kind\":\"agent\",\"agentNodeId\":\"...\" } for a fixed agent (see space_chat for the agents it can be). Omitted: the assignee." }, "instructions": { "type": "string", "description": "Markdown sent as the session's opening message exactly as written, placeholders filled: nothing about the task is added, so name it here (e.g. {{task.key}}: {{task.summary}}). Omitted: \"{{ task.key }}: {{ task.summary }}\"; an empty string stays empty. Placeholders: {{task.key}}, {{task.summary}}, {{task.description}}, {{task.status}}, {{task.type}}, {{task.priority}}, {{task.assignee}}, {{task.url}}, {{step.name}}, {{workflow.name}}, and for an EARLIER step {{steps.<step-name-slug>.outcome}} (or .summary, .agent, .thread). Only how to finish the step is appended after them." }, "transitions": { "type": "array", "items": { "type": ["object", "string", "number"] }, "description": "The ways the step's agent may finish it, in the order offered: { \"id\"?: keep an existing one's, \"label\"?: what the agent picks it by and the run shows, e.g. \"Back to Design\" (distinct within the step; omitted: made from where it leads), \"toStep\"?: the step that opens next, by name or id, or \"end\" (or null) to finish the run (omitted: the first step that status starts, else the end), \"status\": the status (name or id) the task moves to, \"gate\"?: \"pass\" or \"fail\", the round's result shown on the run (omitted or null: pass into a later step or the end, fail back to the same or an earlier one) }. A bare status is { \"status\": it }. Never into the step itself." }, "folder": { "type": "string", "description": "The folder of the space chat's thread list to file the step's thread in, by its name as shown there (as group_chat_start_thread's folder): an exact name match goes into that folder; with none, the folder is created. Omit or leave empty for the top level. A step that comes back reuses its thread, which stays where it is." }, "sessionOptions": { "type": "object", "description": "The chat command bar's settings applied to the step's session every time the step is entered, before its message is sent. Each optional; one left out leaves the session's own setting as it is. A value the session's agent does not offer is skipped then (the run's round records it) and the others still apply.", "properties": { "effort": { "type": "string", "enum": ["max", "extra", "high", "medium", "low", "default", "off"], "description": "Reasoning effort." }, "presence": { "type": "object", "description": "How often the agent reads what is sent to it: { \"kind\": \"high-attention\" | \"realtime\" | \"online\" | \"minutes\" | \"hourly\" | \"daily\" }, or { \"kind\": \"custom\", \"intervalMs\": minutes × 60000 }. The step's own message is read at that cadence too." }, "permissionMode": { "type": "string", "enum": ["auto", "plan", "manual-edits", "accept-edits", "reject-edits", "bypass"], "description": "Permission mode." }, "compactAbove": { "type": "integer", "minimum": 0, "description": "The step's own, not the command bar's: when the step comes back to a session it already has (a rework, or the agent's next step on the task) and that session holds more context than this many tokens, the session is compacted before the step's message, and the message then gives the step's instructions again. Omitted: 200000. 0: never. The run's round records the compaction (context before and after); a failed one still sends the message." } } } }, "required": ["name", "triggerStatus", "transitions"] } } }, "required": ["name", "steps"] }
+                "workflow": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "Pass to replace an existing workflow; omit to create one."
+                    },
+                    "name": { "type": "string" },
+                    "description": { "type": "string" },
+                    "isDefault": {
+                      "type": "boolean",
+                      "description": "The workflow a task runs when workflow_start names none. The project's first workflow is always the default."
+                    },
+                    "steps": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "Keep an existing step's id when editing it, so running tasks still match it. Omit for a new step."
+                          },
+                          "name": { "type": "string" },
+                          "triggerStatus": {
+                            "type": ["string", "number"],
+                            "description": "The status whose entry starts this step when a person moves the task there, by name or id (see status_list). Several steps may share one: that move opens the first of them, and a transition reaches the others."
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": ["agent", "approval"],
+                            "description": "agent (default): an agent's session works the step. approval: people decide it, approving or rejecting the task; it has approval instead of worker, instructions, folder and sessionOptions."
+                          },
+                          "approval": {
+                            "type": "object",
+                            "description": "An approval step's approvers: { \"approvers\": [{ \"personId\"?: directory user id, \"name\"?: the person's name (when no id), \"required\"?: true when they must approve }], \"needed\"?: approvals that pass the step, from the required count (at least 1) to every approver; omitted: the required count, at least 1 }. Only people (see assignee_list). The step passes once every required approver approved and the approvals reach needed; any one Reject rejects it. Approve leaves by a pass-gated transition, Reject by a fail-gated one, so the step needs at least one of each."
+                          },
+                          "worker": {
+                            "type": "object",
+                            "description": "An agent step's worker: { \"kind\":\"assignee\" } for the task's agent assignee, or { \"kind\":\"agent\",\"agentNodeId\":\"...\" } for a fixed agent (see space_chat for the agents it can be). Omitted: the assignee."
+                          },
+                          "instructions": {
+                            "type": "string",
+                            "description": "Markdown sent as the session's opening message exactly as written, placeholders filled: nothing about the task is added, so name it here (e.g. {{task.key}}: {{task.summary}}). Omitted: \"{{ task.key }}: {{ task.summary }}\"; an empty string stays empty. Placeholders: {{task.key}}, {{task.summary}}, {{task.description}}, {{task.status}}, {{task.type}}, {{task.priority}}, {{task.assignee}}, {{task.url}}, {{step.name}}, {{workflow.name}}, and for an EARLIER step {{steps.<step-name-slug>.outcome}} (or .summary, .agent, .thread). Only how to finish the step is appended after them."
+                          },
+                          "transitions": {
+                            "type": "array",
+                            "items": { "type": ["object", "string", "number"] },
+                            "description": "The ways the step's agent may finish it, in the order offered: { \"id\"?: keep an existing one's, \"label\"?: what the agent picks it by and the run shows, e.g. \"Back to Design\" (distinct within the step; omitted: made from where it leads), \"toStep\"?: the step that opens next, by name or id, or \"end\" (or null) to finish the run (omitted: the first step that status starts, else the end), \"status\": the status (name or id) the task moves to, \"gate\"?: \"pass\" or \"fail\", the round's result shown on the run (omitted or null: pass into a later step or the end, fail back to the same or an earlier one) }. A bare status is { \"status\": it }. Never into the step itself."
+                          },
+                          "folder": {
+                            "type": "string",
+                            "description": "The folder of the space chat's thread list to file the step's thread in, by its name as shown there (as group_chat_start_thread's folder): an exact name match goes into that folder; with none, the folder is created. Omit or leave empty for the top level. A step that comes back reuses its thread, which stays where it is."
+                          },
+                          "sessionOptions": {
+                            "type": "object",
+                            "description": "The chat command bar's settings applied to the step's session every time the step is entered, before its message is sent. Each optional; one left out leaves the session's own setting as it is. A value the session's agent does not offer is skipped then (the run's round records it) and the others still apply.",
+                            "properties": {
+                              "effort": {
+                                "type": "string",
+                                "enum": ["max", "extra", "high", "medium", "low", "default", "off"],
+                                "description": "Reasoning effort."
+                              },
+                              "presence": {
+                                "type": "object",
+                                "description": "How often the agent reads what is sent to it: { \"kind\": \"high-attention\" | \"realtime\" | \"online\" | \"minutes\" | \"hourly\" | \"daily\" }, or { \"kind\": \"custom\", \"intervalMs\": minutes × 60000 }. The step's own message is read at that cadence too."
+                              },
+                              "permissionMode": {
+                                "type": "string",
+                                "enum": ["auto", "plan", "manual-edits", "accept-edits", "reject-edits", "bypass"],
+                                "description": "Permission mode."
+                              },
+                              "compactAbove": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "description": "The step's own, not the command bar's: when the step comes back to a session it already has (a rework, or the agent's next step on the task) and that session holds more context than this many tokens, the session is compacted before the step's message, and the message then gives the step's instructions again. Omitted: 200000. 0: never. The run's round records the compaction (context before and after); a failed one still sends the message."
+                              }
+                            }
+                          }
+                        },
+                        "required": ["name", "triggerStatus", "transitions"]
+                      }
+                    }
+                  },
+                  "required": ["name", "steps"]
+                }
               },
               "required": ["workflow"]
             }
@@ -332,14 +621,40 @@
                 "workflow": { "type": "string", "description": "Workflow id or name (see workflows_list)." },
                 "step": { "type": "string", "description": "The step's current name or id." },
                 "name": { "type": "string", "description": "New step name." },
-                "triggerStatus": { "type": ["string", "number"], "description": "Status (name or id) whose entry starts this step." },
-                "kind": { "type": "string", "enum": ["agent", "approval"], "description": "agent: an agent's session works the step; approval: its approvers decide it. As in workflow_save." },
-                "approval": { "type": "object", "description": "An approval step's { approvers, needed? }, as in workflow_save; replaces them whole." },
-                "worker": { "type": "object", "description": "{ \"kind\":\"assignee\" } or { \"kind\":\"agent\",\"agentNodeId\":\"...\" } (see space_chat for the agents it can be)." },
-                "instructions": { "type": "string", "description": "Markdown opening message, sent exactly as written with placeholders filled; placeholders as in workflow_save." },
-                "transitions": { "type": "array", "items": { "type": ["object", "string", "number"] }, "description": "The step's transitions, as in workflow_save; replaces the list. Pass a kept one's id to keep it." },
-                "folder": { "type": "string", "description": "Thread-list folder of the space's chat the step's thread is filed in, by name; \"\" for the top level. As in workflow_save." },
-                "sessionOptions": { "type": "object", "description": "{ effort?, presence?, permissionMode?, compactAbove? } applied to the step's session before its message, as in workflow_save; replaces the step's whole set, so {} clears them all (compactAbove then takes its default)." }
+                "triggerStatus": {
+                  "type": ["string", "number"],
+                  "description": "Status (name or id) whose entry starts this step."
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": ["agent", "approval"],
+                  "description": "agent: an agent's session works the step; approval: its approvers decide it. As in workflow_save."
+                },
+                "approval": {
+                  "type": "object",
+                  "description": "An approval step's { approvers, needed? }, as in workflow_save; replaces them whole."
+                },
+                "worker": {
+                  "type": "object",
+                  "description": "{ \"kind\":\"assignee\" } or { \"kind\":\"agent\",\"agentNodeId\":\"...\" } (see space_chat for the agents it can be)."
+                },
+                "instructions": {
+                  "type": "string",
+                  "description": "Markdown opening message, sent exactly as written with placeholders filled; placeholders as in workflow_save."
+                },
+                "transitions": {
+                  "type": "array",
+                  "items": { "type": ["object", "string", "number"] },
+                  "description": "The step's transitions, as in workflow_save; replaces the list. Pass a kept one's id to keep it."
+                },
+                "folder": {
+                  "type": "string",
+                  "description": "Thread-list folder of the space's chat the step's thread is filed in, by name; \"\" for the top level. As in workflow_save."
+                },
+                "sessionOptions": {
+                  "type": "object",
+                  "description": "{ effort?, presence?, permissionMode?, compactAbove? } applied to the step's session before its message, as in workflow_save; replaces the step's whole set, so {} clears them all (compactAbove then takes its default)."
+                }
               },
               "required": ["workflow", "step"]
             }
@@ -361,7 +676,11 @@
             "inputSchema": {
               "type": "object",
               "properties": {
-                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the run in brief; full: every field of it." },
+                "detail": {
+                  "type": "string",
+                  "enum": ["compact", "full"],
+                  "description": "compact (default): the run in brief; full: every field of it."
+                },
                 "task": { "type": "string", "description": "Task key, e.g. TASK-12." },
                 "workflow": { "type": "string", "description": "Workflow id or name (see workflows_list)." }
               },
@@ -385,10 +704,20 @@
             "inputSchema": {
               "type": "object",
               "properties": {
-                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the run in brief; full: every field of it." },
+                "detail": {
+                  "type": "string",
+                  "enum": ["compact", "full"],
+                  "description": "compact (default): the run in brief; full: every field of it."
+                },
                 "task": { "type": "string", "description": "Task key, e.g. TASK-12." },
-                "transition": { "type": "string", "description": "The label (or id) of one of the open step's transitions; workflow_run_get lists them as openStep.transitions. A status name or id also works: when two transitions set it, the one into the step that status starts." },
-                "summary": { "type": "string", "description": "Markdown: what was done and what the next step should know. Recorded on the step and posted as a task comment." }
+                "transition": {
+                  "type": "string",
+                  "description": "The label (or id) of one of the open step's transitions; workflow_run_get lists them as openStep.transitions. A status name or id also works: when two transitions set it, the one into the step that status starts."
+                },
+                "summary": {
+                  "type": "string",
+                  "description": "Markdown: what was done and what the next step should know. Recorded on the step and posted as a task comment."
+                }
               },
               "required": ["task", "transition"]
             }
@@ -399,11 +728,25 @@
             "inputSchema": {
               "type": "object",
               "properties": {
-                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the run in brief; full: every field of it." },
+                "detail": {
+                  "type": "string",
+                  "enum": ["compact", "full"],
+                  "description": "compact (default): the run in brief; full: every field of it."
+                },
                 "task": { "type": "string", "description": "Task key, e.g. TASK-12." },
-                "verdict": { "type": "string", "enum": ["approve", "reject"], "description": "approve leaves by a pass-gated transition, reject by a fail-gated one." },
-                "transition": { "type": "string", "description": "The label (or id) of the transition to take, from workflow_run_get's openStep.approval.transitions for the verdict. Required when the verdict has more than one." },
-                "comment": { "type": "string", "description": "Why: recorded with the decision, and on the step when it settles the step." }
+                "verdict": {
+                  "type": "string",
+                  "enum": ["approve", "reject"],
+                  "description": "approve leaves by a pass-gated transition, reject by a fail-gated one."
+                },
+                "transition": {
+                  "type": "string",
+                  "description": "The label (or id) of the transition to take, from workflow_run_get's openStep.approval.transitions for the verdict. Required when the verdict has more than one."
+                },
+                "comment": {
+                  "type": "string",
+                  "description": "Why: recorded with the decision, and on the step when it settles the step."
+                }
               },
               "required": ["task", "verdict"]
             }
@@ -414,7 +757,11 @@
             "inputSchema": {
               "type": "object",
               "properties": {
-                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the run in brief; full: every field of it." },
+                "detail": {
+                  "type": "string",
+                  "enum": ["compact", "full"],
+                  "description": "compact (default): the run in brief; full: every field of it."
+                },
                 "task": { "type": "string", "description": "Task key, e.g. TASK-12." },
                 "step": { "type": "string", "description": "Step name or id." }
               },
@@ -427,7 +774,11 @@
             "inputSchema": {
               "type": "object",
               "properties": {
-                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the run in brief; full: every field of it." },
+                "detail": {
+                  "type": "string",
+                  "enum": ["compact", "full"],
+                  "description": "compact (default): the run in brief; full: every field of it."
+                },
                 "task": { "type": "string", "description": "Task key, e.g. TASK-12." }
               },
               "required": ["task"]
@@ -439,7 +790,11 @@
             "inputSchema": {
               "type": "object",
               "properties": {
-                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): runs in brief; full: every field of each run and step." },
+                "detail": {
+                  "type": "string",
+                  "enum": ["compact", "full"],
+                  "description": "compact (default): runs in brief; full: every field of each run and step."
+                },
                 "state": { "type": "string", "enum": ["active", "finished", "cancelled"] },
                 "workflow": { "type": "string", "description": "Workflow id or name (see workflows_list)." },
                 "limit": { "type": "number", "description": "Default 200." },
@@ -449,10 +804,22 @@
                   "properties": {
                     "range": { "type": "string", "enum": ["7d", "30d", "90d", "all"], "description": "Default 30d." },
                     "step": { "type": "string", "description": "Step id or name." },
-                    "exit": { "type": "string", "enum": ["moved_on", "sent_back", "other", "cancelled", "open"], "description": "How the round ended (see workflow_stats exits)." },
+                    "exit": {
+                      "type": "string",
+                      "enum": ["moved_on", "sent_back", "other", "cancelled", "open"],
+                      "description": "How the round ended (see workflow_stats exits)."
+                    },
                     "transition": { "type": "string", "description": "With exit sent_back: that transition's label." },
-                    "rounds": { "type": "number", "enum": [1, 2, 3, 4], "description": "Rounds the run took at the step; 4 means 4 or more." },
-                    "couldntStart": { "type": "string", "enum": ["unassigned", "not_in_chat", "session_failed", "unrecorded"], "description": "The round couldn't start for this reason." }
+                    "rounds": {
+                      "type": "number",
+                      "enum": [1, 2, 3, 4],
+                      "description": "Rounds the run took at the step; 4 means 4 or more."
+                    },
+                    "couldntStart": {
+                      "type": "string",
+                      "enum": ["unassigned", "not_in_chat", "session_failed", "unrecorded"],
+                      "description": "The round couldn't start for this reason."
+                    }
                   },
                   "required": ["step"]
                 }
@@ -466,7 +833,11 @@
               "type": "object",
               "properties": {
                 "workflow": { "type": "string", "description": "Workflow id or name (see workflows_list)." },
-                "range": { "type": "string", "enum": ["7d", "30d", "90d", "all"], "description": "Runs started in the last 7, 30 or 90 days, or all. Default 30d." }
+                "range": {
+                  "type": "string",
+                  "enum": ["7d", "30d", "90d", "all"],
+                  "description": "Runs started in the last 7, 30 or 90 days, or all. Default 30d."
+                }
               },
               "required": ["workflow"]
             }
@@ -477,7 +848,11 @@
             "inputSchema": {
               "type": "object",
               "properties": {
-                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): statuses by name, empty fields left out; full: status objects with category and colour." },
+                "detail": {
+                  "type": "string",
+                  "enum": ["compact", "full"],
+                  "description": "compact (default): statuses by name, empty fields left out; full: status objects with category and colour."
+                },
                 "filter": {
                   "type": "string",
                   "enum": ["all", "assigned", "mentions", "workflows", "status"],
@@ -528,8 +903,15 @@
             "inputSchema": {
               "type": "object",
               "properties": {
-                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the task as a row; full: the whole task." },
-                "from": { "type": "string", "description": "Key of the task the relation reads from, e.g. TASK-3 in \"TASK-3 blocks TASK-7\"." },
+                "detail": {
+                  "type": "string",
+                  "enum": ["compact", "full"],
+                  "description": "compact (default): the task as a row; full: the whole task."
+                },
+                "from": {
+                  "type": "string",
+                  "description": "Key of the task the relation reads from, e.g. TASK-3 in \"TASK-3 blocks TASK-7\"."
+                },
                 "to": { "type": "string", "description": "Key of the other task, e.g. TASK-7." },
                 "type": {
                   "type": "string",
@@ -546,7 +928,11 @@
             "inputSchema": {
               "type": "object",
               "properties": {
-                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default): the task as a row; full: the whole task." },
+                "detail": {
+                  "type": "string",
+                  "enum": ["compact", "full"],
+                  "description": "compact (default): the task as a row; full: the whole task."
+                },
                 "from": { "type": "string", "description": "Key of the task the relation reads from." },
                 "to": { "type": "string", "description": "Key of the other task." },
                 "type": {
@@ -581,13 +967,37 @@
                   "type": "object",
                   "description": "The fields task_list takes: query, status, assignee, type, priority, label, version, parent, sort. A plain list is saved as {\"include\": [...]}; a view returns each list filter as {include?, exclude?}."
                 },
-                "group": { "type": ["string", "null"], "enum": ["assignee", null], "description": "Board views only: \"assignee\" for a swimlane per assignee, null for none." },
+                "group": {
+                  "type": ["string", "null"],
+                  "enum": ["assignee", null],
+                  "description": "Board views only: \"assignee\" for a swimlane per assignee, null for none."
+                },
                 "columns": {
                   "type": ["array", "null"],
-                  "items": { "type": "string", "enum": ["type", "key", "summary", "priority", "status", "assignee", "reporter", "parent", "labels", "version", "dates", "created", "updated"] },
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "type",
+                      "key",
+                      "summary",
+                      "priority",
+                      "status",
+                      "assignee",
+                      "reporter",
+                      "parent",
+                      "labels",
+                      "version",
+                      "dates",
+                      "created",
+                      "updated"
+                    ]
+                  },
                   "description": "Tasks views only: the table's columns, left to right; key and summary are required. null (or leaving it out on a new view) shows the default set: type, key, summary, priority, status, assignee, reporter, created, updated."
                 },
-                "shared": { "type": "boolean", "description": "true: everyone in the project sees it; false: only you." }
+                "shared": {
+                  "type": "boolean",
+                  "description": "true: everyone in the project sees it; false: only you."
+                }
               }
             }
           },
@@ -643,7 +1053,10 @@
                   "items": { "type": "object" },
                   "description": "Left to right: [{\"name\": \"Doing\" (omit or null: its first status's name), \"statuses\": [\"In Progress\", \"In Review\"] (names or ids, see status_list)}]."
                 },
-                "filter": { "type": "object", "description": "The preset filter: the fields task_list takes, less status and sort: query, assignee, type, priority, label, version, parent, each list one a plain list or {\"include\": [...], \"exclude\": [...]}. {} clears it." }
+                "filter": {
+                  "type": "object",
+                  "description": "The preset filter: the fields task_list takes, less status and sort: query, assignee, type, priority, label, version, parent, each list one a plain list or {\"include\": [...], \"exclude\": [...]}. {} clears it."
+                }
               }
             }
           },
@@ -664,11 +1077,28 @@
             "inputSchema": {
               "type": "object",
               "properties": {
-                "detail": { "type": "string", "enum": ["compact", "full"], "description": "compact (default) or full: every assigned task in full, startingSoon repeating them." },
-                "assignedLimit": { "type": "number", "description": "How many assigned tasks to return, 1–200. Default 10. Across projects it caps the merged list." },
-                "today": { "type": "string", "description": "YYYY-MM-DD: the day Starting soon counts from. Default today in UTC." },
-                "recentLimit": { "type": "number", "description": "How many recent notifications to return, 1–50. Default 8." },
-                "scope": { "type": "string", "enum": ["this", "all"], "description": "this (default): this project. all: every task-manager App you can see, each section merged in its own order; every row adds app (its <space>.<app> address, for app_call), and projects says how many were read." }
+                "detail": {
+                  "type": "string",
+                  "enum": ["compact", "full"],
+                  "description": "compact (default) or full: every assigned task in full, startingSoon repeating them."
+                },
+                "assignedLimit": {
+                  "type": "number",
+                  "description": "How many assigned tasks to return, 1–200. Default 10. Across projects it caps the merged list."
+                },
+                "today": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD: the day Starting soon counts from. Default today in UTC."
+                },
+                "recentLimit": {
+                  "type": "number",
+                  "description": "How many recent notifications to return, 1–50. Default 8."
+                },
+                "scope": {
+                  "type": "string",
+                  "enum": ["this", "all"],
+                  "description": "this (default): this project. all: every task-manager App you can see, each section merged in its own order; every row adds app (its <space>.<app> address, for app_call), and projects says how many were read."
+                }
               }
             }
           },
@@ -757,7 +1187,10 @@
             "inputSchema": {
               "type": "object",
               "properties": {
-                "label": { "type": "string", "description": "The label's name; case may differ when it matches one label." },
+                "label": {
+                  "type": "string",
+                  "description": "The label's name; case may differ when it matches one label."
+                },
                 "to": { "type": "string", "description": "The new name, up to 50 characters." }
               },
               "required": ["label", "to"]
@@ -806,7 +1239,11 @@
               "type": "object",
               "properties": {
                 "detail": { "type": "string", "enum": ["compact", "full"] },
-                "state": { "type": "array", "items": { "type": "string", "enum": ["planned", "released", "archived"] }, "description": "Only versions in these states." }
+                "state": {
+                  "type": "array",
+                  "items": { "type": "string", "enum": ["planned", "released", "archived"] },
+                  "description": "Only versions in these states."
+                }
               }
             }
           },
@@ -835,7 +1272,11 @@
                 "name": { "type": "string" },
                 "targetDate": { "type": ["string", "null"] },
                 "description": { "type": "string" },
-                "state": { "type": "string", "enum": ["planned", "archived"] }
+                "state": {
+                  "type": "string",
+                  "enum": ["planned", "archived"],
+                  "description": "Release a version with version_release instead: it sets the release date and returns the release notes."
+                }
               },
               "required": ["version"]
             }
@@ -849,7 +1290,10 @@
                 "detail": { "type": "string", "enum": ["compact", "full"] },
                 "version": { "type": ["string", "number"], "description": "The version's name or id." },
                 "date": { "type": "string", "description": "YYYY-MM-DD; today when omitted." },
-                "moveOpenTo": { "type": ["string", "number"], "description": "A planned version for the tasks not done yet, or \"none\" to take them out of any version." }
+                "moveOpenTo": {
+                  "type": ["string", "number"],
+                  "description": "A planned version for the tasks not done yet, or \"none\" to take them out of any version."
+                }
               },
               "required": ["version"]
             }
@@ -860,12 +1304,31 @@
             "inputSchema": {
               "type": "object",
               "properties": {
-                "url": { "type": "string", "description": "The OpenProject address. Set by a person only; agents use the saved one." },
-                "secretKey": { "type": "string", "description": "The name of the Secrets Store key holding the API token (never the token). Set by a person only." },
-                "project": { "type": "string", "description": "The OpenProject project's identifier or id; the saved one when omitted." },
-                "mapping": { "type": "object", "description": "Changes to the preview's mapping: {statuses?, types?, people?}, each keyed by the OpenProject id." },
-                "keepNumbers": { "type": "boolean", "description": "Give tasks OpenProject's numbers (PROJ-12 becomes <key>-12) where still free. Default true." },
-                "overwrite": { "type": "array", "items": { "type": "string" }, "description": "Keys of tasks in conflict whose edits here give way to OpenProject's values. Default none: every edit made here is kept." },
+                "url": {
+                  "type": "string",
+                  "description": "The OpenProject address. Set by a person only; agents use the saved one."
+                },
+                "secretKey": {
+                  "type": "string",
+                  "description": "The name of the Secrets Store key holding the API token (never the token). Set by a person only."
+                },
+                "project": {
+                  "type": "string",
+                  "description": "The OpenProject project's identifier or id; the saved one when omitted."
+                },
+                "mapping": {
+                  "type": "object",
+                  "description": "Changes to the preview's mapping: {statuses?, types?, people?}, each keyed by the OpenProject id."
+                },
+                "keepNumbers": {
+                  "type": "boolean",
+                  "description": "Give tasks OpenProject's numbers (PROJ-12 becomes <key>-12) where still free. Default true."
+                },
+                "overwrite": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Keys of tasks in conflict whose edits here give way to OpenProject's values. Default none: every edit made here is kept."
+                },
                 "relations": {
                   "type": "boolean",
                   "description": "true: import only OpenProject's relations (relates, blocks, follows/precedes, duplicates) between tasks imported before, found by the work package each came from; nothing else changes. Without confirm it previews. Returns {imported, found, added: {blocks, relates, duplicates, follows}, importedBefore, alreadyHere, skipped}. Each relation is imported once, so a re-run adds only new ones and never one removed here since."
@@ -884,7 +1347,13 @@
             "description": "Import from OpenProject on a schedule, for running both side by side: every 5, 15 or 60 minutes, or null to stop. It reuses the saved connection and the last import's mapping, so it can be turned on only after a first import. A scheduled run brings new relations and attachments too, keeps every edit made here and lists conflicts in the last import's result. Returns the same as import_openproject_state.",
             "inputSchema": {
               "type": "object",
-              "properties": { "minutes": { "type": ["integer", "null"], "enum": [5, 15, 60, null], "description": "5, 15 or 60; null turns the schedule off." } },
+              "properties": {
+                "minutes": {
+                  "type": ["integer", "null"],
+                  "enum": [5, 15, 60, null],
+                  "description": "5, 15 or 60; null turns the schedule off."
+                }
+              },
               "required": ["minutes"]
             }
           },
@@ -910,7 +1379,10 @@
               "properties": {
                 "url": { "type": "string", "description": "The forge's address, e.g. https://git.example.com." },
                 "owner": { "type": "string", "description": "The organisation or user whose repositories are read." },
-                "secretKey": { "type": "string", "description": "The Secrets Store key holding a read token (read:repository, read:issue); it starts with FORGEJO_." }
+                "secretKey": {
+                  "type": "string",
+                  "description": "The Secrets Store key holding a read token (read:repository, read:issue); it starts with FORGEJO_."
+                }
               },
               "required": ["url", "owner", "secretKey"]
             }

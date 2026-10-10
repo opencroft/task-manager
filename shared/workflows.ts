@@ -31,7 +31,15 @@ export const STEP_PERMISSION_MODES = ['auto', 'plan', 'manual-edits', 'accept-ed
 export type StepPermissionMode = (typeof STEP_PERMISSION_MODES)[number]
 
 /** How often the session's agent reads what is sent to it: the chat command bar's Presence. */
-export const STEP_PRESENCE_KINDS = ['high-attention', 'realtime', 'online', 'minutes', 'hourly', 'daily', 'custom'] as const
+export const STEP_PRESENCE_KINDS = [
+  'high-attention',
+  'realtime',
+  'online',
+  'minutes',
+  'hourly',
+  'daily',
+  'custom',
+] as const
 export type StepPresence =
   | { kind: Exclude<(typeof STEP_PRESENCE_KINDS)[number], 'custom'> }
   | { kind: 'custom'; intervalMs: number }
@@ -259,8 +267,10 @@ export interface WorkflowDef {
 /**
  * What a caller submits to create or replace a workflow: ids are optional, a missing one is minted.
  * Statuses may be given by id or by name (case-insensitive); the saved definition holds ids.
+ * A type rather than an interface, so it is assignable to the `Record<string, unknown>` of
+ * `workflow_save`'s generated input.
  */
-export interface WorkflowDraft {
+export type WorkflowDraft = {
   id?: string
   name: string
   description?: string
@@ -318,7 +328,11 @@ export interface WorkflowTransitionDraft {
  * The gate a transition has when none is set: moving on to a later step, or
  * ending the run, passes; going back to the same or an earlier step fails.
  */
-export function derivedGate(steps: ReadonlyArray<{ id: string }>, fromStep: string, toStep: string | null): TransitionGate {
+export function derivedGate(
+  steps: ReadonlyArray<{ id: string }>,
+  fromStep: string,
+  toStep: string | null,
+): TransitionGate {
   if (toStep === null) {
     return 'pass'
   }
@@ -339,12 +353,16 @@ export function verdictTransitions<T extends Pick<WorkflowTransition, 'toStep' |
   steps: ReadonlyArray<{ id: string }>,
   step: { id: string; transitions: readonly T[] },
 ): Record<ApprovalVerdict, T[]> {
-  const by = (verdict: ApprovalVerdict) => step.transitions.filter((t) => transitionGate(steps, step.id, t) === VERDICT_GATE[verdict])
+  const by = (verdict: ApprovalVerdict) =>
+    step.transitions.filter((t) => transitionGate(steps, step.id, t) === VERDICT_GATE[verdict])
   return { approve: by('approve'), reject: by('reject') }
 }
 
 /** The first step a status starts: what a person moving the task to that status opens. */
-export function stepStartedBy<S extends Pick<WorkflowStepDef, 'triggerStatus'>>(steps: readonly S[], status: number): S | undefined {
+export function stepStartedBy<S extends Pick<WorkflowStepDef, 'triggerStatus'>>(
+  steps: readonly S[],
+  status: number,
+): S | undefined {
   return steps.find((s) => s.triggerStatus === status)
 }
 
@@ -577,9 +595,10 @@ export type RunExit = (typeof RUN_EXITS)[number]
 /**
  * The runs one step figure counted, so the runs list can show them: runs of
  * the workflow started in `range` with a round at `step` that matches every
- * criterion given.
+ * criterion given. A type rather than an interface, so it is assignable to the
+ * `Record<string, unknown>` of `workflow_runs_list`'s generated input.
  */
-export interface RunsMatch {
+export type RunsMatch = {
   range: StatsRange
   step: string
   /** How a round there ended; with `sent_back`, `transition` narrows it to one transition's label. */

@@ -21,9 +21,9 @@ import {
   defaultTransitionLabel,
   derivedGate,
   STEP_EFFORTS,
+  STEP_KINDS,
   STEP_PERMISSION_MODES,
   STEP_PRESENCE_KINDS,
-  STEP_KINDS,
   type StepApproval,
   type StepApprovalDraft,
   type StepApprover,
@@ -108,8 +108,14 @@ function sessionOptionIssues(options: StepSessionOptions, issue: (field: string,
   if (options.effort !== undefined && !(STEP_EFFORTS as readonly string[]).includes(options.effort)) {
     issue('effort', `No effort "${options.effort}". Efforts: ${STEP_EFFORTS.join(', ')}`)
   }
-  if (options.permissionMode !== undefined && !(STEP_PERMISSION_MODES as readonly string[]).includes(options.permissionMode)) {
-    issue('permissionMode', `No permission mode "${options.permissionMode}". Modes: ${STEP_PERMISSION_MODES.join(', ')}`)
+  if (
+    options.permissionMode !== undefined &&
+    !(STEP_PERMISSION_MODES as readonly string[]).includes(options.permissionMode)
+  ) {
+    issue(
+      'permissionMode',
+      `No permission mode "${options.permissionMode}". Modes: ${STEP_PERMISSION_MODES.join(', ')}`,
+    )
   }
   if (options.compactAbove !== undefined && !(Number.isInteger(options.compactAbove) && options.compactAbove >= 0)) {
     issue('compactAbove', 'Compact above is a whole number of tokens: 0 never compacts, empty takes the default')
@@ -122,9 +128,16 @@ function sessionOptionIssues(options: StepSessionOptions, issue: (field: string,
     issue('presence', `No presence "${presence.kind}". Presences: ${STEP_PRESENCE_KINDS.join(', ')}`)
   } else if (
     presence.kind === 'custom' &&
-    !(Number.isInteger(presence.intervalMs) && presence.intervalMs >= MINUTE_MS && presence.intervalMs % MINUTE_MS === 0)
+    !(
+      Number.isInteger(presence.intervalMs) &&
+      presence.intervalMs >= MINUTE_MS &&
+      presence.intervalMs % MINUTE_MS === 0
+    )
   ) {
-    issue('presence', 'A custom presence reads every whole number of minutes: give intervalMs as minutes × 60000, at least 60000')
+    issue(
+      'presence',
+      'A custom presence reads every whole number of minutes: give intervalMs as minutes × 60000, at least 60000',
+    )
   }
 }
 
@@ -154,7 +167,11 @@ const UNKNOWN_STEP = '\u0000unknown'
  * null or "end", and when omitted the first step its status starts (the end
  * when none does) — the rule a bare status follows too.
  */
-function targetStep(steps: ReadonlyArray<Pick<WorkflowStepDef, 'id' | 'name' | 'triggerStatus'>>, ref: string | null | undefined, status: number): string | null {
+function targetStep(
+  steps: ReadonlyArray<Pick<WorkflowStepDef, 'id' | 'name' | 'triggerStatus'>>,
+  ref: string | null | undefined,
+  status: number,
+): string | null {
   if (ref === undefined) {
     return stepStartedBy(steps, status)?.id ?? null
   }
@@ -162,7 +179,10 @@ function targetStep(steps: ReadonlyArray<Pick<WorkflowStepDef, 'id' | 'name' | '
   if (!text || text.toLowerCase() === 'end') {
     return null
   }
-  return (steps.find((s) => s.id === text) ?? steps.find((s) => s.name.toLowerCase() === text.toLowerCase()))?.id ?? UNKNOWN_STEP
+  return (
+    (steps.find((s) => s.id === text) ?? steps.find((s) => s.name.toLowerCase() === text.toLowerCase()))?.id ??
+    UNKNOWN_STEP
+  )
 }
 
 /**
@@ -201,7 +221,10 @@ function approvalIssues(
     seen.add(a.personId)
   })
   const required = approvers.filter((a) => a.required).length
-  if (approvers.length > 0 && (!Number.isInteger(needed) || needed < Math.max(1, required) || needed > approvers.length)) {
+  if (
+    approvers.length > 0 &&
+    (!Number.isInteger(needed) || needed < Math.max(1, required) || needed > approvers.length)
+  ) {
     issue(
       'approval.needed',
       `Approvals needed must be a whole number from ${Math.max(1, required)} (the required approvers, at least 1) to ${approvers.length} (every approver)`,
@@ -239,7 +262,7 @@ export function normalizeDraft(
     description: String(draft.description ?? '').trim(),
     isDefault: draft.isDefault === true,
     steps: drafts.map((step, i) => {
-      const self = steps[i]!
+      const self = steps[i]
       const bare = new Set<number>()
       const entries = (step.transitions ?? []).flatMap((entry): WorkflowTransitionDraft[] => {
         if (typeof entry === 'object' && entry !== null) {
@@ -354,7 +377,10 @@ export function validateWorkflow(workflow: NormalizedWorkflow, env: ValidationEn
       const byVerdict = verdictTransitions(workflow.steps, step)
       for (const verdict of APPROVAL_VERDICTS) {
         if (step.transitions.length > 0 && byVerdict[verdict].length === 0) {
-          issue(at('transitions'), `Give the step a transition with a ${VERDICT_GATE[verdict]} gate for its approvers to ${verdict} by`)
+          issue(
+            at('transitions'),
+            `Give the step a transition with a ${VERDICT_GATE[verdict]} gate for its approvers to ${verdict} by`,
+          )
         }
       }
     } else if (step.worker.kind === 'agent' && !step.worker.agentNodeId) {

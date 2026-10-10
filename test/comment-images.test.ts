@@ -8,13 +8,16 @@ const B = '1c8d3e2f-5a6b-4c7d-9e0f-1a2b3c4d5e6f'
 
 describe('commentParts', () => {
   it('splits text around each attachment image, in order', () => {
-    assert.deepEqual(commentParts(`Before\n${attachmentImageMarkdown(A, 'image.png')}\nbetween ![b](attachment:${B}) after`), [
-      { kind: 'text', text: 'Before\n' },
-      { kind: 'image', id: A, name: 'image.png' },
-      { kind: 'text', text: '\nbetween ' },
-      { kind: 'image', id: B, name: 'b' },
-      { kind: 'text', text: ' after' },
-    ])
+    assert.deepEqual(
+      commentParts(`Before\n${attachmentImageMarkdown(A, 'image.png')}\nbetween ![b](attachment:${B}) after`),
+      [
+        { kind: 'text', text: 'Before\n' },
+        { kind: 'image', id: A, name: 'image.png' },
+        { kind: 'text', text: '\nbetween ' },
+        { kind: 'image', id: B, name: 'b' },
+        { kind: 'text', text: ' after' },
+      ],
+    )
   })
 
   it('leaves a body without references, and ordinary images, as one text part', () => {
@@ -35,7 +38,9 @@ describe('commentParts', () => {
       { kind: 'image', id: A, name: 'a' },
       { kind: 'image', id: B, name: 'b' },
     ])
-    assert.deepEqual(commentParts(`\`\`\`\n![a](attachment:${A})`), [{ kind: 'text', text: `\n\`\`\`\n![a](attachment:${A})` }])
+    assert.deepEqual(commentParts(`\`\`\`\n![a](attachment:${A})`), [
+      { kind: 'text', text: `\n\`\`\`\n![a](attachment:${A})` },
+    ])
   })
 
   it('makes a name safe to sit inside the brackets', () => {

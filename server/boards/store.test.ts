@@ -23,7 +23,14 @@ test('a board keeps its columns and their statuses in order, by name or id, and 
   const scope = makeScope()
   const board = saveBoard(
     scope,
-    { name: 'Delivery', columns: [{ statuses: ['to do'] }, { name: 'Doing', statuses: [2, 'In Review'] }, { name: '  ', statuses: ['Done'] }] },
+    {
+      name: 'Delivery',
+      columns: [
+        { statuses: ['to do'] },
+        { name: 'Doing', statuses: [2, 'In Review'] },
+        { name: '  ', statuses: ['Done'] },
+      ],
+    },
     NOW,
   )
   assert.deepEqual(names(board), [
@@ -45,13 +52,25 @@ test('a board is refused a taken name, a status in two columns, an unknown statu
   const scope = makeScope()
   saveBoard(scope, { name: 'Delivery' }, NOW)
   assert.throws(() => saveBoard(scope, { name: 'delivery' }, NOW), /already a board called "delivery"/)
-  assert.throws(() => saveBoard(scope, { name: 'Two', columns: [{ statuses: ['Done'] }, { statuses: [4] }] }, NOW), /"Done" is in column 1 and column 2/)
+  assert.throws(
+    () => saveBoard(scope, { name: 'Two', columns: [{ statuses: ['Done'] }, { statuses: [4] }] }, NOW),
+    /"Done" is in column 1 and column 2/,
+  )
   assert.throws(() => saveBoard(scope, { name: 'Two', columns: [{ statuses: ['Dnoe'] }] }, NOW), /No status "Dnoe"/)
-  assert.throws(() => saveBoard(scope, { name: 'Two', filter: { status: [1] } as never }, NOW), /filter has no field "status"/)
-  assert.throws(() => saveBoard(scope, { name: 'Two', filter: { sort: { field: 'rank', dir: 'asc' } } as never }, NOW), /filter has no field "sort"/)
+  assert.throws(
+    () => saveBoard(scope, { name: 'Two', filter: { status: [1] } as never }, NOW),
+    /filter has no field "status"/,
+  )
+  assert.throws(
+    () => saveBoard(scope, { name: 'Two', filter: { sort: { field: 'rank', dir: 'asc' } } as never }, NOW),
+    /filter has no field "sort"/,
+  )
   assert.throws(() => saveBoard(scope, { name: 'Two', filter: { version: ['9.9.9'] } }, NOW), /No version "9.9.9"/)
   assert.throws(() => saveBoard(scope, { id: 'Delivery', filter: { parent: 'TASK-404' } }, NOW), /TASK-404/)
-  assert.throws(() => saveBoard(scope, { name: 'Two', columns: [{ statuses: ['Done'] }, { name: 'Later', statuses: [] }] }, NOW), /Column 2 has no statuses/)
+  assert.throws(
+    () => saveBoard(scope, { name: 'Two', columns: [{ statuses: ['Done'] }, { name: 'Later', statuses: [] }] }, NOW),
+    /Column 2 has no statuses/,
+  )
   assert.throws(() => saveBoard(scope, { columns: [] }, NOW), /A new board needs a name/)
   assert.throws(() => getBoard(scope, { board: 'Delivry' }), /No board "Delivry"/)
   assert.deepEqual(
@@ -63,14 +82,20 @@ test('a board is refused a taken name, a status in two columns, an unknown statu
 
 test('task_list on a board shows its statuses matching its filter, and the call’s own filters narrow it', async () => {
   const scope = makeScope({ kind: 'person', name: 'Ada' })
-  const task = async (summary: string, status: string, type: 'task' | 'bug') => (await createTask(scope, { summary, status, type })).result.key
+  const task = async (summary: string, status: string, type: 'task' | 'bug') =>
+    (await createTask(scope, { summary, status, type })).result.key
   const openBug = await task('Crash on save', 'To Do', 'bug')
   const doingBug = await task('Crash on load', 'In Progress', 'bug')
   await task('Write docs', 'In Progress', 'task')
   await task('Old crash', 'Done', 'bug')
-  const board = saveBoard(scope, { name: 'Bugs', columns: [{ statuses: ['To Do', 'In Progress'] }], filter: { type: ['bug'] } }, NOW)
+  const board = saveBoard(
+    scope,
+    { name: 'Bugs', columns: [{ statuses: ['To Do', 'In Progress'] }], filter: { type: ['bug'] } },
+    NOW,
+  )
 
-  const keys = (input = {}, ref = board.id) => listTasks(scope, input, boardRestriction(scope, ref)).tasks.map((row) => row.key)
+  const keys = (input = {}, ref = board.id) =>
+    listTasks(scope, input, boardRestriction(scope, ref)).tasks.map((row) => row.key)
   assert.deepEqual(keys(), [openBug, doingBug])
   assert.deepEqual(keys({ query: 'load' }), [doingBug])
   assert.deepEqual(keys({ type: ['task'] }), [], 'the call’s filter and the board’s both apply')
@@ -82,7 +107,11 @@ test('task_list on a board shows its statuses matching its filter, and the call�
 
 test('a deleted status leaves every board, and a column it emptied stays', async () => {
   const scope = makeScope()
-  const board = saveBoard(scope, { name: 'Flow', columns: [{ statuses: ['To Do'] }, { name: 'Review', statuses: ['In Review'] }] }, NOW)
+  const board = saveBoard(
+    scope,
+    { name: 'Flow', columns: [{ statuses: ['To Do'] }, { name: 'Review', statuses: ['In Review'] }] },
+    NOW,
+  )
   await deleteStatus(scope, { status: 'In Review', moveTo: 'In Progress' })
   assert.deepEqual(names(getBoard(scope, { board: board.id })), [
     [null, ['To Do']],
@@ -101,8 +130,20 @@ test('board_get names, per workflow, the statuses its steps start on or finish i
       {
         name: 'Review flow',
         steps: [
-          { name: 'Development', triggerStatus: 2, worker: { kind: 'assignee' }, instructions: 'Build', transitions: [3] },
-          { name: 'Review', triggerStatus: 3, worker: { kind: 'assignee' }, instructions: 'Review', transitions: [4, 2] },
+          {
+            name: 'Development',
+            triggerStatus: 2,
+            worker: { kind: 'assignee' },
+            instructions: 'Build',
+            transitions: [3],
+          },
+          {
+            name: 'Review',
+            triggerStatus: 3,
+            worker: { kind: 'assignee' },
+            instructions: 'Review',
+            transitions: [4, 2],
+          },
         ],
       },
       mintId,
@@ -112,9 +153,19 @@ test('board_get names, per workflow, the statuses its steps start on or finish i
   )
   const partial = saveBoard(scope, { name: 'Partial', columns: [{ statuses: ['To Do', 'In Progress'] }] }, NOW)
   assert.deepEqual(
-    getBoard(scope, { board: partial.id }).workflowFit.map((fit) => [fit.workflow, fit.missing.map((status) => status.name)]),
+    getBoard(scope, { board: partial.id }).workflowFit.map((fit) => [
+      fit.workflow,
+      fit.missing.map((status) => status.name),
+    ]),
     [['Review flow', ['In Review', 'Done']]],
   )
-  const whole = saveBoard(scope, { name: 'Whole', columns: [{ statuses: ['In Progress'] }, { statuses: ['In Review', 'Done'] }] }, NOW)
-  assert.deepEqual(getBoard(scope, { board: whole.id }).workflowFit.map((fit) => fit.missing), [[]])
+  const whole = saveBoard(
+    scope,
+    { name: 'Whole', columns: [{ statuses: ['In Progress'] }, { statuses: ['In Review', 'Done'] }] },
+    NOW,
+  )
+  assert.deepEqual(
+    getBoard(scope, { board: whole.id }).workflowFit.map((fit) => fit.missing),
+    [[]],
+  )
 })

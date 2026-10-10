@@ -1,6 +1,7 @@
-// Files attached to a task: the shapes the attachment actions take and return.
+// Files attached to a task: the shapes the attachment actions return.
 
-import type { Actor, TaskKey } from './types.ts'
+import type { ActionInputs } from './action-inputs.ts'
+import type { Actor } from './types.ts'
 
 /**
  * The largest file one attachment may hold. People's files stream to and from
@@ -31,36 +32,15 @@ export interface TaskAttachment {
   uploader: Actor
 }
 
-export interface TaskAttachInput {
-  key: TaskKey
-  name: string
-  /** The file's bytes, base64. A `data:<type>;base64,` prefix is accepted and ignored. */
-  contentBase64: string
-}
-
-export interface TaskAttachmentsInput {
-  key: TaskKey
-}
-
-export interface TaskAttachmentGetInput {
-  id: string
-}
-
-export interface TaskAttachmentRenameInput {
-  id: string
-  name: string
-}
-
-export interface TaskAttachmentDeleteInput {
-  id: string
-}
-
 export interface AttachmentActionMap {
-  task_attach: { input: TaskAttachInput; output: TaskAttachment }
-  task_attachments: { input: TaskAttachmentsInput; output: { attachments: TaskAttachment[] } }
-  task_attachment_get: { input: TaskAttachmentGetInput; output: { attachment: TaskAttachment; contentBase64: string } }
-  task_attachment_rename: { input: TaskAttachmentRenameInput; output: TaskAttachment }
-  task_attachment_delete: { input: TaskAttachmentDeleteInput; output: { deleted: string } }
+  task_attach: { input: ActionInputs['task_attach']; output: TaskAttachment }
+  task_attachments: { input: ActionInputs['task_attachments']; output: { attachments: TaskAttachment[] } }
+  task_attachment_get: {
+    input: ActionInputs['task_attachment_get']
+    output: { attachment: TaskAttachment; contentBase64: string }
+  }
+  task_attachment_rename: { input: ActionInputs['task_attachment_rename']; output: TaskAttachment }
+  task_attachment_delete: { input: ActionInputs['task_attachment_delete']; output: { deleted: string } }
 }
 
 export type AttachmentActionId = keyof AttachmentActionMap

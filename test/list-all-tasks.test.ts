@@ -21,7 +21,10 @@ function fakeApi(count: { value: number }) {
       open--
       const offset = input.offset ?? 0
       const end = Math.min(count.value, offset + (input.limit ?? 200))
-      const tasks = Array.from({ length: Math.max(0, end - offset) }, (_, i) => ({ key: `T-${offset + i + 1}` }) as TaskSummary)
+      const tasks = Array.from(
+        { length: Math.max(0, end - offset) },
+        (_, i) => ({ key: `T-${offset + i + 1}` }) as TaskSummary,
+      )
       return { tasks, total: count.value }
     },
   } as unknown as TasksApi
@@ -54,7 +57,10 @@ describe('listAllTasks', () => {
     count.value = 3 * TASK_LIST_MAX_LIMIT + 1
     rounds.length = 0
     const grown = await listAllTasks(api)
-    assert.deepEqual(rounds, [[0, TASK_LIST_MAX_LIMIT], [2 * TASK_LIST_MAX_LIMIT, 3 * TASK_LIST_MAX_LIMIT]])
+    assert.deepEqual(rounds, [
+      [0, TASK_LIST_MAX_LIMIT],
+      [2 * TASK_LIST_MAX_LIMIT, 3 * TASK_LIST_MAX_LIMIT],
+    ])
     assert.equal(new Set(grown.map((task) => task.key)).size, count.value)
   })
 

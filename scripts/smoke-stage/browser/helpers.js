@@ -1,12 +1,12 @@
 // Shared set-up for every smoke check, run by the browser server's
-// `browser_run_code_unsafe`. This file is sent as source text: it is one
-// function expression with no imports and nothing captured from outside, and
-// the sandbox has no `setTimeout` or `URL` (waits go through the driver).
+// `browser_run_code_unsafe`. This file is sent as source text: it default-exports
+// one function with no imports and nothing captured from outside, and the
+// sandbox has no `setTimeout` or `URL` (waits go through the driver).
 //
 // It opens the check's own browser context, signed in with the storage state
 // of the account the browser is signed in as, and records what every check
 // reports on: the App's server calls, page errors, and a row per assertion.
-async (page, args) => {
+export default async (page, args) => {
   const origin = args.origin || page.url().split('/').slice(0, 3).join('/')
   const ctx = await page
     .context()
@@ -45,7 +45,11 @@ async (page, args) => {
   }
   const hostName = (url) => {
     const text = fromBase64(decodeURIComponent(url.split('/_serverFn/')[1]?.split(/[?/]/)[0] ?? ''))
-    return text.match(/"export":"([A-Za-z0-9$]+?)(?:_createServerFn[^"]*)?"/)?.[1] ?? text.match(/\/([^/"]+)\.ts/)?.[1] ?? 'host'
+    return (
+      text.match(/"export":"([A-Za-z0-9$]+?)(?:_createServerFn[^"]*)?"/)?.[1] ??
+      text.match(/\/([^/"]+)\.ts/)?.[1] ??
+      'host'
+    )
   }
   const calls = []
   const inflight = new Set()

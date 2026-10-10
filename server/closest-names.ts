@@ -14,7 +14,9 @@ const normal = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '')
 
 /** Edits between `a` and `b`, where an edit inserts, deletes or replaces one character, or swaps two neighbours. */
 function editDistance(a: string, b: string): number {
-  const d = Array.from({ length: a.length + 1 }, (_, i) => Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)))
+  const d = Array.from({ length: a.length + 1 }, (_, i) =>
+    Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
+  )
   const at = (i: number, j: number) => d[i]?.[j] ?? 0
   for (let i = 1; i <= a.length; i++) {
     for (let j = 1; j <= b.length; j++) {

@@ -2,13 +2,13 @@
 // key, refreshed live when it, one of its subtasks or ancestors, or the
 // project's statuses change, and edited field by field.
 
-import { legacy } from '@opencroft/client'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 import type { Task, TaskSummary, TaskUpdateInput } from '../../shared/types'
 import { useProject } from '../app/project'
-import { listAllTasks } from '../lib/task-list'
 import { useTasksLive } from '../lib/live'
+import { listAllTasks } from '../lib/task-list'
 
 export interface TaskDetailsState {
   /** Null until this key's task has loaded, and when it could not load. */
@@ -73,8 +73,16 @@ export function useTaskDetails(taskKey: string): TaskDetailsState {
   }, [load])
 
   useTasksLive(instanceId, (events) => {
-    const related = new Set([taskKey, ...(task?.subtasks.map((s) => s.key) ?? []), ...(task?.ancestors.map((a) => a.key) ?? [])])
-    if (events.some((event) => event.kind === 'status' || event.kind === 'workflow' || event.keys.some((key) => related.has(key)))) {
+    const related = new Set([
+      taskKey,
+      ...(task?.subtasks.map((s) => s.key) ?? []),
+      ...(task?.ancestors.map((a) => a.key) ?? []),
+    ])
+    if (
+      events.some(
+        (event) => event.kind === 'status' || event.kind === 'workflow' || event.keys.some((key) => related.has(key)),
+      )
+    ) {
       void load()
     }
   })
@@ -90,7 +98,7 @@ export function useTaskDetails(taskKey: string): TaskDetailsState {
         const { result, warnings } = await api.task_update({ key: taskKey, ...patch })
         setTask(result)
         for (const warning of warnings ?? []) {
-          legacy.toast.warning(warning)
+          toast.warning(warning)
         }
       } catch (error) {
         fail(error)

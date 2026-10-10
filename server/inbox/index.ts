@@ -3,31 +3,24 @@
 // so the listeners registered here are live for every instance. The workflow
 // engine is handed `inboxPort` through its env (../workflows/index.ts).
 
-import type { AppActionContext, AppActionHandler } from '@opencroft/server'
-import host from '@opencroft/server'
+import { events } from '@opencroft/server/events'
 
-import {
-  INBOX_EVENT,
-  type InboxEvent,
-  type InboxListInput,
-  type InboxMarkReadInput,
-  type InboxMarkUnreadInput,
-  type InboxMuteInput,
-} from '../../shared/inbox.ts'
-import { scopeFor } from '../actions.ts'
+import type { ActionId } from '../../shared/action-inputs.ts'
+import { INBOX_EVENT, type InboxEvent } from '../../shared/inbox.ts'
+import { scopedActions, scopeFor } from '../actions.ts'
 import { type Invocation, onTaskEvent, statusHooks } from '../hooks.ts'
+import { mentionedIn } from '../mentions/mentioned.ts'
 import type { Scope } from '../service.ts'
 import {
-  type Directory,
-  InboxError,
-  type NotificationDraft,
   actorParty,
+  type Directory,
   deliver,
   excerptOf,
+  InboxError,
   listInbox,
   markRead,
   markUnread,
-  mentionedIn,
+  type NotificationDraft,
   recipientKey,
   setMuted,
   statusSnapshot,
@@ -38,7 +31,7 @@ const now = () => new Date().toISOString()
 function broadcast(instanceId: string): void {
   const payload: InboxEvent = { instanceId }
   try {
-    host.events.broadcast(INBOX_EVENT, payload as unknown as Record<string, unknown>)
+    events.broadcast(INBOX_EVENT, payload as unknown as Record<string, unknown>)
   } catch (error) {
     console.error('[task-pipelines] inbox broadcast failed', error)
   }
@@ -77,32 +70,24 @@ async function callerKey(scope: Scope): Promise<string> {
   return key
 }
 
-type Params = Record<string, unknown>
-
-export const inboxActions: Record<string, AppActionHandler> = {
-  inbox_list: async (ctx: AppActionContext, params: Params) => {
-    const scope = scopeFor(ctx)
-    return listInbox(scope.db, scope.projectKey, await callerKey(scope), (params ?? {}) as InboxListInput)
-  },
-  inbox_mark_read: async (ctx: AppActionContext, params: Params) => {
-    const scope = scopeFor(ctx)
-    const result = markRead(scope.db, await callerKey(scope), (params ?? {}) as InboxMarkReadInput, now())
+export const inboxActions = scopedActions<Extract<ActionId, `inbox_${string}`>>({
+  inbox_list: async (scope, input) => listInbox(scope.db, scope.projectKey, await callerKey(scope), input),
+  inbox_mark_read: async (scope, input) => {
+    const result = markRead(scope.db, await callerKey(scope), input, now())
     broadcast(scope.instanceId)
     return result
   },
-  inbox_mark_unread: async (ctx: AppActionContext, params: Params) => {
-    const scope = scopeFor(ctx)
-    const result = markUnread(scope.db, await callerKey(scope), (params ?? {}) as unknown as InboxMarkUnreadInput)
+  inbox_mark_unread: async (scope, input) => {
+    const result = markUnread(scope.db, await callerKey(scope), input)
     broadcast(scope.instanceId)
     return result
   },
-  inbox_mute: async (ctx: AppActionContext, params: Params) => {
-    const scope = scopeFor(ctx)
-    const result = setMuted(scope.db, scope.projectKey, await callerKey(scope), (params ?? {}) as unknown as InboxMuteInput, now())
+  inbox_mute: async (scope, input) => {
+    const result = setMuted(scope.db, scope.projectKey, await callerKey(scope), input, now())
     broadcast(scope.instanceId)
     return result
   },
-}
+})
 
 // Registered once per process; a hot-reloaded copy drops the previous copy's
 // listeners first (the registries outlive module reloads), or every
@@ -135,7 +120,7 @@ globalForInbox.__taskPipelinesInboxHooks = [
       await inboxPort(scope)({ kind: 'assigned', taskNumber: event.task.number, recipients: [event.assignee], actor })
       return
     }
-    const mentioned = await mentionedIn(event.comment.body, directoryOf(scope))
+    const mentioned = await mentionedIn(event.comment.body)
     if (mentioned.length) {
       await inboxPort(scope)({
         kind: 'mentioned',

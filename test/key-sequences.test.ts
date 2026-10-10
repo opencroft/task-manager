@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
+import { chordOf, createKeyMatcher, keyName, SEQUENCE_TIMEOUT_MS } from '../src/app/key-sequences'
 import { TASK_MANAGER_SHORTCUTS } from '../src/components/ui/navigation/keyboard-shortcuts-dialog'
-import { SEQUENCE_TIMEOUT_MS, chordOf, createKeyMatcher, keyName } from '../src/app/key-sequences'
 
 const SET = TASK_MANAGER_SHORTCUTS.flatMap((group) => group.shortcuts)
 
-function press(key: string, extra: Partial<{ code: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean }> = {}) {
+function press(
+  key: string,
+  extra: Partial<{ code: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean }> = {},
+) {
   const code = extra.code ?? (/^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : '')
   return { key, code, ctrlKey: false, metaKey: false, altKey: false, ...extra }
 }

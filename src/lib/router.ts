@@ -9,7 +9,7 @@
 // turns a plain click on one into an in-App move, and leaves Ctrl/Cmd-, Shift-
 // and middle-clicks to the browser.
 
-import { useAppAddressHref, useAppHref, useAppLocation, useAppNavigate, useOpenApp } from '@opencroft/client'
+import { useAppAddressHref, useAppHref, useAppLocation, useAppNavigate, useOpenApp } from '@opencroft/client/app'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 
 export interface TasksLocation {

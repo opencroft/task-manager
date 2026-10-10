@@ -2,7 +2,7 @@
 // late included. Scroll the list to `args.top`, move away with a
 // real click (`args.via`: `task` opens a task the reader can see, `board`
 // takes the sidebar's Board link), then use the browser's Back.
-async (page, args, h) => {
+export default async (_page, args, h) => {
   const { own } = h
   const base = h.app(args.app)
   // The list pane: the page's scroll area that holds task links and has the

@@ -117,7 +117,9 @@ export function normalizeBaseUrl(value: unknown): string {
     throw new TaskError('The OpenProject address must start with https://, so the token is never sent unencrypted')
   }
   if (url.username || url.password) {
-    throw new TaskError('Give the OpenProject address without a user name or password in it; the token comes from the Secrets Store')
+    throw new TaskError(
+      'Give the OpenProject address without a user name or password in it; the token comes from the Secrets Store',
+    )
   }
   const path = url.pathname.replace(/\/+$/, '').replace(/\/api\/v3$/, '')
   return `${url.origin}${path}`
@@ -170,7 +172,9 @@ export function toWorkPackage(item: Json): SourceWorkPackage {
 /** What a failed response means for the person importing, never with the token in it. */
 function failure(status: number, what: string, secretKey: string): TaskError {
   if (status === 401) {
-    return new TaskError(`OpenProject refused the token stored under "${secretKey}" (401): check it is a current API token`)
+    return new TaskError(
+      `OpenProject refused the token stored under "${secretKey}" (401): check it is a current API token`,
+    )
   }
   if (status === 403) {
     return new TaskError(`The token stored under "${secretKey}" may not read ${what} (403)`)
@@ -183,7 +187,13 @@ function failure(status: number, what: string, secretKey: string): TaskError {
 
 const PAGE_SIZE = 200
 
-export function openProjectClient(options: { url: string; token: string; secretKey: string; fetch?: Fetch; signal?: AbortSignal }): OpenProjectClient {
+export function openProjectClient(options: {
+  url: string
+  token: string
+  secretKey: string
+  fetch?: Fetch
+  signal?: AbortSignal
+}): OpenProjectClient {
   const base = normalizeBaseUrl(options.url)
   const doFetch: Fetch = options.fetch ?? ((input, init) => fetch(input, init))
   const authorization = `Basic ${Buffer.from(`apikey:${options.token}`).toString('base64')}`
@@ -200,7 +210,9 @@ export function openProjectClient(options: { url: string; token: string; secretK
       })
     } catch (error) {
       options.signal?.throwIfAborted()
-      throw new TaskError(`Could not reach OpenProject at ${base}: ${error instanceof Error ? error.message : String(error)}`)
+      throw new TaskError(
+        `Could not reach OpenProject at ${base}: ${error instanceof Error ? error.message : String(error)}`,
+      )
     }
     if (!response.ok) {
       throw failure(response.status, what, options.secretKey)
@@ -217,7 +229,7 @@ export function openProjectClient(options: { url: string; token: string; secretK
     }
   }
 
-  const elements = (body: Json) => (((body._embedded as Json | undefined)?.elements ?? []) as Json[])
+  const elements = (body: Json) => ((body._embedded as Json | undefined)?.elements ?? []) as Json[]
 
   return {
     base,
@@ -231,7 +243,11 @@ export function openProjectClient(options: { url: string; token: string; secretK
       for (const [index, candidate] of tries.entries()) {
         try {
           const body = await get(`/projects/${encodeURIComponent(candidate)}`, `project "${wanted}"`)
-          return { id: Number(body.id), identifier: text(body.identifier) ?? candidate, name: text(body.name) ?? candidate }
+          return {
+            id: Number(body.id),
+            identifier: text(body.identifier) ?? candidate,
+            name: text(body.name) ?? candidate,
+          }
         } catch (error) {
           if (index === tries.length - 1 || !(error instanceof TaskError) || !error.message.includes('(404)')) {
             throw error
@@ -275,7 +291,10 @@ export function openProjectClient(options: { url: string; token: string; secretK
       }))
     },
     async comments(workPackageId) {
-      const body = await get(`/work_packages/${workPackageId}/activities`, `the activity of work package ${workPackageId}`)
+      const body = await get(
+        `/work_packages/${workPackageId}/activities`,
+        `the activity of work package ${workPackageId}`,
+      )
       return elements(body)
         .filter((item) => raw(item.comment).trim() !== '')
         .map((item) => ({
@@ -295,7 +314,10 @@ export function openProjectClient(options: { url: string; token: string; secretK
       // Counted as read, not as kept: a server may answer fewer a page than asked.
       let read = 0
       for (let page = 1; ; page++) {
-        const body = await get(`/relations?filters=${filters}&sortBy=${sortBy}&pageSize=${PAGE_SIZE}&offset=${page}`, 'the relations')
+        const body = await get(
+          `/relations?filters=${filters}&sortBy=${sortBy}&pageSize=${PAGE_SIZE}&offset=${page}`,
+          'the relations',
+        )
         const items = elements(body)
         read += items.length
         for (const item of items) {
@@ -311,7 +333,10 @@ export function openProjectClient(options: { url: string; token: string; secretK
       }
     },
     async attachments(workPackageId) {
-      const body = await get(`/work_packages/${workPackageId}/attachments`, `the attachments of work package ${workPackageId}`)
+      const body = await get(
+        `/work_packages/${workPackageId}/attachments`,
+        `the attachments of work package ${workPackageId}`,
+      )
       return elements(body).map((item) => {
         const author = linkOf(item, 'author')
         const digest = item.digest as Json | undefined

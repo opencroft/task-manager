@@ -2,12 +2,13 @@ import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 
+import { parseParams } from '../action-params.ts'
 import { withDetail } from '../compact.ts'
 import { migrate } from '../db.ts'
 import { deliver } from '../inbox/store.ts'
-import { type Viewer, mergeMyWork, myWork } from '../my-work/store.ts'
-import { type Scope, createTask, listTasks, updateTask } from '../service.ts'
-import { type ProjectInstance, acrossProjects, scoped } from './across.ts'
+import { mergeMyWork, myWork, type Viewer } from '../my-work/store.ts'
+import { createTask, listTasks, type Scope, updateTask } from '../service.ts'
+import { acrossProjects, type ProjectInstance, scoped } from './across.ts'
 import { acrossListInput, mergeTaskLists } from './task-list.ts'
 
 const ADA: Viewer = { kind: 'person', id: 'u-ada', name: 'Ada Lovelace' }
@@ -29,7 +30,14 @@ function makeScope(projectKey: string): Scope {
 }
 
 function instance(key: string, slug = key.toLowerCase()): ProjectInstance {
-  return { instanceId: `inst-${key}`, spaceSlug: 'work', name: `${key} project`, slug, params: { id: key }, dataDir: '/nowhere' }
+  return {
+    instanceId: `inst-${key}`,
+    spaceSlug: 'work',
+    name: `${key} project`,
+    slug,
+    params: { id: key },
+    dataDir: '/nowhere',
+  }
 }
 
 const ref = (key: string) => ({ key, name: `${key} project`, app: `work.${key.toLowerCase()}` })
@@ -45,7 +53,11 @@ test('every project is read in order, a failing one is reported and the rest sti
     { project: ref('ONE'), value: 'ONE' },
     { project: ref('THREE'), value: 'THREE' },
   ])
-  assert.deepEqual(across.projects, { read: 3, total: 3, unavailable: [{ ...ref('TWO'), error: 'database is locked' }] })
+  assert.deepEqual(across.projects, {
+    read: 3,
+    total: 3,
+    unavailable: [{ ...ref('TWO'), error: 'database is locked' }],
+  })
 })
 
 test('past the cap no project is read, and the answer says how many there were', async () => {
@@ -62,7 +74,10 @@ test('no project at all is an empty answer that says so, not a failure', async (
 })
 
 test('across projects, filters of one project are refused by name and the page is bounded', () => {
-  assert.throws(() => acrossListInput({ status: ['Done'], parent: 'none' }), /"status", "parent" cannot be used: they name something of one project/)
+  assert.throws(
+    () => acrossListInput({ status: ['Done'], parent: 'none' }),
+    /"status", "parent" cannot be used: they name something of one project/,
+  )
   assert.throws(() => acrossListInput({ limit: 201 }), /limit is 1–200 with scope "all"/)
   assert.deepEqual(acrossListInput({ query: 'x', statusCategory: ['todo'], scope: 'all' }), {
     perProject: { query: 'x', statusCategory: ['todo'], limit: 50 },
@@ -188,7 +203,11 @@ test('scope "this" or none runs the action as it was, "all" runs across, neither
   assert.equal(await taskList({} as never, { query: 'x', scope: 'this' }), 'own')
   assert.equal(await taskList({} as never, { query: 'x', scope: 'all' }), 'across')
   assert.deepEqual(seen, [{ query: 'x' }, { query: 'x' }, { query: 'x' }])
-  assert.throws(() => taskList({} as never, { scope: 'everywhere' }), /scope is "this" \(the default: this project\) or "all"/)
+  // Any other scope is refused at the action boundary, before scoped runs.
+  assert.throws(
+    () => parseParams('task_list', { scope: 'everywhere' }),
+    /"scope" must be one of "this" or "all", not "everywhere"/,
+  )
 })
 
 test('compact rows across projects carry the App address instead of the project object', async () => {

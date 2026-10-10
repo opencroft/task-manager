@@ -9,7 +9,12 @@ const VIEW: SavedView = {
   id: 'view-1',
   name: 'Open bugs',
   page: 'tasks',
-  filter: { query: 'login', type: { include: ['bug'] }, label: { exclude: ['wontfix'] }, sort: { field: 'priority', dir: 'desc' } },
+  filter: {
+    query: 'login',
+    type: { include: ['bug'] },
+    label: { exclude: ['wontfix'] },
+    sort: { field: 'priority', dir: 'desc' },
+  },
   group: null,
   columns: ['key', 'summary', 'status'],
   shared: false,
@@ -44,7 +49,7 @@ test('a change from the view is the only thing written, and reads back over the 
   assert.equal(sameViewState(back, BASE), false)
 })
 
-test("clearing what the view filters by is written as empty, and reads back as nothing", () => {
+test('clearing what the view filters by is written as empty, and reads back as nothing', () => {
   const cleared = { ...BASE, filter: { ...BASE.filter, label: undefined, query: undefined, sort: undefined } }
   const query = queryOfState(cleared, BASE)
   assert.deepEqual(Object.fromEntries(query), { q: '', label: '', sort: '' })

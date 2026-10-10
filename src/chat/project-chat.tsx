@@ -8,32 +8,11 @@
 // The references ride the host's selection scope: the composer shows them as a
 // badge, and the reader's pass toggle holds them back from a message.
 
-import { legacy } from '@opencroft/client'
+import { ChatDock, SelectionProvider, type UserSelection, useSelection } from '@opencroft/client/chat'
 import { type ReactNode, useEffect, useState } from 'react'
 
 import type { ProjectInfo } from '../../shared/settings'
 import { tasksApi } from '../lib/api'
-
-interface UserSelection {
-  label: string
-  content: string
-}
-
-interface HostChat {
-  ChatDock?: (props: { space: string; id: string; title: string; chatName?: string; children: ReactNode }) => ReactNode
-  SelectionProvider?: (props: { children: ReactNode }) => ReactNode
-  useSelection?: () => { setSelection: (selection: UserSelection | null) => void; clearSelection: () => void }
-  useChatDock?: typeof legacy.useChatDock
-}
-
-// Taken off the host object, read defensively as the other extensions do: a
-// host without the chat surface renders the App without a chat. The dock is
-// opened from its own launcher, the same in every extension.
-const host = legacy as unknown as HostChat
-const { ChatDock, SelectionProvider, useSelection } = host
-
-/** The project chat's dock around the calling page; null on a host that has none. */
-export const useChatDock: typeof legacy.useChatDock = host.useChatDock ?? (() => null)
 
 /** Where the reader is in the App, for the reference. */
 export interface ChatPlace {
@@ -47,7 +26,9 @@ export interface ChatPlace {
 
 /** The reference text the agent receives, and the badge the reader sees. */
 export function referenceOf(app: string, projectKey: string, place: ChatPlace): UserSelection {
-  const lines = [`Task manager App ${app} (project ${projectKey}); the reader is on: ${place.page ?? 'a task page'} (${place.path})`]
+  const lines = [
+    `Task manager App ${app} (project ${projectKey}); the reader is on: ${place.page ?? 'a task page'} (${place.path})`,
+  ]
   if (place.taskKey) {
     lines.push(`Open task: ${place.taskKey}`)
     lines.push(`Read it with app_call on ${app}: task_get {"key":"${place.taskKey}"}`)
@@ -61,7 +42,7 @@ export function referenceOf(app: string, projectKey: string, place: ChatPlace): 
 }
 
 function ReferenceBridge({ app, projectKey, place }: { app: string; projectKey: string; place: ChatPlace }) {
-  const { setSelection } = (useSelection as NonNullable<HostChat['useSelection']>)()
+  const { setSelection } = useSelection()
   const { page, path, taskKey } = place
   useEffect(() => {
     setSelection(referenceOf(app, projectKey, { page, path, taskKey }))
@@ -91,9 +72,6 @@ export function ProjectChat({
   const [info, setInfo] = useState<ProjectInfo | 'failed' | null>(null)
 
   useEffect(() => {
-    if (!ChatDock || !SelectionProvider || !useSelection) {
-      return
-    }
     let live = true
     tasksApi(instanceId)
       .project_info({})
@@ -106,7 +84,7 @@ export function ProjectChat({
     }
   }, [instanceId])
 
-  if (!ChatDock || !SelectionProvider || !useSelection || info === 'failed') {
+  if (info === 'failed') {
     return <>{children}</>
   }
   if (!info) {
@@ -114,7 +92,12 @@ export function ProjectChat({
   }
   return (
     <SelectionProvider>
-      <ChatDock space={info.space} id={`tasks-${projectKey.toLowerCase()}`} title={`Chat · ${info.name}`} chatName={info.name}>
+      <ChatDock
+        space={info.space}
+        id={`tasks-${projectKey.toLowerCase()}`}
+        title={`Chat · ${info.name}`}
+        chatName={info.name}
+      >
         <ReferenceBridge app={info.address} projectKey={projectKey} place={place} />
         {children}
       </ChatDock>

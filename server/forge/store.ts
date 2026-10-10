@@ -120,7 +120,13 @@ export function saveConnection(db: Db, connection: ForgeConnection): void {
       `INSERT INTO forge_connection (id, url, owner, secret_key, cursor, last_sync_at, last_error) VALUES (1, ?, ?, ?, ?, ?, NULL)
        ON CONFLICT (id) DO UPDATE SET url = excluded.url, owner = excluded.owner, secret_key = excluded.secret_key,
          cursor = excluded.cursor, last_sync_at = excluded.last_sync_at, last_error = NULL`,
-    ).run(connection.url, connection.owner, connection.secretKey, same ? before.cursor : null, same ? before.last_sync_at : null)
+    ).run(
+      connection.url,
+      connection.owner,
+      connection.secretKey,
+      same ? before.cursor : null,
+      same ? before.last_sync_at : null,
+    )
   })
 }
 
@@ -134,11 +140,9 @@ export function deleteConnection(db: Db): void {
 
 /** Record how a read went; the cursor moves only on success. */
 export function recordSync(db: Db, outcome: { at: string; cursor?: string; error?: string }): void {
-  db.prepare('UPDATE forge_connection SET last_sync_at = ?, last_error = ?, cursor = coalesce(?, cursor) WHERE id = 1').run(
-    outcome.at,
-    outcome.error ?? null,
-    outcome.cursor ?? null,
-  )
+  db.prepare(
+    'UPDATE forge_connection SET last_sync_at = ?, last_error = ?, cursor = coalesce(?, cursor) WHERE id = 1',
+  ).run(outcome.at, outcome.error ?? null, outcome.cursor ?? null)
 }
 
 /**
@@ -149,7 +153,11 @@ export function recordSync(db: Db, outcome: { at: string; cursor?: string; error
  * by a pull request that is new, or whose title, state, author, branch or
  * mentions changed.
  */
-export function writePullRequests(db: Db, prs: PullRequestInput[], branchMentions: (branch: string) => number[]): number[] {
+export function writePullRequests(
+  db: Db,
+  prs: PullRequestInput[],
+  branchMentions: (branch: string) => number[],
+): number[] {
   const touched = new Set<number>()
   transaction(db, () => {
     const find = db.prepare('SELECT * FROM pull_request WHERE repo = ? AND number = ?')
@@ -157,7 +165,9 @@ export function writePullRequests(db: Db, prs: PullRequestInput[], branchMention
     const insert = db.prepare(
       'INSERT INTO pull_request (repo, number, title, state, author, url, branch, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     )
-    const update = db.prepare('UPDATE pull_request SET title = ?, state = ?, author = ?, url = ?, branch = ?, updated_at = ? WHERE id = ?')
+    const update = db.prepare(
+      'UPDATE pull_request SET title = ?, state = ?, author = ?, url = ?, branch = ?, updated_at = ? WHERE id = ?',
+    )
     const clearMentions = db.prepare('DELETE FROM pull_request_mention WHERE pr_id = ?')
     const addMention = db.prepare('INSERT OR IGNORE INTO pull_request_mention (pr_id, number) VALUES (?, ?)')
     for (const pr of prs) {
@@ -178,7 +188,9 @@ export function writePullRequests(db: Db, prs: PullRequestInput[], branchMention
           old.join(',') !== mentions.join(',')
         update.run(pr.title, pr.state, pr.author, pr.url, branch, pr.updatedAt, id)
       } else {
-        id = Number(insert.run(pr.repo, pr.number, pr.title, pr.state, pr.author, pr.url, branch, pr.updatedAt).lastInsertRowid)
+        id = Number(
+          insert.run(pr.repo, pr.number, pr.title, pr.state, pr.author, pr.url, branch, pr.updatedAt).lastInsertRowid,
+        )
         changed = mentions.length > 0
       }
       if (!changed) {
@@ -201,6 +213,8 @@ export function existingNumbers(db: Db, numbers: number[]): number[] {
   if (numbers.length === 0) {
     return []
   }
-  const rows = db.prepare(`SELECT number FROM task WHERE number IN (${numbers.map(() => '?').join(',')})`).all(...numbers) as Array<{ number: number }>
+  const rows = db
+    .prepare(`SELECT number FROM task WHERE number IN (${numbers.map(() => '?').join(',')})`)
+    .all(...numbers) as Array<{ number: number }>
   return rows.map((row) => row.number)
 }

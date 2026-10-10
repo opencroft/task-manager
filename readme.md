@@ -68,11 +68,14 @@ limits: the task page still shows every comment, and My work every task.
 ## Checks before merging
 
 - `npm test`: the server's `node --test` suites and the UI helpers' tests.
-- `npm run typecheck`: strict, over `src`, `server`, `shared`, `test` and
-  `scripts`. `@opencroft/client`, `@opencroft/server` and the host's React
-  types come from the OpenCroft host, so run it from a copy of this
-  repository placed inside an OpenCroft source checkout, where those resolve;
-  in a standalone clone they cannot, and the run checks nothing.
+- `npm run fix`: the command every OpenCroft repository shares, from the core
+  repository's `packages/dev-tools`. Run it with an OpenCroft core checkout's
+  `node_modules/.bin` on `PATH`. It formats the files this branch changed, then
+  fails on any Biome finding in the repository and on any type error. The
+  typecheck (also `npm run typecheck` on its own) is strict over `src`,
+  `server`, `shared`, `test` and `scripts` (`tsconfig.check.json`), and runs
+  from a copy placed inside that core checkout, where `@opencroft/client`,
+  `@opencroft/server` and the host's React types resolve.
 - A compile with the host's extension build at the commit the target instance
   runs.
 

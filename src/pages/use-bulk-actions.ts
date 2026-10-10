@@ -13,7 +13,6 @@ import type {
   TaskBulkBarStatus,
 } from '@/components/ui/tasks/task-bulk-bar'
 import type { TaskPriority } from '@/components/ui/tasks/task-priority-icon'
-
 import type { TaskSummary } from '../../shared/types'
 import { useProject } from '../app/project'
 import { errorMessage } from '../lib/api'
@@ -101,10 +100,15 @@ export function useBulkActions(
     statuses,
     onChangeStatus: (status: TaskBulkBarStatus) =>
       void run('status', picked, (task) => api.task_change_status({ key: task.key, status: Number(status.id) })),
-    assignees: assignees.map((option) => ({ kind: option.assignee.kind, id: option.assignee.id, name: option.assignee.name })),
+    assignees: assignees.map((option) => ({
+      kind: option.assignee.kind,
+      id: option.assignee.id,
+      name: option.assignee.name,
+    })),
     onChangeAssignee: (assignee: TaskBulkBarAssignee | null) =>
       void run('assignee', picked, (task) => api.task_update({ key: task.key, assignee: assigneeInput(assignee) })),
-    onChangePriority: (priority: TaskPriority) => void run('priority', picked, (task) => api.task_update({ key: task.key, priority })),
+    onChangePriority: (priority: TaskPriority) =>
+      void run('priority', picked, (task) => api.task_update({ key: task.key, priority })),
     labels,
     labelCounts,
     // A label change replaces a task's labels, so only the tasks it changes are touched.
@@ -131,7 +135,8 @@ export function useBulkActions(
       )
     },
     parents,
-    onSetParent: (key: string | null) => void run('parent', picked, (task) => api.task_move({ key: task.key, parent: key })),
+    onSetParent: (key: string | null) =>
+      void run('parent', picked, (task) => api.task_move({ key: task.key, parent: key })),
     // A task with subtasks is refused rather than taking them along: the confirm lists only what was picked.
     onDelete: () => void run('delete', picked, (task) => api.task_delete({ key: task.key })),
     busy,
@@ -140,7 +145,11 @@ export function useBulkActions(
       const previous = last.current
       if (previous && result) {
         const failed = new Set(result.failures.map((failure) => failure.key))
-        void run(previous.action, picked.filter((task) => failed.has(task.key)), previous.apply)
+        void run(
+          previous.action,
+          picked.filter((task) => failed.has(task.key)),
+          previous.apply,
+        )
       }
     },
     onDismissResult: () => setResult(null),

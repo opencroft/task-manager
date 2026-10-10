@@ -3,6 +3,7 @@
 // agent comes back to. The actions' shapes, shared by the server seam
 // (server/views) and the UI.
 
+import type { ActionInputs } from './action-inputs.ts'
 import type { FieldFilter } from './filters.ts'
 import type { Priority, StatusRef, TaskKey, TaskListInput, TaskSort, TaskType } from './types.ts'
 
@@ -29,7 +30,17 @@ export const TASK_COLUMNS = [
 export type TaskColumn = (typeof TASK_COLUMNS)[number]
 
 /** The columns, in order, of a tasks view that names none. */
-export const DEFAULT_TASK_COLUMNS: readonly TaskColumn[] = ['type', 'key', 'summary', 'priority', 'status', 'assignee', 'reporter', 'created', 'updated']
+export const DEFAULT_TASK_COLUMNS: readonly TaskColumn[] = [
+  'type',
+  'key',
+  'summary',
+  'priority',
+  'status',
+  'assignee',
+  'reporter',
+  'created',
+  'updated',
+]
 
 /** Columns every tasks view shows: a row has to say which task it is. */
 export const REQUIRED_TASK_COLUMNS: readonly TaskColumn[] = ['key', 'summary']
@@ -78,11 +89,6 @@ export interface SavedView {
   editable: boolean
 }
 
-export interface ViewListInput {
-  /** Only this page's views. */
-  page?: ViewPage
-}
-
 export interface ViewSaveInput {
   /** Pass to change a view you own; omit to save a new one. */
   id?: string
@@ -97,22 +103,12 @@ export interface ViewSaveInput {
   shared?: boolean
 }
 
-export interface ViewDeleteInput {
-  /** The view's id or name. */
-  view: string
-}
-
-export interface ViewSetDefaultInput {
-  page: ViewPage
-  /** The view's id or name; null clears the default. */
-  view: string | null
-}
-
 export interface ViewActionMap {
-  view_list: { input: ViewListInput; output: SavedView[] }
+  view_list: { input: ActionInputs['view_list']; output: SavedView[] }
   view_save: { input: ViewSaveInput; output: SavedView }
-  view_delete: { input: ViewDeleteInput; output: { deleted: string } }
-  view_set_default: { input: ViewSetDefaultInput; output: SavedView | null }
+  view_delete: { input: ActionInputs['view_delete']; output: { deleted: string } }
+  /** `view` null clears the page's default. */
+  view_set_default: { input: ActionInputs['view_set_default']; output: SavedView | null }
 }
 
 export type ViewActionId = keyof ViewActionMap

@@ -4,4 +4,4 @@
  * names in the sources under src, against the host theme — so nothing here is
  * shipped, and theme tokens are not redefined.
  */
-@import "tailwindcss";
+@import 'tailwindcss';

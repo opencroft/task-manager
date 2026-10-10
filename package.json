@@ -1,13 +1,15 @@
 {
   "name": "task-manager",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "license": "MIT",
   "type": "module",
   "scripts": {
     "test": "node --experimental-strip-types --no-warnings --test server/*.test.ts server/workflows/*.test.ts server/inbox/*.test.ts server/dependencies/*.test.ts server/views/*.test.ts server/boards/*.test.ts server/my-work/*.test.ts server/attachments/*.test.ts server/mentions/*.test.ts server/settings/*.test.ts server/versions/*.test.ts server/openproject/*.test.ts server/forge/*.test.ts server/projects/*.test.ts scripts/smoke-stage/*.test.ts && tsx --test test/*.test.ts",
-    "typecheck": "tsc -p tsconfig.check.json",
-    "smoke:stage": "node --experimental-strip-types --no-warnings scripts/smoke-stage.ts"
+    "typecheck": "opencroft-dev typecheck",
+    "smoke:stage": "node --experimental-strip-types --no-warnings scripts/smoke-stage.ts",
+    "action-inputs": "node --experimental-strip-types --no-warnings scripts/action-inputs.ts",
+    "fix": "opencroft-dev fix"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",

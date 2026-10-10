@@ -7,12 +7,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { TaskSavedViewsProps } from '@/components/ui/tasks/task-saved-views'
-
 import type { SavedView, ViewPage } from '../../shared/views'
 import { useProject } from '../app/project'
 import { hrefFor, navigate, type TasksLocation } from '../lib/router'
 import { isDefaultColumns } from './task-columns'
-import { type ViewState, emptyState, queryOfState, queryOfView, sameViewState, stateOfView, viewOfQuery } from './view-state'
+import {
+  emptyState,
+  queryOfState,
+  queryOfView,
+  sameViewState,
+  stateOfView,
+  type ViewState,
+  viewOfQuery,
+} from './view-state'
 
 export interface SavedViews {
   /** The saved-views picker's props. */
@@ -35,7 +42,10 @@ export function useSavedViews(page: ViewPage, location: TasksLocation): SavedVie
 
   // The page's own path, so a view shown on one board stays on that board.
   const path = location.segments.join('/')
-  const show = useCallback((view: SavedView) => navigate(hrefFor(path.split('/'), queryOfView(view)), { replace: true }), [path])
+  const show = useCallback(
+    (view: SavedView) => navigate(hrefFor(path.split('/'), queryOfView(view)), { replace: true }),
+    [path],
+  )
 
   const load = useCallback(async () => {
     try {
@@ -48,6 +58,7 @@ export function useSavedViews(page: ViewPage, location: TasksLocation): SavedVie
     }
   }, [api, fail, page])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on `load` alone, so the default applies on the first load only, not as the URL changes
   useEffect(() => {
     void load().then((loaded) => {
       // The default opens once, on arrival at a bare page; a link with filters is kept as it is.
@@ -59,7 +70,6 @@ export function useSavedViews(page: ViewPage, location: TasksLocation): SavedVie
       }
       opened.current = true
     })
-    // Keyed on `load` alone: the default applies on the first load only, not as the URL changes.
   }, [load])
 
   const activeId = location.query.get('view')
@@ -102,7 +112,9 @@ export function useSavedViews(page: ViewPage, location: TasksLocation): SavedVie
       const view = views.find((candidate) => candidate.id === id)
       confirm({
         title: `Delete the view "${view?.name ?? ''}"?`,
-        description: view?.shared ? 'It is shared, so it goes for everyone in the project. The tasks stay as they are.' : 'The tasks stay as they are.',
+        description: view?.shared
+          ? 'It is shared, so it goes for everyone in the project. The tasks stay as they are.'
+          : 'The tasks stay as they are.',
         action: 'Delete view',
         destructive: true,
         onConfirm: () =>

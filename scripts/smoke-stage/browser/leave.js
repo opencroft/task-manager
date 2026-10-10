@@ -3,7 +3,7 @@
 // `args.way` is one of the three ways out: `switcher` (the title bar's App
 // switcher, to `args.switchTo`), `graph` (the title bar's graph link), or
 // `back` (Back and Forward between the App and `args.otherApp`).
-async (page, args, h) => {
+export default async (_page, args, h) => {
   const { own } = h
   const base = h.app(args.app)
   const board = `${base}/board`

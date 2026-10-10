@@ -27,7 +27,10 @@ test('a compaction a restart cut off reads as not followed by the message, which
 
 test('a compaction followed by a session that could not be messaged says the message was not sent', () => {
   assert.equal(
-    compactionText({ outcome: 'compacted', threshold: 200_000, before: 350_000, after: 20_000, error: null, unsent: true }, true),
+    compactionText(
+      { outcome: 'compacted', threshold: 200_000, before: 350_000, after: 20_000, error: null, unsent: true },
+      true,
+    ),
     'Session compacted before the round: 350k → 20k; the round’s message was not sent; restart the step to send it',
   )
   assert.equal(

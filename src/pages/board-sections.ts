@@ -9,7 +9,11 @@ export interface ShownSection<S> {
   labelled: boolean
 }
 
-export function shownSections<S>(statuses: readonly S[], hasCards: (status: S) => boolean, dragging: boolean): ShownSection<S>[] {
+export function shownSections<S>(
+  statuses: readonly S[],
+  hasCards: (status: S) => boolean,
+  dragging: boolean,
+): ShownSection<S>[] {
   const labelled = statuses.length > 1
   const filled = statuses.filter(hasCards)
   const empty = dragging ? statuses.filter((status) => !hasCards(status)) : []

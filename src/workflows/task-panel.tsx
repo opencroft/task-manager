@@ -2,16 +2,16 @@
 // this file loads the task's run, performs the actions it reports, and opens
 // a step's session in the project chat's dock beside the pages.
 
-import { Markdown, legacy } from '@opencroft/client'
+import { type ChatDockControl, useChatDock } from '@opencroft/client/chat'
+import { Markdown } from '@opencroft/client/markdown'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 
 import { WorkflowApprovalBar } from '@/components/ui/workflows/workflow-approval-bar'
 import { WorkflowRunPanel, type WorkflowRunPanelBusy } from '@/components/ui/workflows/workflow-run-panel'
-
 import type { Task } from '../../shared/types'
 import type { ApprovalVerdict, RunStep, WorkflowDef } from '../../shared/workflows'
 import { useProject } from '../app/project'
-import { useChatDock } from '../chat/project-chat'
 import { errorMessage } from '../lib/api'
 import { useTasksLive } from '../lib/live'
 import { hrefFor } from '../lib/router'
@@ -55,10 +55,10 @@ export function WorkflowPanel({ instanceId, task }: WorkflowPanelProps) {
     setBusy(label)
     try {
       await action()
-      legacy.toast.success(done)
+      toast.success(done)
       await load()
     } catch (error) {
-      legacy.toast.error(errorMessage(error))
+      toast.error(errorMessage(error))
     } finally {
       setBusy(null)
     }
@@ -68,10 +68,10 @@ export function WorkflowPanel({ instanceId, task }: WorkflowPanelProps) {
     setDeciding(verdict)
     try {
       await api.workflow_step_decide({ task: task.key, verdict, transition, ...(comment ? { comment } : {}) })
-      legacy.toast.success(verdict === 'approve' ? `Approved ${task.key}` : `Rejected ${task.key}`)
+      toast.success(verdict === 'approve' ? `Approved ${task.key}` : `Rejected ${task.key}`)
       await load()
     } catch (error) {
-      legacy.toast.error(errorMessage(error))
+      toast.error(errorMessage(error))
     } finally {
       setDeciding(null)
     }
@@ -108,7 +108,11 @@ export function WorkflowPanel({ instanceId, task }: WorkflowPanelProps) {
       }
       busy={busy}
       onStart={(workflowId) =>
-        act('start', () => api.workflow_start({ task: task.key, workflow: workflowId }), `Started the workflow on ${task.key}`)
+        act(
+          'start',
+          () => api.workflow_start({ task: task.key, workflow: workflowId }),
+          `Started the workflow on ${task.key}`,
+        )
       }
       onCancel={() =>
         confirm({
@@ -116,14 +120,19 @@ export function WorkflowPanel({ instanceId, task }: WorkflowPanelProps) {
           description: 'The open step’s session is told to stop. The task keeps its status and its run history.',
           action: 'Cancel run',
           destructive: true,
-          onConfirm: () => act('cancel', () => api.workflow_run_cancel({ task: task.key }), `Cancelled the workflow on ${task.key}`),
+          onConfirm: () =>
+            act('cancel', () => api.workflow_run_cancel({ task: task.key }), `Cancelled the workflow on ${task.key}`),
         })
       }
       onRestart={(step) =>
         act('restart', () => api.workflow_step_restart({ task: task.key, step: step.stepId }), `Restarted ${step.name}`)
       }
       onFinish={(transition) =>
-        act('finish', () => api.workflow_step_finish({ task: task.key, transition }), `${task.key} moved to ${transition}`)
+        act(
+          'finish',
+          () => api.workflow_step_finish({ task: task.key, transition }),
+          `${task.key} moved to ${transition}`,
+        )
       }
       sessionHref={(step) => (step.threadId && step.chatRef ? threadHref(step.chatRef, step.threadId) : null)}
       onOpenSession={dock ? (step) => openStepSession(dock, step) : undefined}
@@ -135,7 +144,7 @@ export function WorkflowPanel({ instanceId, task }: WorkflowPanelProps) {
 
 // In the dock when the step's thread is in the dock's chat; a step whose
 // session lives in another chat opens on that chat's thread page instead.
-function openStepSession(dock: legacy.ChatDockControl, step: RunStep) {
+function openStepSession(dock: ChatDockControl, step: RunStep) {
   if (!step.threadId || !step.chatSlug) {
     return
   }

@@ -3,12 +3,11 @@
 // memoised, so a drag re-renders only the columns whose drop marker, dragged
 // card or selection changed, and within them only the cards that changed.
 
-import { type PointerEvent as ReactPointerEvent, type ReactNode, memo, useEffect, useRef, useState } from 'react'
+import { memo, type ReactNode, type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from 'react'
 
 import { BoardCard } from '@/components/ui/tasks/board-card'
 import { BoardDropIndicator } from '@/components/ui/tasks/board-drop-indicator'
 import { TaskActionsMenu, TaskContextMenu, taskFieldEntries } from '@/components/ui/tasks/task-menu'
-
 import type { TaskSummary } from '../../shared/types'
 import type { ProjectContextValue } from '../app/project'
 import { openTask } from '../app/task-opener'
@@ -122,6 +121,7 @@ export const BoardColumnCards = memo(function BoardColumnCards({
   )
   const shown = Math.max(batch, needed)
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-observing once more cards render reports a sentinel still in view again, which loads the next batch
   useEffect(() => {
     const element = sentinel.current
     if (!element) {
@@ -142,7 +142,7 @@ export const BoardColumnCards = memo(function BoardColumnCards({
   const children: ReactNode[] = []
   for (const task of cards.slice(0, shown)) {
     if (dropBeforeKey === task.key) {
-      children.push(<BoardDropIndicator key="drop" />)
+      children.push(<BoardDropIndicator key='drop' />)
     }
     children.push(
       <BoardColumnCard
@@ -160,10 +160,10 @@ export const BoardColumnCards = memo(function BoardColumnCards({
     )
   }
   if (shown < cards.length) {
-    children.push(<div key="more" ref={sentinel} aria-hidden className="h-px shrink-0" />)
+    children.push(<div key='more' ref={sentinel} aria-hidden className='h-px shrink-0' />)
   }
   if (dropBeforeKey === null && cards.some((task) => task.key !== draggedKey)) {
-    children.push(<BoardDropIndicator key="drop" variant="slot" />)
+    children.push(<BoardDropIndicator key='drop' variant='slot' />)
   }
   return children
 })

@@ -3,8 +3,9 @@ import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 
 import type { TasksEvent } from '../../shared/types.ts'
+import { parseParams } from '../action-params.ts'
 import { allMigrations, migrate } from '../db.ts'
-import { type Scope, changeStatus, createTask, deleteTask, getTask, listTasks, moveTask } from '../service.ts'
+import { changeStatus, createTask, deleteTask, getTask, listTasks, moveTask, type Scope } from '../service.ts'
 import { linkTasks, unlinkTasks } from './store.ts'
 
 interface TestScope extends Scope {
@@ -42,10 +43,16 @@ test('a link shows on both tasks, in task_get and in every summary', async () =>
   linkTasks(scope, { from: a, to: b })
 
   const blocked = getTask(scope, b)
-  assert.deepEqual(blocked.blockedBy.map((t) => t.key), [a])
+  assert.deepEqual(
+    blocked.blockedBy.map((t) => t.key),
+    [a],
+  )
   assert.deepEqual(blocked.blocks, [])
   assert.deepEqual(blocked.blockers, [{ key: a, open: true }])
-  assert.deepEqual(getTask(scope, a).blocks.map((t) => t.key), [b])
+  assert.deepEqual(
+    getTask(scope, a).blocks.map((t) => t.key),
+    [b],
+  )
 
   const listed = listTasks(scope).tasks
   assert.deepEqual(listed.find((t) => t.key === b)?.blockers, [{ key: a, open: true }])
@@ -102,7 +109,10 @@ test('a link that would close a loop is refused, naming the loop', async () => {
   assert.throws(() => linkTasks(scope, { from: b, to: a }), /would make a loop \(TASK-1 → TASK-2 → TASK-1\)/)
   // A second path that is not a loop is fine.
   linkTasks(scope, { from: a, to: c })
-  assert.deepEqual(getTask(scope, c).blockedBy.map((t) => t.key), [a, b])
+  assert.deepEqual(
+    getTask(scope, c).blockedBy.map((t) => t.key),
+    [a, b],
+  )
 })
 
 test('unlinking removes the link and records it; a missing link is refused', async () => {
@@ -125,19 +135,36 @@ test('each relation type shows on both tasks under its own name, and only blocks
 
   const first = getTask(scope, a)
   assert.deepEqual(
-    [first.precedes, first.duplicatedBy, first.relatesTo, first.follows, first.duplicates, first.blockedBy].map((list) => list.map((t) => t.key)),
+    [first.precedes, first.duplicatedBy, first.relatesTo, first.follows, first.duplicates, first.blockedBy].map(
+      (list) => list.map((t) => t.key),
+    ),
     [[b], [c], [d], [], [], []],
   )
-  assert.deepEqual(getTask(scope, b).follows.map((t) => t.key), [a])
-  assert.deepEqual(getTask(scope, c).duplicates.map((t) => t.key), [a])
+  assert.deepEqual(
+    getTask(scope, b).follows.map((t) => t.key),
+    [a],
+  )
+  assert.deepEqual(
+    getTask(scope, c).duplicates.map((t) => t.key),
+    [a],
+  )
   // Relates runs both ways: stored once, listed on both ends.
-  assert.deepEqual(getTask(scope, d).relatesTo.map((t) => t.key), [a])
-  assert.equal((scope.db.prepare("SELECT count(*) AS n FROM task_relation WHERE type = 'relates'").get() as { n: number }).n, 1)
+  assert.deepEqual(
+    getTask(scope, d).relatesTo.map((t) => t.key),
+    [a],
+  )
+  assert.equal(
+    (scope.db.prepare("SELECT count(*) AS n FROM task_relation WHERE type = 'relates'").get() as { n: number }).n,
+    1,
+  )
   // None of them blocks: no blockers, in task_get or in a list.
   assert.deepEqual(first.blockers, [])
   assert.ok(listTasks(scope).tasks.every((task) => task.blockers.length === 0))
 
-  const history = (key: string) => getTask(scope, key).activity.filter((entry) => entry.kind === 'field').map((entry) => [entry.field, entry.to])
+  const history = (key: string) =>
+    getTask(scope, key)
+      .activity.filter((entry) => entry.kind === 'field')
+      .map((entry) => [entry.field, entry.to])
   assert.deepEqual(history(a), [
     ['precedes', b],
     ['duplicated by', c],
@@ -150,7 +177,10 @@ test('an inverse name reads from the other end, relates either way round is one 
   const scope = makeScope()
   const [a, b] = await tasks(scope, 2)
   linkTasks(scope, { type: 'precedes', from: a, to: b })
-  assert.deepEqual(getTask(scope, b).follows.map((t) => t.key), [a])
+  assert.deepEqual(
+    getTask(scope, b).follows.map((t) => t.key),
+    [a],
+  )
   linkTasks(scope, { type: 'blocked_by', from: b, to: a })
   assert.deepEqual(getTask(scope, b).blockers, [{ key: a, open: true }])
 
@@ -161,7 +191,10 @@ test('an inverse name reads from the other end, relates either way round is one 
   unlinkTasks(scope, { type: 'relates', from: a, to: b })
   assert.deepEqual(getTask(scope, a).relatesTo, [])
 
-  assert.throws(() => unlinkTasks(scope, { type: 'duplicates', from: a, to: b }), /TASK-1 duplicates TASK-2 is not recorded/)
+  assert.throws(
+    () => unlinkTasks(scope, { type: 'duplicates', from: a, to: b }),
+    /TASK-1 duplicates TASK-2 is not recorded/,
+  )
   unlinkTasks(scope, { type: 'follows', from: b, to: a })
   assert.deepEqual(getTask(scope, a).precedes, [])
   // Blocks is untouched by the others coming and going.
@@ -171,13 +204,23 @@ test('an inverse name reads from the other end, relates either way round is one 
 test('an unknown relation type and a task related to itself are refused; only blocks refuses a loop', async () => {
   const scope = makeScope()
   const [a, b] = await tasks(scope, 2)
-  assert.throws(() => linkTasks(scope, { type: 'parent' as never, from: a, to: b }), /"parent" is not a relation type; use one of: blocks, relates, duplicates, follows, blocked_by/)
+  // An unknown relation type is refused at the action boundary, before linkTasks runs.
+  assert.throws(
+    () => parseParams('task_link', { type: 'parent', from: a, to: b }),
+    /"type" must be one of "blocks", "blocked_by", "relates", "duplicates", "duplicated_by", "follows" or "precedes", not "parent"/,
+  )
   assert.throws(() => linkTasks(scope, { type: 'relates', from: a, to: a }), /TASK-1 cannot relate to itself/)
   assert.throws(() => linkTasks(scope, { type: 'follows', from: a, to: a }), /TASK-1 cannot follow itself/)
   linkTasks(scope, { type: 'duplicates', from: a, to: b })
   linkTasks(scope, { type: 'duplicates', from: b, to: a })
-  assert.deepEqual(getTask(scope, a).duplicates.map((t) => t.key), [b])
-  assert.deepEqual(getTask(scope, a).duplicatedBy.map((t) => t.key), [b])
+  assert.deepEqual(
+    getTask(scope, a).duplicates.map((t) => t.key),
+    [b],
+  )
+  assert.deepEqual(
+    getTask(scope, a).duplicatedBy.map((t) => t.key),
+    [b],
+  )
 })
 
 test('the migration moves every blocks link over and drops the old table', () => {
@@ -185,7 +228,13 @@ test('the migration moves every blocks link over and drops the old table', () =>
   db.exec('PRAGMA foreign_keys = ON')
   // The schema as it stood before this migration: everything listed ahead of it.
   const all = allMigrations()
-  migrate(db, all.slice(0, all.findIndex((migration) => migration.id === 'dependencies-0002-relation-types')))
+  migrate(
+    db,
+    all.slice(
+      0,
+      all.findIndex((migration) => migration.id === 'dependencies-0002-relation-types'),
+    ),
+  )
   const status = (db.prepare('SELECT id FROM status ORDER BY id LIMIT 1').get() as { id: number }).id
   const insert = db.prepare(
     "INSERT INTO task (number, summary, description, status_id, type, priority, reporter_kind, reporter_name, rank, created_at, updated_at) VALUES (?, 'x', '', ?, 'task', 'medium', 'person', 'p', ?, 't', 't')",
@@ -194,11 +243,20 @@ test('the migration moves every blocks link over and drops the old table', () =>
   db.exec("INSERT INTO task_link (blocker_id, blocked_id, created_at) VALUES (1, 2, 'then'), (2, 3, 'later')")
 
   migrate(db)
-  assert.deepEqual(db.prepare('SELECT from_id, to_id, type, created_at FROM task_relation ORDER BY from_id').all().map((row) => ({ ...row })), [
-    { from_id: 1, to_id: 2, type: 'blocks', created_at: 'then' },
-    { from_id: 2, to_id: 3, type: 'blocks', created_at: 'later' },
-  ])
-  assert.equal((db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE name = 'task_link'").get() as { n: number }).n, 0)
+  assert.deepEqual(
+    db
+      .prepare('SELECT from_id, to_id, type, created_at FROM task_relation ORDER BY from_id')
+      .all()
+      .map((row) => ({ ...row })),
+    [
+      { from_id: 1, to_id: 2, type: 'blocks', created_at: 'then' },
+      { from_id: 2, to_id: 3, type: 'blocks', created_at: 'later' },
+    ],
+  )
+  assert.equal(
+    (db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE name = 'task_link'").get() as { n: number }).n,
+    0,
+  )
 })
 
 test('deleting a task removes its links', async () => {

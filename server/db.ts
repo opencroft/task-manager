@@ -217,7 +217,8 @@ const globalForDb = globalThis as unknown as {
 }
 
 function connections(): Map<string, { db: Db; migratedWith: string }> {
-  return (globalForDb.__taskPipelinesDbs ??= new Map())
+  globalForDb.__taskPipelinesDbs ??= new Map()
+  return globalForDb.__taskPipelinesDbs
 }
 
 function migrationSignature(): string {

@@ -5,26 +5,22 @@
 
 import { randomUUID } from 'node:crypto'
 
+import type { ActionInputs } from '../../shared/action-inputs.ts'
+import { compactFieldFilter, compactFilter, VIEW_FIELD_FILTER_KEYS } from '../../shared/filters.ts'
+import type { StatusRef } from '../../shared/types.ts'
 import {
   DEFAULT_TASK_COLUMNS,
   REQUIRED_TASK_COLUMNS,
   type SavedView,
   TASK_COLUMNS,
   type TaskColumn,
-  VIEW_PAGES,
-  type ViewDeleteInput,
   type ViewFilter,
   type ViewGrouping,
-  type ViewListInput,
   type ViewPage,
-  type ViewSaveInput,
-  type ViewSetDefaultInput,
 } from '../../shared/views.ts'
-import { VIEW_FIELD_FILTER_KEYS, compactFieldFilter, compactFilter } from '../../shared/filters.ts'
-import type { StatusRef } from '../../shared/types.ts'
 import { didYouMean } from '../closest-names.ts'
 import { type Db, transaction } from '../db.ts'
-import { TaskError, checkedFieldFilter, resolveStatus } from '../service.ts'
+import { checkedFieldFilter, resolveStatus, TaskError } from '../service.ts'
 
 /** Who a call acts for: a stable key and the name shown on what they save. */
 export interface ViewOwner {
@@ -46,7 +42,17 @@ interface ViewRow {
 }
 
 const NAME_MAX = 80
-const FILTER_KEYS: ReadonlyArray<keyof ViewFilter> = ['query', 'status', 'assignee', 'type', 'priority', 'label', 'version', 'parent', 'sort']
+const FILTER_KEYS: ReadonlyArray<keyof ViewFilter> = [
+  'query',
+  'status',
+  'assignee',
+  'type',
+  'priority',
+  'label',
+  'version',
+  'parent',
+  'sort',
+]
 
 function toView(row: ViewRow, owner: ViewOwner, defaultId: string | undefined): SavedView {
   return {
@@ -55,7 +61,8 @@ function toView(row: ViewRow, owner: ViewOwner, defaultId: string | undefined): 
     page: row.page,
     filter: JSON.parse(row.filter) as ViewFilter,
     group: row.grouping,
-    columns: row.page !== 'tasks' ? null : row.columns ? (JSON.parse(row.columns) as TaskColumn[]) : [...DEFAULT_TASK_COLUMNS],
+    columns:
+      row.page !== 'tasks' ? null : row.columns ? (JSON.parse(row.columns) as TaskColumn[]) : [...DEFAULT_TASK_COLUMNS],
     shared: row.shared === 1,
     owner: row.owner_name,
     isDefault: row.id === defaultId,
@@ -82,15 +89,8 @@ function visibleRows(db: Db, owner: ViewOwner, page?: ViewPage): ViewRow[] {
   return rows
 }
 
-function checkPage(page: unknown): ViewPage {
-  if (!VIEW_PAGES.includes(page as ViewPage)) {
-    throw new TaskError(`No page "${String(page)}"; a view belongs to one of: ${VIEW_PAGES.join(', ')}`)
-  }
-  return page as ViewPage
-}
-
-function checkName(name: unknown): string {
-  const trimmed = typeof name === 'string' ? name.trim() : ''
+function checkName(name: string): string {
+  const trimmed = name.trim()
   if (!trimmed || trimmed.length > NAME_MAX) {
     throw new TaskError(`A view needs a name of 1–${NAME_MAX} characters`)
   }
@@ -109,7 +109,9 @@ export function checkFilter(db: Db, filter: unknown, keys: ReadonlyArray<keyof V
   }
   const unknown = Object.keys(filter).filter((key) => !keys.includes(key as keyof ViewFilter))
   if (unknown.length) {
-    throw new TaskError(`filter has no field ${unknown.map((key) => `"${key}"`).join(', ')}; it takes: ${keys.join(', ')}`)
+    throw new TaskError(
+      `filter has no field ${unknown.map((key) => `"${key}"`).join(', ')}; it takes: ${keys.join(', ')}`,
+    )
   }
   for (const key of VIEW_FIELD_FILTER_KEYS) {
     checkedFieldFilter(key, (filter as Record<string, unknown>)[key])
@@ -137,7 +139,12 @@ function resolve(db: Db, owner: ViewOwner, ref: string, page?: ViewPage): ViewRo
   if (named.length > 1) {
     throw new TaskError(`More than one shared view is called "${ref}"; pass its id (view_list gives them)`)
   }
-  throw new TaskError(`No view "${ref}".${didYouMean(ref, rows.map((row) => row.name))}`)
+  throw new TaskError(
+    `No view "${ref}".${didYouMean(
+      ref,
+      rows.map((row) => row.name),
+    )}`,
+  )
 }
 
 function viewById(db: Db, owner: ViewOwner, id: string): SavedView {
@@ -145,20 +152,19 @@ function viewById(db: Db, owner: ViewOwner, id: string): SavedView {
   return toView(row, owner, defaults(db, owner).get(row.page))
 }
 
-export function listViews(db: Db, owner: ViewOwner, input: ViewListInput = {}): SavedView[] {
-  const page = input.page === undefined ? undefined : checkPage(input.page)
+export function listViews(db: Db, owner: ViewOwner, input: ActionInputs['view_list'] = {}): SavedView[] {
   const byPage = defaults(db, owner)
-  return visibleRows(db, owner, page).map((row) => toView(row, owner, byPage.get(row.page)))
+  return visibleRows(db, owner, input.page).map((row) => toView(row, owner, byPage.get(row.page)))
 }
 
-export function saveView(db: Db, owner: ViewOwner, input: ViewSaveInput, now: string): SavedView {
+export function saveView(db: Db, owner: ViewOwner, input: ActionInputs['view_save'], now: string): SavedView {
   return transaction(db, () => {
     if (input.id !== undefined) {
       const row = resolve(db, owner, input.id)
       if (row.owner_key !== owner.key) {
         throw new TaskError(`"${row.name}" is ${row.owner_name}'s view; save a copy under a new name instead`)
       }
-      if (input.page !== undefined && checkPage(input.page) !== row.page) {
+      if (input.page !== undefined && input.page !== row.page) {
         throw new TaskError('A view keeps its page; save a new view for the other page')
       }
       const name = input.name === undefined ? row.name : checkName(input.name)
@@ -167,15 +173,9 @@ export function saveView(db: Db, owner: ViewOwner, input: ViewSaveInput, now: st
       const columns = input.columns === undefined ? row.columns : columnsFor(row.page, input.columns)
       const shared = input.shared === undefined ? row.shared : input.shared ? 1 : 0
       assertNameFree(db, owner, row.page, name, row.id)
-      db.prepare('UPDATE saved_view SET name = ?, filter = ?, grouping = ?, columns = ?, shared = ?, updated_at = ? WHERE id = ?').run(
-        name,
-        filter,
-        grouping,
-        columns,
-        shared,
-        now,
-        row.id,
-      )
+      db.prepare(
+        'UPDATE saved_view SET name = ?, filter = ?, grouping = ?, columns = ?, shared = ?, updated_at = ? WHERE id = ?',
+      ).run(name, filter, grouping, columns, shared, now, row.id)
       if (!shared) {
         // A view taken back from the project is no longer anyone else's default.
         db.prepare('DELETE FROM saved_view_default WHERE view_id = ? AND owner_key <> ?').run(row.id, owner.key)
@@ -185,7 +185,7 @@ export function saveView(db: Db, owner: ViewOwner, input: ViewSaveInput, now: st
     if (input.page === undefined || input.name === undefined) {
       throw new TaskError('A new view needs a name and a page; pass id to change an existing one')
     }
-    const page = checkPage(input.page)
+    const { page } = input
     const name = checkName(input.name)
     assertNameFree(db, owner, page, name, null)
     const id = randomUUID()
@@ -210,9 +210,6 @@ export function saveView(db: Db, owner: ViewOwner, input: ViewSaveInput, now: st
 }
 
 function groupingFor(page: ViewPage, group: ViewGrouping): ViewGrouping {
-  if (group !== null && group !== 'assignee') {
-    throw new TaskError(`No grouping "${String(group)}"; the board groups by "assignee" or not at all (null)`)
-  }
   if (group !== null && page !== 'board') {
     throw new TaskError('Only a board view has a grouping')
   }
@@ -220,20 +217,20 @@ function groupingFor(page: ViewPage, group: ViewGrouping): ViewGrouping {
 }
 
 /** A tasks view's columns as stored: a JSON array of known, distinct columns that includes the required ones; null for the default set. */
-function columnsFor(page: ViewPage, columns: unknown): string | null {
+function columnsFor(page: ViewPage, columns: string[] | null): string | null {
   if (columns === null) {
     return null
   }
   if (page !== 'tasks') {
     throw new TaskError('Only a tasks view has columns')
   }
-  if (!Array.isArray(columns) || columns.length === 0) {
+  if (columns.length === 0) {
     throw new TaskError(`columns must be a non-empty list of: ${TASK_COLUMNS.join(', ')}`)
   }
-  const unknown = columns.filter((column) => !TASK_COLUMNS.includes(column))
+  const unknown = columns.filter((column) => !(TASK_COLUMNS as readonly string[]).includes(column))
   if (unknown.length) {
     throw new TaskError(
-      `No column ${unknown.map((column) => `"${String(column)}"`).join(', ')}; the columns are: ${TASK_COLUMNS.join(', ')}.${didYouMean(String(unknown[0]), TASK_COLUMNS)}`,
+      `No column ${unknown.map((column) => `"${column}"`).join(', ')}; the columns are: ${TASK_COLUMNS.join(', ')}.${didYouMean(unknown[0] ?? '', TASK_COLUMNS)}`,
     )
   }
   if (new Set(columns).size !== columns.length) {
@@ -255,7 +252,7 @@ function assertNameFree(db: Db, owner: ViewOwner, page: ViewPage, name: string, 
   }
 }
 
-export function deleteView(db: Db, owner: ViewOwner, input: ViewDeleteInput): { deleted: string } {
+export function deleteView(db: Db, owner: ViewOwner, input: ActionInputs['view_delete']): { deleted: string } {
   const row = resolve(db, owner, input.view)
   if (row.owner_key !== owner.key) {
     throw new TaskError(`"${row.name}" is ${row.owner_name}'s view; only they can delete it`)
@@ -264,8 +261,8 @@ export function deleteView(db: Db, owner: ViewOwner, input: ViewDeleteInput): { 
   return { deleted: row.id }
 }
 
-export function setDefaultView(db: Db, owner: ViewOwner, input: ViewSetDefaultInput): SavedView | null {
-  const page = checkPage(input.page)
+export function setDefaultView(db: Db, owner: ViewOwner, input: ActionInputs['view_set_default']): SavedView | null {
+  const { page } = input
   if (input.view === null) {
     db.prepare('DELETE FROM saved_view_default WHERE owner_key = ? AND page = ?').run(owner.key, page)
     return null

@@ -71,7 +71,9 @@ function standard(name = 'Standard', isDefault = false) {
 
 test('the workflow migrations apply after core, in order, and record themselves', () => {
   const db = fresh()
-  const ids = (db.prepare('SELECT id FROM schema_migrations ORDER BY rowid').all() as Array<{ id: string }>).map((r) => r.id)
+  const ids = (db.prepare('SELECT id FROM schema_migrations ORDER BY rowid').all() as Array<{ id: string }>).map(
+    (r) => r.id,
+  )
   assert.deepEqual(ids, [
     'core-0001-init',
     'wf-0001-init',
@@ -176,7 +178,11 @@ test('status-only transitions migrate to edges into the step each status starts,
   const shared = saveWorkflow(
     db,
     normalizeDraft(
-      { id: 'wf', name: 'With QA', steps: [...wf.steps, { name: 'Design', triggerStatus: 2, worker: { kind: 'assignee' }, transitions: [3] }] },
+      {
+        id: 'wf',
+        name: 'With QA',
+        steps: [...wf.steps, { name: 'Design', triggerStatus: 2, worker: { kind: 'assignee' }, transitions: [3] }],
+      },
       mintId,
       [],
     ),
@@ -207,7 +213,12 @@ test('saving round-trips steps, workers and ordered transitions; the first workf
   assert.deepEqual(
     saved.steps.map((s) => [s.name, s.triggerStatus, s.worker, s.transitions.map(({ id: _id, ...t }) => t)]),
     [
-      ['Development', 2, { kind: 'assignee' }, [{ label: 'On to Review', toStep: saved.steps[1]?.id, status: 3, gate: null }]],
+      [
+        'Development',
+        2,
+        { kind: 'assignee' },
+        [{ label: 'On to Review', toStep: saved.steps[1]?.id, status: 3, gate: null }],
+      ],
       [
         'Review',
         3,
@@ -252,7 +263,7 @@ test('re-saving keeps step ids, deletes dropped steps, and lets two steps swap s
   )
   const trimmed = saveWorkflow(
     db,
-    normalizeDraft({ id: saved.id, name: saved.name, steps: [swapped.steps[0]!] }, mintId, []),
+    normalizeDraft({ id: saved.id, name: saved.name, steps: [swapped.steps[0]] }, mintId, []),
     NOW,
   )
   assert.equal(trimmed.steps.length, 1)
@@ -306,7 +317,7 @@ test('run steps take patches; ending a run frees the task for another and keeps 
   const wf = saveWorkflow(db, standard(), NOW)
   const taskId = addTask(db, 1)
   const runId = createRun(db, { taskId, workflow: wf, startedBy: { kind: 'agent', name: 'Rev' }, now: NOW })
-  const devId = wf.steps[0]!.id
+  const devId = wf.steps[0].id
   updateRunStep(db, runId, devId, {
     state: 'active',
     agentNodeId: 'agent_dev',

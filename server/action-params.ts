@@ -1,28 +1,18 @@
 // Every action's parameters are checked against the input schema extension.json
 // declares for it, before its handler runs. A caller that guessed a parameter
 // name — usually an agent — is told what is missing, what is unknown with the
-// closest real name, and what has the wrong type, rather than whatever the
-// handler makes of the mistake. Only the top level is checked: a nested value,
-// such as a workflow definition, is left to the handler that owns its shape.
+// closest real name, and what has the wrong type or a value outside its enum,
+// rather than whatever the handler makes of the mistake. Only the top level is
+// checked: a nested value, such as a workflow definition, is left to the
+// handler that owns its shape. `ActionInputs` is generated from the same
+// schemas (scripts/action-inputs.ts) and types exactly what this check proves.
 
-import type { AppActionContext, AppActionHandler } from '@opencroft/server'
+import type { AppActionContext, AppActionHandler } from '@opencroft/server/apps'
 
-import manifest from '../extension.json' with { type: 'json' }
+import type { ActionId, ActionInputs } from '../shared/action-inputs.ts'
 import { closestNames } from './closest-names.ts'
+import { inputSchemas, type ParamSchema, typesOf } from './input-schemas.ts'
 import { TaskError } from './service.ts'
-
-/** The part of JSON Schema the manifest's input schemas use at the top level. */
-export interface ParamSchema {
-  type?: string | string[]
-  items?: ParamSchema
-  properties?: Record<string, ParamSchema>
-  required?: string[]
-}
-
-/** The `tasks` App's input schemas, by action id. */
-export const inputSchemas: Record<string, ParamSchema> = Object.fromEntries(
-  (manifest.provides.apps.find((app) => app.type === 'tasks')?.actions ?? []).map((action) => [action.id, action.inputSchema as ParamSchema]),
-)
 
 // A wrong parameter name costs one refused call, and the refusal lists every
 // real name, so its hint may reach further than a hint for a value.
@@ -58,13 +48,14 @@ function orList(items: readonly string[]): string {
   return items.length > 1 ? `${items.slice(0, -1).join(', ')} or ${items.at(-1)}` : (items[0] ?? '')
 }
 
-const typesOf = (schema: ParamSchema) => (schema.type === undefined ? [] : [schema.type].flat())
-
-/** What is wrong with the type of one parameter's value, if anything. */
+/** What is wrong with the type of one parameter's value, or with its value against the enum, if anything. */
 function typeProblem(name: string, schema: ParamSchema, value: unknown): string | undefined {
   const allowed = typesOf(schema)
   if (allowed.length > 0 && !fits(allowed, value)) {
     return `"${name}" must be ${orList(allowed.map(article))}, not ${article(jsonType(value))}.`
+  }
+  if (schema.enum && !schema.enum.includes(value)) {
+    return `"${name}" must be one of ${orList(schema.enum.map((option) => JSON.stringify(option)))}, not ${JSON.stringify(value)}.`
   }
   const itemTypes = schema.items ? typesOf(schema.items) : []
   if (Array.isArray(value) && itemTypes.length > 0) {
@@ -91,7 +82,9 @@ export function checkParams(action: string, schema: ParamSchema, params: Record<
   for (const [key, value] of given) {
     if (!Object.hasOwn(declared, key)) {
       const close = closestNames(key, names, PARAMETER_TYPO_EDITS)
-      problems.push(`"${key}" isn't a parameter of ${action}${close.length > 0 ? `; did you mean ${orList(quoted(close))}?` : '.'}`)
+      problems.push(
+        `"${key}" isn't a parameter of ${action}${close.length > 0 ? `; did you mean ${orList(quoted(close))}?` : '.'}`,
+      )
       continue
     }
     const problem = typeProblem(key, declared[key] ?? {}, value)
@@ -103,15 +96,53 @@ export function checkParams(action: string, schema: ParamSchema, params: Record<
     return
   }
   const accepted = names.map((name) => (required.includes(name) ? `${name} (required)` : name))
-  throw new TaskError(`${problems.join(' ')} Parameters of ${action}: ${accepted.length > 0 ? accepted.join(', ') : 'none'}.`)
+  throw new TaskError(
+    `${problems.join(' ')} Parameters of ${action}: ${accepted.length > 0 ? accepted.join(', ') : 'none'}.`,
+  )
+}
+
+/**
+ * `params` of `action`, checked against its schema: refused with every problem
+ * named when they do not fit it, and typed by it when they do.
+ */
+export function parseParams<A extends ActionId>(action: A, params: Record<string, unknown>): ActionInputs[A] {
+  const schema = inputSchemas[action]
+  if (!schema) {
+    throw new Error(`Action ${action} has no input schema in extension.json`)
+  }
+  checkParams(action, schema, params)
+  // ActionInputs is generated from this same schema, so the check just made is what this type claims.
+  return params as ActionInputs[A]
+}
+
+/** One handler per action id, each given its context and its action's parameters as `parseParams` typed them. */
+export type TypedHandlers<A extends ActionId, C> = { [K in A]: (context: C, input: ActionInputs[K]) => unknown }
+
+/**
+ * `handlers` as App actions: each runs on `contextOf` the call's context and
+ * on its parameters once `parseParams` has checked them.
+ */
+export function typedActions<A extends ActionId, C>(
+  handlers: TypedHandlers<A, C>,
+  contextOf: (ctx: AppActionContext) => C,
+): Record<string, AppActionHandler> {
+  const action =
+    <K extends A>(id: K): AppActionHandler =>
+    (ctx, params) =>
+      handlers[id](contextOf(ctx), parseParams(id, params ?? {}))
+  return Object.fromEntries((Object.keys(handlers) as A[]).map((id) => [id, action(id)]))
 }
 
 /** Fails the load for a parameter typed with a name the checks do not know, which would refuse every value. */
 function assertKnownTypes(action: string, schema: ParamSchema): void {
   for (const [name, property] of Object.entries(schema.properties ?? {})) {
-    const unknown = [...typesOf(property), ...(property.items ? typesOf(property.items) : [])].filter((type) => !Object.hasOwn(SATISFIES, type))
+    const unknown = [...typesOf(property), ...(property.items ? typesOf(property.items) : [])].filter(
+      (type) => !Object.hasOwn(SATISFIES, type),
+    )
     if (unknown.length > 0) {
-      throw new Error(`Action ${action}: parameter "${name}" has type ${quoted(unknown).join(', ')}; the checks know ${quoted(Object.keys(SATISFIES)).join(', ')}`)
+      throw new Error(
+        `Action ${action}: parameter "${name}" has type ${quoted(unknown).join(', ')}; the checks know ${quoted(Object.keys(SATISFIES)).join(', ')}`,
+      )
     }
   }
 }

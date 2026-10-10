@@ -247,7 +247,10 @@ export const workflowMigrations: Migration[] = [
         .prepare('SELECT id, workflow_id, name, trigger_status_id FROM workflow_step ORDER BY workflow_id, position')
         .all() as Array<{ id: string; workflow_id: string; name: string; trigger_status_id: number }>
       const statusNames = new Map(
-        (db.prepare('SELECT id, name FROM status').all() as Array<{ id: number; name: string }>).map((s) => [s.id, s.name]),
+        (db.prepare('SELECT id, name FROM status').all() as Array<{ id: number; name: string }>).map((s) => [
+          s.id,
+          s.name,
+        ]),
       )
       const old = db
         .prepare('SELECT step_id, to_status_id, position FROM workflow_step_transition ORDER BY step_id, position')
@@ -260,7 +263,9 @@ export const workflowMigrations: Migration[] = [
         if (!step) {
           continue
         }
-        const siblings = steps.filter((s) => s.workflow_id === step.workflow_id).map((s) => ({ ...s, triggerStatus: s.trigger_status_id }))
+        const siblings = steps
+          .filter((s) => s.workflow_id === step.workflow_id)
+          .map((s) => ({ ...s, triggerStatus: s.trigger_status_id }))
         const target = stepStartedBy(siblings, t.to_status_id) ?? null
         const gate = derivedGate(siblings, step.id, target?.id ?? null)
         const label = defaultTransitionLabel(
@@ -308,7 +313,9 @@ export const workflowMigrations: Migration[] = [
         )
         .all() as Array<{ step_id: string; label: string; to_step_id: string | null; status_name: string }>
       const ended = db
-        .prepare("SELECT rowid, step_id, outcome FROM workflow_run_round WHERE ended_by = 'transition' AND outcome IS NOT NULL")
+        .prepare(
+          "SELECT rowid, step_id, outcome FROM workflow_run_round WHERE ended_by = 'transition' AND outcome IS NOT NULL",
+        )
         .all() as Array<{ rowid: number; step_id: string; outcome: string }>
       const mark = db.prepare('UPDATE workflow_run_round SET transition_label = ?, gate = ? WHERE rowid = ?')
       for (const round of ended) {

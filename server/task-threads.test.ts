@@ -3,7 +3,8 @@ import { test } from 'node:test'
 
 import { openTaskThread } from './task-threads.ts'
 
-const taken = (title: string) => Object.assign(new Error(`This agent already has a thread named "${title}" here`), { code: 'slug-taken' })
+const taken = (title: string) =>
+  Object.assign(new Error(`This agent already has a thread named "${title}" here`), { code: 'slug-taken' })
 
 test('the thread opens under the task key alone when it is free', async () => {
   const tried: string[] = []
