@@ -19,7 +19,7 @@ import { LOOP_ROUNDS, LOOP_WINDOW_MS, type MentionSession } from '../../shared/m
 import type { Actor, Comment } from '../../shared/types.ts'
 import type { Db } from '../db.ts'
 import { spaceChatFor } from '../space-chat.ts'
-import { agentTaskThread, oneThreadAtATime, openTaskThread } from '../task-threads.ts'
+import { agentTaskThread, oneThreadAtATime, openTaskThread, reopenTaskThread } from '../task-threads.ts'
 import type { ChatsPort } from '../workflows/engine.ts'
 import { type MentionMessageInput, mentionFollowUpMessage, mentionOpeningMessage } from './messages.ts'
 
@@ -204,14 +204,20 @@ export function deliverMentions(env: MentionEnv, planned: PlannedDelivery[]): Pr
         }
         const { chat } = where
         // A session in a chat other than the space's stays readable where it is; the next mention opens one here.
-        const reuse = agentTaskThread(db, { taskId: delivery.taskId, agentId: delivery.agent.id, chatSlug: chat.slug })
+        const recorded = agentTaskThread(db, {
+          taskId: delivery.taskId,
+          agentId: delivery.agent.id,
+          chatSlug: chat.slug,
+        })
         const saveThread = db.prepare(
           'UPDATE mention_session SET chat_ref = ?, chat_slug = ?, thread_id = ?, thread_ref = ? WHERE task_id = ? AND agent_id = ?',
         )
+        let reuse = recorded
         try {
+          // A thread archived when the task closed takes no messages until it is back; one the
+          // host refuses as unreachable is left, and the mention opens a new thread.
+          reuse = recorded && (await reopenTaskThread(env.chats, recorded.ref)) ? recorded : null
           if (reuse) {
-            // A thread archived when the task closed takes no messages until it is back.
-            await env.chats.unarchive?.(reuse.ref)
             await env.chats.send({ thread: reuse.ref, message: mentionFollowUpMessage(delivery.input), queue: 'wait' })
             saveThread.run(
               reuse.chatRef ?? chat.ref,

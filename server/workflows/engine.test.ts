@@ -72,7 +72,10 @@ function outcomeOf(options: StepSessionOptions | undefined, unoffered: ReadonlyA
  * refuses a second thread of one name for an agent in a chat, as the real one does.
  * `unoffered` names the session options its agents do not offer. A
  * compaction is listed in `sent` as it starts and ends as `compact` says;
- * by default it shrinks the thread's context to 20k.
+ * by default it shrinks the thread's context to 20k. A thread in `gone` was
+ * deleted, and the host refuses every call on it; one in `foreign` is one the
+ * host does not count as the task manager's, so it refuses to archive or
+ * unarchive it while still taking messages into it.
  */
 function fakeChats(
   opts: {
@@ -87,6 +90,8 @@ function fakeChats(
   archived: Set<string>
   archiveCalls: string[]
   titles: Set<string>
+  gone: Set<string>
+  foreign: Set<string>
 } {
   const sent: Sent[] = []
   const titles = new Set<string>()
@@ -95,6 +100,13 @@ function fakeChats(
   // Archived threads refuse a send, as the host's do.
   const archived = new Set<string>()
   const archiveCalls: string[] = []
+  const gone = new Set<string>()
+  const foreign = new Set<string>()
+  const reach = (ref: string) => {
+    if (gone.has(ref)) {
+      throw new Error('Not available')
+    }
+  }
   let n = 0
   return {
     sent,
@@ -102,12 +114,26 @@ function fakeChats(
     archived,
     archiveCalls,
     titles,
+    gone,
+    foreign,
+    thread: async (ref) => {
+      reach(ref)
+      return { archived: archived.has(ref) }
+    },
     archive: async (ref) => {
       archiveCalls.push(`archive ${ref}`)
+      reach(ref)
+      if (foreign.has(ref)) {
+        throw new Error('Not available')
+      }
       archived.add(ref)
     },
     unarchive: async (ref) => {
       archiveCalls.push(`unarchive ${ref}`)
+      reach(ref)
+      if (foreign.has(ref)) {
+        throw new Error('Not available')
+      }
       archived.delete(ref)
     },
     usage: async (thread, options) => {
@@ -169,6 +195,7 @@ function fakeChats(
       }
     },
     send: async (input) => {
+      reach(input.thread)
       if (archived.has(input.thread)) {
         throw new Error('This thread is archived; unarchive it to write')
       }
@@ -1084,6 +1111,67 @@ test('a step re-entering its archived thread unarchives it before writing to it'
   assert.deepEqual(warnings, [])
   assert.deepEqual(chats.archiveCalls, ['unarchive dev.agent.t1'])
   assert.deepEqual([chats.sent.at(-1)?.kind, chats.sent.at(-1)?.target], ['send', 'dev.agent.t1'])
+})
+
+test('restarting a step whose thread was deleted opens a new one in the space chat, where the task manager is', async () => {
+  const { env, chats, task, changeAs, warnings } = setup()
+  await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
+  // A person deleted Development's thread, which frees its title.
+  chats.gone.add('dev.agent.t1')
+  chats.titles.delete('chat-1 agent_dev TASK-1')
+  await restartStep(env, changeAs(PERSON), { task: task(), step: 'Development', actor: PERSON })
+  assert.deepEqual(warnings, [])
+  const opened = chats.sent.at(-1)
+  assert.deepEqual(
+    [opened?.kind, opened?.target, opened?.agentNodeId, opened?.title],
+    ['start', 'chat-1', 'agent_dev', 'TASK-1'],
+  )
+  const dev = activeRunForTask(env.db, 'TASK', 1)?.steps[0]
+  assert.deepEqual([dev?.state, dev?.error, dev?.threadRef], ['active', null, 'dev.agent.t2'])
+})
+
+test("a live thread the host does not count as the task manager's is written to as it is, never unarchived", async () => {
+  const { env, chats, task, changeAs, warnings } = setup()
+  await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
+  await finishStep(env, changeAs(DEV), { task: task(), transition: 'In Review', summary: 'done', actor: DEV })
+  chats.foreign.add('dev.agent.t1')
+  await finishStep(env, changeAs(REV), { task: task(), transition: 'In Progress', summary: 'again', actor: REV })
+  assert.deepEqual(warnings, [])
+  assert.deepEqual(chats.archiveCalls, [])
+  assert.deepEqual([chats.sent.at(-1)?.kind, chats.sent.at(-1)?.target], ['send', 'dev.agent.t1'])
+})
+
+test('an archived thread the host will not let the task manager unarchive is left: the step opens a new one beside it', async () => {
+  const { env, chats, task, changeAs, warnings } = setup()
+  await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
+  await finishStep(env, changeAs(DEV), { task: task(), transition: 'In Review', summary: 'done', actor: DEV })
+  chats.archived.add('dev.agent.t1')
+  chats.foreign.add('dev.agent.t1')
+  await finishStep(env, changeAs(REV), { task: task(), transition: 'In Progress', summary: 'again', actor: REV })
+  assert.deepEqual(warnings, [])
+  const opened = chats.sent.at(-1)
+  assert.deepEqual(
+    [opened?.kind, opened?.agentNodeId, opened?.title],
+    ['start', 'agent_dev', 'TASK-1 (task manager)'],
+    'the old thread keeps its title',
+  )
+  const dev = activeRunForTask(env.db, 'TASK', 1)?.steps[0]
+  assert.deepEqual([dev?.state, dev?.threadRef], ['active', 'dev.agent.t3'])
+})
+
+test('a recorded thread the host fails to read for any other reason leaves the step waiting with that reason', async () => {
+  const { env, chats, task, changeAs } = setup()
+  await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
+  chats.thread = async () => {
+    throw new Error('database is locked')
+  }
+  await assert.rejects(
+    restartStep(env, changeAs(PERSON), { task: task(), step: 'Development', actor: PERSON }),
+    /TASK-1 Development: database is locked/,
+  )
+  const dev = activeRunForTask(env.db, 'TASK', 1)?.steps[0]
+  assert.deepEqual([dev?.state, dev?.error], ['waiting', 'database is locked'])
+  assert.equal(chats.sent.filter((s) => s.kind === 'start').length, 1, 'no second thread')
 })
 
 // ─── Transitions: edges to steps, and the gate each round passed or failed ─

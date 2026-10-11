@@ -32,8 +32,19 @@ function fakeChats(fail?: { start?: string; send?: string }, outsider = false) {
   const unarchived: string[] = []
   // Each agent's thread titles, as `<chat> <agent> <title>`: the host refuses a second of one name in a chat.
   const titles = new Set<string>()
+  // Threads a person deleted: the host refuses every call on them.
+  const gone = new Set<string>()
+  const reach = (ref: string) => {
+    if (gone.has(ref)) throw new Error('Not available')
+  }
   const port: ChatsPort = {
+    // Every thread reads as archived, so reusing one always unarchives it first.
+    thread: async (ref) => {
+      reach(ref)
+      return { archived: true }
+    },
     unarchive: async (ref) => {
+      reach(ref)
       unarchived.push(ref)
     },
     list: async () => [
@@ -69,12 +80,13 @@ function fakeChats(fail?: { start?: string; send?: string }, outsider = false) {
       return { thread: { ref: `testing.${threadId}`, threadId, chat: { ref: 'chat-1', slug: 'testing' } } }
     },
     send: async (input) => {
+      reach(input.thread)
       if (fail?.send) throw new Error(fail.send)
       sent.push(input)
       return {}
     },
   }
-  return { port, started, sent, unarchived, titles }
+  return { port, started, sent, unarchived, titles, gone }
 }
 
 async function setup(options: { outsider?: boolean; fail?: { start?: string; send?: string } } = {}) {
@@ -266,6 +278,17 @@ test('a session opened in another chat before is left there: the next mention op
   await mention(ALICE, [QA], '@Ace (QA) again')
   assert.deepEqual([chats.started.length, chats.sent.length], [2, 0], 'a new thread, nothing sent into the old one')
   assert.deepEqual([sessions()[0]?.chatSlug, sessions()[0]?.threadRef], ['testing', 'testing.thread-2'])
+})
+
+test('a mention whose thread was deleted opens a new one in the space chat and notes nothing', async () => {
+  const { key, chats, mention, sessions } = await setup()
+  await mention(ALICE, [QA])
+  // A person deleted the thread, which frees its title.
+  chats.gone.add('testing.thread-1')
+  chats.titles.delete(`chat-1 agent_qa ${key}`)
+  await mention(ALICE, [QA], '@Ace (QA) again')
+  assert.deepEqual([chats.started.length, chats.sent.length], [2, 0], 'a new thread, nothing sent into the old one')
+  assert.deepEqual([sessions()[0]?.threadRef, sessions()[0]?.note], ['testing.thread-2', null])
 })
 
 test('a session that cannot open is noted on the session, with the reason', async () => {

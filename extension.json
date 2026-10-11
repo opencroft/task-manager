@@ -1,7 +1,7 @@
 {
   "id": "opencroft.task-manager",
   "name": "Task Manager",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Task manager: tasks with subtasks, statuses, a timeline, a board and workflows, usable by people and agents alike.",
   "provides": {
     "apps": [

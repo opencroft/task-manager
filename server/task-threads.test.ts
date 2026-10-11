@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { openTaskThread } from './task-threads.ts'
+import { openTaskThread, reopenTaskThread } from './task-threads.ts'
 
 const taken = (title: string) =>
   Object.assign(new Error(`This agent already has a thread named "${title}" here`), { code: 'slug-taken' })
@@ -48,4 +48,40 @@ test('with every title taken, the last refusal is thrown', async () => {
     }),
     { code: 'slug-taken', message: 'This agent already has a thread named "TASK-7 (task manager 3)" here' },
   )
+})
+
+test('a recorded thread is unarchived only when the host says it is archived', async () => {
+  const unarchived: string[] = []
+  const chats = {
+    thread: async (ref: string) => ({ archived: ref === 'dev.archived' }),
+    unarchive: async (ref: string) => {
+      unarchived.push(ref)
+    },
+  }
+  assert.equal(await reopenTaskThread(chats, 'dev.live'), true)
+  assert.equal(await reopenTaskThread(chats, 'dev.archived'), true)
+  assert.deepEqual(unarchived, ['dev.archived'])
+})
+
+test('a host that cannot say whether a thread is archived has it unarchived every time', async () => {
+  const unarchived: string[] = []
+  const reopened = await reopenTaskThread(
+    {
+      unarchive: async (ref) => {
+        unarchived.push(ref)
+      },
+    },
+    'dev.live',
+  )
+  assert.deepEqual([reopened, unarchived], [true, ['dev.live']])
+})
+
+test('a thread the host refuses as unreachable is not reopened; any other failure is thrown', async () => {
+  const refusing = (message: string) => ({
+    thread: async () => {
+      throw new Error(message)
+    },
+  })
+  assert.equal(await reopenTaskThread(refusing('Not available'), 'dev.gone'), false)
+  await assert.rejects(reopenTaskThread(refusing('database is locked'), 'dev.t1'), /database is locked/)
 })

@@ -50,7 +50,7 @@ import {
   type SpaceChatProblemKind,
   spaceChatFor,
 } from '../space-chat.ts'
-import { agentTaskThread, oneThreadAtATime, openTaskThread } from '../task-threads.ts'
+import { agentTaskThread, isUnreachable, oneThreadAtATime, openTaskThread, reopenTaskThread } from '../task-threads.ts'
 import {
   type CompactPort,
   compactSession,
@@ -112,6 +112,8 @@ export interface ChatsPort extends UsagePort, CompactPort {
     queue?: 'wait' | 'push'
     sessionOptions?: StepSessionOptions
   }): Promise<{ sessionOptions?: SessionOptionsOutcome } | undefined>
+  /** A thread of a chat the extension is in, refused as "Not available" when it cannot reach it; absent on an older host. */
+  thread?(ref: string): Promise<{ archived: boolean }>
   /** Archive a thread the extension opened; absent on a host without archiving. */
   archive?(ref: string): Promise<unknown>
   /** Bring an archived thread back; absent on a host without archiving. */
@@ -567,11 +569,12 @@ export async function enterStep(env: EngineEnv, input: EnterInput): Promise<void
         previous?.threadRef && previous.agentNodeId === worker.nodeId && previous.chatSlug === chat.slug
           ? { ref: previous.threadRef, threadId: previous.threadId, chatRef: previous.chatRef }
           : null
-      const reuse = own ?? agentTaskThread(db, { taskId: tid, agentId: worker.nodeId, chatSlug: chat.slug })
+      const recorded = own ?? agentTaskThread(db, { taskId: tid, agentId: worker.nodeId, chatSlug: chat.slug })
+      // A thread archived when the task closed takes no messages; the step coming back reopens it first.
+      // One the host refuses as unreachable is left, and the step opens a new thread.
+      const reuse = recorded && (await reopenTaskThread(chats, recorded.ref)) ? recorded : null
       if (reuse) {
         const sentBack = input.cause
-        // A thread archived when the task closed takes no messages; the step coming back reopens it first.
-        await chats.unarchive?.(reuse.ref)
         updateRunStep(db, run.id, step.id, {
           threadRef: reuse.ref,
           threadId: reuse.threadId,
@@ -661,7 +664,7 @@ export async function enterStep(env: EngineEnv, input: EnterInput): Promise<void
 async function sessionUnreachable(env: EngineEnv, input: StepOfRun, error: unknown): Promise<string> {
   const reason = error instanceof Error ? error.message : String(error)
   // The host answers "Not available" for a chat the task manager may not post in, e.g. one it was removed from since it was checked.
-  const refused = !(error instanceof SpaceChatProblem) && /not available/i.test(reason)
+  const refused = !(error instanceof SpaceChatProblem) && isUnreachable(error)
   const hint = refused ? notInSpaceChat(env.spaceSlug) : reason
   updateRunStep(env.db, input.run.id, input.step.id, { state: 'waiting', error: hint })
   const why = error instanceof SpaceChatProblem ? error.reason : refused ? 'not_in_chat' : 'session_failed'

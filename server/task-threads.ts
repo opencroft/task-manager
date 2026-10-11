@@ -6,7 +6,11 @@
 //
 // Only threads the task manager opened itself are found here. The host lets it
 // read the usage of, and archive, only those, so a thread a person started by
-// hand under the same title stays theirs and is never adopted.
+// hand under the same title stays theirs and is never adopted. A recorded
+// thread can still be gone when it is reached again (a person deleted it), or
+// be one the host does not count as the task manager's (opened under another
+// extension id, or with no opener on record):
+// `reopenTaskThread` says so, and the caller opens a new one.
 
 import type { Db } from './db.ts'
 
@@ -53,6 +57,48 @@ export interface TaskThread {
   ref: string
   threadId: string | null
   chatRef: string | null
+}
+
+/**
+ * The host's refusal of a chat or thread the task manager cannot reach. The
+ * host gives one answer, "Not available", for one that does not exist and one
+ * it may not use, so the two are never told apart here.
+ */
+export const isUnreachable = (error: unknown): boolean =>
+  /not available/i.test(error instanceof Error ? error.message : String(error))
+
+/** The parts of the host's group chats a recorded thread is reopened with; each is absent on a host without it. */
+export interface ThreadReopener {
+  thread?(ref: string): Promise<{ archived: boolean }>
+  unarchive?(ref: string): Promise<unknown>
+}
+
+/**
+ * Make the agent's recorded thread on the task ready to write to, back from
+ * the archive when it is there. False when the host refuses the thread as
+ * unreachable: the caller opens a new one, since the space's chat itself was
+ * just found. Any other failure throws.
+ *
+ * Only an archived thread is unarchived. The host lets the task manager
+ * unarchive only threads it counts as the task manager's, while any member
+ * may write to a live one, so a live thread it does not count as the task
+ * manager's is still continued. A host that cannot say whether a thread is
+ * archived gets the unarchive every time: nothing changes on a live thread
+ * the task manager opened, and one it did not is refused, so a new one opens.
+ */
+export async function reopenTaskThread(chats: ThreadReopener, ref: string): Promise<boolean> {
+  try {
+    const thread = chats.thread ? await chats.thread(ref) : null
+    if (!thread || thread.archived) {
+      await chats.unarchive?.(ref)
+    }
+    return true
+  } catch (error) {
+    if (isUnreachable(error)) {
+      return false
+    }
+    throw error
+  }
 }
 
 /**
