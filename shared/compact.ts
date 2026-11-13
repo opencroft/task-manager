@@ -32,6 +32,9 @@ export const DETAIL_ACTIONS = [
   'version_create',
   'version_update',
   'version_release',
+  'milestone_list',
+  'milestone_create',
+  'milestone_update',
 ] as const
 export type DetailAction = (typeof DETAIL_ACTIONS)[number]
 
@@ -51,6 +54,8 @@ export interface TaskRow {
   labels?: string[]
   /** The version's name. */
   version?: string
+  /** The milestone's name. */
+  milestone?: string
   startDate?: CalendarDate
   endDate?: CalendarDate
   /** The tasks blocking this one that are not done yet. */

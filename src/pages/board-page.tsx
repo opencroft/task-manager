@@ -10,7 +10,6 @@
 // reorders it, and dropping into another lane reassigns it. Filters and the
 // grouping live in the URL, so a board view is a link.
 
-import { AppToolbar } from '@opencroft/client/app'
 import { cn } from 'cn'
 import { ArrowRightLeft, ArrowUpDown, FoldVertical, ListChecks, UnfoldVertical } from 'lucide-react'
 import {
@@ -84,6 +83,9 @@ interface ViewColumn {
 const NO_LANE = '*'
 const UNASSIGNED = 'none'
 const NO_CARDS: TaskSummary[] = []
+
+/** The controls row's inset: the board's own side padding, and the Tasks page's top padding, so switching pages leaves the row in place. */
+const CONTROLS_ROW = 'shrink-0 px-3 pt-3 sm:px-4 sm:pt-4'
 
 /** On a phone the board shows one column at a time, so it has no swimlanes; the menu says so rather than hiding the choice. */
 const PHONE_SWIMLANE_OPTIONS = BOARD_SWIMLANE_OPTIONS.map((option) =>
@@ -223,16 +225,14 @@ export function BoardPage() {
     // No board to show: the picker still lists the others, and leads to a new one.
     return (
       <div className='flex min-h-0 flex-1 flex-col'>
-        <AppToolbar>
-          <TaskManagerToolbar label='Board controls'>
-            <BoardPicker
-              boards={boards}
-              activeId={null}
-              onSelect={(other) => navigate(hrefFor(['board', other]))}
-              onCreate={() => navigate(hrefFor(['board', 'new']))}
-            />
-          </TaskManagerToolbar>
-        </AppToolbar>
+        <TaskManagerToolbar label='Board controls' className={CONTROLS_ROW}>
+          <BoardPicker
+            boards={boards}
+            activeId={null}
+            onSelect={(other) => navigate(hrefFor(['board', other]))}
+            onCreate={() => navigate(hrefFor(['board', 'new']))}
+          />
+        </TaskManagerToolbar>
         {id ? (
           <TaskManagerError
             title='This board is gone'
@@ -251,7 +251,7 @@ export function BoardPage() {
 }
 
 function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
-  const { api, instanceId, statuses, assignees, labels, versions, fail, menuFor, confirm } = useProject()
+  const { api, instanceId, statuses, assignees, labels, versions, milestones, fail, menuFor, confirm } = useProject()
   const location = useTasksLocation()
   // The URL read against the shown saved view; write against `base`.
   const savedViews = useSavedViews('board', location)
@@ -539,8 +539,8 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
   // ─── Rendering ──────────────────────────────────────────────────────────
 
   const filters = useMemo(
-    () => taskFilterDefs(FILTER_IDS, { statuses, assignees, labels, versions }),
-    [statuses, assignees, labels, versions],
+    () => taskFilterDefs(FILTER_IDS, { statuses, assignees, labels, versions, milestones }),
+    [statuses, assignees, labels, versions, milestones],
   )
 
   const draggedTask = session ? tasks?.find((task) => task.key === session.key) : undefined
@@ -769,52 +769,51 @@ function BoardView({ board, boards }: { board: Board; boards: Board[] }) {
 
   return (
     <div ref={rootRef} className='flex min-h-0 flex-1 flex-col'>
-      {/* The page's controls sit in the host's toolbar: the board, filters, saved views, and how the board is laid out. */}
-      <AppToolbar>
-        <TaskManagerToolbar
-          label='Board controls'
-          end={
-            <span className='text-xs text-muted-foreground tabular-nums'>
-              {tasks === null
-                ? ''
-                : `${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'}${anyFilter ? ' shown' : ''}`}
-            </span>
-          }
+      {/* The page's controls, one row above the board: the board, search and filters, saved views, and how the board is laid out. */}
+      <TaskManagerToolbar
+        label='Board controls'
+        className={CONTROLS_ROW}
+        end={
+          <span className='text-xs text-muted-foreground tabular-nums'>
+            {tasks === null
+              ? ''
+              : `${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'}${anyFilter ? ' shown' : ''}`}
+          </span>
+        }
+      >
+        <BoardPicker
+          boards={boards}
+          activeId={board.id}
+          onSelect={(id) => navigate(hrefFor(['board', id]))}
+          onCreate={() => navigate(hrefFor(['board', 'new']))}
+          onEdit={() => navigate(hrefFor(['board', board.id, 'setup']))}
+          onDelete={deleteBoard}
+        />
+        <TaskFilterBar
+          layout='fill'
+          query={searchDraft}
+          onQueryChange={setSearchDraft}
+          searchRef={searchRef}
+          filters={filters}
+          values={values}
+          onValuesChange={(id, next) => write(selectionParams(id, next, base.filter[id as FilterId]))}
+          onClear={() => {
+            setSearchDraft('')
+            write({ q: textParam('', base.filter.query ?? ''), ...clearedParams(FILTER_IDS, base.filter) })
+          }}
         >
-          <BoardPicker
-            boards={boards}
-            activeId={board.id}
-            onSelect={(id) => navigate(hrefFor(['board', id]))}
-            onCreate={() => navigate(hrefFor(['board', 'new']))}
-            onEdit={() => navigate(hrefFor(['board', board.id, 'setup']))}
-            onDelete={deleteBoard}
-          />
-          <TaskFilterBar
-            layout='row'
-            query={searchDraft}
-            onQueryChange={setSearchDraft}
-            searchRef={searchRef}
-            filters={filters}
-            values={values}
-            onValuesChange={(id, next) => write(selectionParams(id, next, base.filter[id as FilterId]))}
-            onClear={() => {
-              setSearchDraft('')
-              write({ q: textParam('', base.filter.query ?? ''), ...clearedParams(FILTER_IDS, base.filter) })
-            }}
-          >
-            <TaskSavedViews {...savedViews.picker} />
-          </TaskFilterBar>
-          <BoardDisplayMenu
-            swimlanes={grouped ? 'assignee' : 'none'}
-            onSwimlanesChange={(id) => write({ group: id === 'assignee' ? 'assignee' : null })}
-            // One column at a time on a phone: swimlanes are named there, not hidden.
-            options={phone ? PHONE_SWIMLANE_OPTIONS : undefined}
-          />
-        </TaskManagerToolbar>
-      </AppToolbar>
+          <TaskSavedViews {...savedViews.picker} />
+        </TaskFilterBar>
+        <BoardDisplayMenu
+          swimlanes={grouped ? 'assignee' : 'none'}
+          onSwimlanesChange={(id) => write({ group: id === 'assignee' ? 'assignee' : null })}
+          // One column at a time on a phone: swimlanes are named there, not hidden.
+          options={phone ? PHONE_SWIMLANE_OPTIONS : undefined}
+        />
+      </TaskManagerToolbar>
 
       {moveError ? (
-        <div className='shrink-0 px-3 pb-2 sm:px-4'>
+        <div className='shrink-0 px-3 pt-2 sm:px-4'>
           <TaskManagerError
             variant='inline'
             title={moveError.title}

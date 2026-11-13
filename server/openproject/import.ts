@@ -115,7 +115,7 @@ async function clientFor(connection: OpenProjectConnection, deps: ImportDeps): P
   const token = await deps.resolveSecret(cleanSecretKey(connection.secretKey))
   if (!token) {
     throw new TaskError(
-      `The Secrets Store has no key "${connection.secretKey}": store the OpenProject API token under it, or give the key it is under.`,
+      `No Secrets Store in this space has the key "${connection.secretKey}": store the OpenProject API token under it, or give the key it is under.`,
     )
   }
   return openProjectClient({

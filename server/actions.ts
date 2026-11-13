@@ -17,6 +17,7 @@ import type { Invocation } from './hooks.ts'
 import { broadcastTasksChanged } from './live.ts'
 import {
   type AgentInfo,
+  activityTexts,
   addComment,
   changeStatus,
   createStatus,
@@ -122,6 +123,7 @@ export const taskActions = scopedActions<TasksActionId>({
     listTasks(s, input, board === undefined ? undefined : boardRestriction(s, board)),
   task_get: (s, input) => getTask(s, input.key),
   task_comments: (s, input) => listComments(s, input),
+  task_activity_texts: (s, input) => activityTexts(s, input),
   task_create: (s, input) => createTask(s, input),
   task_update: (s, input) => updateTask(s, input),
   task_change_status: (s, input) => changeStatus(s, input),

@@ -25,6 +25,8 @@ export interface WorkflowApprovalDecision {
   comment: string | null
   /** ISO 8601. */
   at: string
+  /** The agent that made the decision for the approver, on their word; null or omitted when the approver decided. */
+  agent?: { name: string } | null
 }
 
 export interface WorkflowApprovalBarApprover {
@@ -75,7 +77,14 @@ function ApproverRow({ approver }: { approver: WorkflowApprovalBarApprover }) {
           <Icon className="size-4 shrink-0" />
           {decision && verdict ? (
             <span className="min-w-0 truncate">
-              {verdict.done} · <span className="text-foreground">{decision.transition}</span>
+              {verdict.done}
+              {decision.agent ? (
+                <>
+                  {" by "}
+                  <span className="text-foreground">{decision.agent.name}</span> for {approver.name}
+                </>
+              ) : null}{" "}
+              · <span className="text-foreground">{decision.transition}</span>
               <span className="text-muted-foreground"> · {formatStamp(decision.at)}</span>
             </span>
           ) : (

@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { changesForDrop } from '../src/components/ui/timeline/timeline-drop'
+import { latestBlockerEnds, moveAfterBlockers } from '../src/components/ui/timeline/timeline-links-model'
 import {
-  backlogTasks,
   childSpans,
   dropZone,
   isWithin,
@@ -26,12 +26,14 @@ import {
   toDay,
   today,
   unitStart,
+  widenRange,
 } from '../src/components/ui/timeline/timeline-scale'
 
 function task(key: string, fields: Partial<TimelineTask> = {}): TimelineTask {
   return {
     key,
     summary: key,
+    type: 'task',
     parentKey: null,
     rank: key,
     startDate: null,
@@ -127,6 +129,19 @@ describe('timeline scale', () => {
     assert.equal(fromDay(range.to), '2028-01-01')
   })
 
+  it('only widens the scale: a narrower list of dates keeps the span already shown', () => {
+    const now = toDay('2026-11-13')
+    const wide = scaleRange(['2024-03-01', '2028-06-01'], now)
+    const narrow = scaleRange(['2026-12-01'], now)
+    assert.ok(narrow.from > wide.from && narrow.to < wide.to)
+    const kept = widenRange(wide, narrow)
+    assert.equal(kept, wide)
+    const later = widenRange(narrow, scaleRange(['2028-06-01'], now))
+    assert.equal(later.from, narrow.from)
+    assert.equal(later.to, wide.to)
+    assert.deepEqual(widenRange(null, narrow), narrow)
+  })
+
   it('formats ranges briefly, with years only when they differ', () => {
     assert.equal(formatRange('2026-09-21', '2026-09-25'), 'Sep 21 – Sep 25')
     assert.equal(formatRange('2026-09-21', '2026-09-21'), 'Sep 21')
@@ -176,13 +191,6 @@ describe('timeline model', () => {
     })
   })
 
-  it('puts every unscheduled task in the backlog, in rank order', () => {
-    assert.deepEqual(
-      backlogTasks(tasks).map((t) => t.key),
-      ['T-2', 'T-4', 'T-1', 'T-6'],
-    )
-  })
-
   it('knows what sits below a task, and survives a cycle in the data', () => {
     assert.equal(isWithin(tasks, 'T-5', 'T-1'), true)
     assert.equal(isWithin(tasks, 'T-1', 'T-5'), false)
@@ -209,90 +217,116 @@ describe('timeline model', () => {
 })
 
 describe('timeline drops', () => {
+  // The tree holds T-1 (dated), T-2 and T-3 under T-1; the backlog holds B-1 (undated), B-2 (dated) and B-3.
   const tasks = [
     task('T-1', { startDate: '2026-09-21', endDate: '2026-09-23' }),
     task('T-2'),
     task('T-3', { parentKey: 'T-1' }),
   ]
+  const backlog = [task('B-1'), task('B-2', { startDate: '2025-03-03', endDate: '2025-03-07' }), task('B-3')]
+  const lists = { tasks, backlog }
   const day = toDay('2026-10-05')
 
   it('shifts a dragged bar by the days it moved', () => {
     assert.deepEqual(
-      changesForDrop({ tasks, key: 'T-1', source: 'bar', target: { kind: 'scale', day }, shiftDays: 3 }),
+      changesForDrop({ ...lists, key: 'T-1', source: 'bar', target: { kind: 'scale', day }, shiftDays: 3 }),
       [{ type: 'schedule', key: 'T-1', start: '2026-09-24', end: '2026-09-26' }],
     )
     assert.deepEqual(
-      changesForDrop({ tasks, key: 'T-1', source: 'bar', target: { kind: 'scale', day }, shiftDays: 0 }),
+      changesForDrop({ ...lists, key: 'T-1', source: 'bar', target: { kind: 'scale', day }, shiftDays: 0 }),
       [],
     )
   })
 
-  it("schedules a backlog item from the drop day for the default length, and keeps a scheduled task's length", () => {
-    assert.deepEqual(changesForDrop({ tasks, key: 'T-2', source: 'backlog', target: { kind: 'scale', day } }), [
-      { type: 'schedule', key: 'T-2', start: '2026-10-05', end: '2026-10-09' },
-    ])
-    assert.deepEqual(changesForDrop({ tasks, key: 'T-1', source: 'row', target: { kind: 'scale', day } }), [
+  it('schedules a tree row dropped on the scale from that day, keeping its length', () => {
+    assert.deepEqual(changesForDrop({ ...lists, key: 'T-1', source: 'row', target: { kind: 'scale', day } }), [
       { type: 'schedule', key: 'T-1', start: '2026-10-05', end: '2026-10-07' },
+    ])
+    assert.deepEqual(changesForDrop({ ...lists, key: 'T-2', source: 'row', target: { kind: 'scale', day } }), [
+      { type: 'schedule', key: 'T-2', start: '2026-10-05', end: '2026-10-09' },
     ])
   })
 
-  it('unschedules a bar dropped on the backlog, and moves it next to an item it lands on', () => {
-    assert.deepEqual(changesForDrop({ tasks, key: 'T-1', source: 'bar', target: { kind: 'backlog' } }), [
-      { type: 'unschedule', key: 'T-1' },
+  it('joins a backlog item dropped on the scale from the drop day, for the default length or its own', () => {
+    assert.deepEqual(changesForDrop({ ...lists, key: 'B-1', source: 'backlog', target: { kind: 'scale', day } }), [
+      { type: 'join', key: 'B-1', start: '2026-10-05', end: '2026-10-09' },
     ])
+    assert.deepEqual(changesForDrop({ ...lists, key: 'B-2', source: 'backlog', target: { kind: 'scale', day } }), [
+      { type: 'join', key: 'B-2', start: '2026-10-05', end: '2026-10-09' },
+    ])
+  })
+
+  it('joins a backlog item dropped on a row next to it or inside it, and at the end below the rows', () => {
     assert.deepEqual(
-      changesForDrop({
-        tasks,
-        key: 'T-1',
-        source: 'bar',
-        target: { kind: 'backlog-item', key: 'T-2', zone: 'before' },
-      }),
-      [
-        { type: 'unschedule', key: 'T-1' },
-        { type: 'move', key: 'T-1', placement: { before: 'T-2' } },
-      ],
+      changesForDrop({ ...lists, key: 'B-1', source: 'backlog', target: { kind: 'row', key: 'T-3', zone: 'before' } }),
+      [{ type: 'join', key: 'B-1', placement: { parent: 'T-1', before: 'T-3' } }],
     )
+    assert.deepEqual(
+      changesForDrop({ ...lists, key: 'B-1', source: 'backlog', target: { kind: 'row', key: 'T-2', zone: 'inside' } }),
+      [{ type: 'join', key: 'B-1', placement: { parent: 'T-2' } }],
+    )
+    assert.deepEqual(changesForDrop({ ...lists, key: 'B-1', source: 'backlog', target: { kind: 'tree-end' } }), [
+      { type: 'join', key: 'B-1' },
+    ])
+    assert.deepEqual(changesForDrop({ ...lists, key: 'T-2', source: 'row', target: { kind: 'tree-end' } }), [])
+  })
+
+  it('takes a bar or a row dropped on the backlog out of the tree, with no date change, next to the item it lands on', () => {
+    for (const source of ['bar', 'row'] as const) {
+      assert.deepEqual(changesForDrop({ ...lists, key: 'T-1', source, target: { kind: 'backlog' } }), [
+        { type: 'leave', key: 'T-1' },
+      ])
+      assert.deepEqual(
+        changesForDrop({ ...lists, key: 'T-1', source, target: { kind: 'backlog-item', key: 'B-2', zone: 'before' } }),
+        [{ type: 'leave', key: 'T-1', placement: { before: 'B-2' } }],
+      )
+    }
   })
 
   it('reorders the backlog without touching dates, and ignores a drop on itself', () => {
     assert.deepEqual(
       changesForDrop({
-        tasks,
-        key: 'T-2',
+        ...lists,
+        key: 'B-1',
         source: 'backlog',
-        target: { kind: 'backlog-item', key: 'T-3', zone: 'after' },
+        target: { kind: 'backlog-item', key: 'B-3', zone: 'after' },
       }),
-      [{ type: 'move', key: 'T-2', placement: { after: 'T-3' } }],
+      [{ type: 'move', key: 'B-1', placement: { after: 'B-3' } }],
     )
     assert.deepEqual(
       changesForDrop({
-        tasks,
-        key: 'T-2',
+        ...lists,
+        key: 'B-1',
         source: 'backlog',
-        target: { kind: 'backlog-item', key: 'T-2', zone: 'after' },
+        target: { kind: 'backlog-item', key: 'B-1', zone: 'after' },
       }),
       [],
     )
-    assert.deepEqual(changesForDrop({ tasks, key: 'T-2', source: 'backlog', target: { kind: 'backlog' } }), [])
+    assert.deepEqual(changesForDrop({ ...lists, key: 'B-1', source: 'backlog', target: { kind: 'backlog' } }), [])
   })
 
   it('moves rows in the tree, but never a bar, and never a task into its own subtree', () => {
     assert.deepEqual(
-      changesForDrop({ tasks, key: 'T-2', source: 'row', target: { kind: 'row', key: 'T-1', zone: 'inside' } }),
+      changesForDrop({ ...lists, key: 'T-2', source: 'row', target: { kind: 'row', key: 'T-1', zone: 'inside' } }),
       [{ type: 'move', key: 'T-2', placement: { parent: 'T-1' } }],
     )
     assert.deepEqual(
-      changesForDrop({ tasks, key: 'T-1', source: 'bar', target: { kind: 'row', key: 'T-2', zone: 'inside' } }),
+      changesForDrop({ ...lists, key: 'T-1', source: 'bar', target: { kind: 'row', key: 'T-2', zone: 'inside' } }),
       [],
     )
     assert.deepEqual(
-      changesForDrop({ tasks, key: 'T-1', source: 'row', target: { kind: 'row', key: 'T-3', zone: 'inside' } }),
+      changesForDrop({ ...lists, key: 'T-1', source: 'row', target: { kind: 'row', key: 'T-3', zone: 'inside' } }),
       [],
     )
   })
 
+  it('looks a dragged task up in the list it was dragged from', () => {
+    assert.deepEqual(changesForDrop({ ...lists, key: 'B-1', source: 'row', target: { kind: 'scale', day } }), [])
+    assert.deepEqual(changesForDrop({ ...lists, key: 'T-2', source: 'backlog', target: { kind: 'scale', day } }), [])
+  })
+
   it('does nothing without a target', () => {
-    assert.deepEqual(changesForDrop({ tasks, key: 'T-1', source: 'bar', target: null, shiftDays: 4 }), [])
+    assert.deepEqual(changesForDrop({ ...lists, key: 'T-1', source: 'bar', target: null, shiftDays: 4 }), [])
   })
 })
 
@@ -324,5 +358,44 @@ describe('tree keys', () => {
     assert.deepEqual(treeKeyIntent('Backspace', open, 'C-1'), { kind: 'delete', key: 'C-1' })
     assert.equal(treeKeyIntent('Enter', open, null), null)
     assert.equal(treeKeyIntent('x', open, 'C-1'), null)
+  })
+})
+
+describe('move after blockers', () => {
+  const tasks = [
+    task('A-1', { startDate: '2026-03-02', endDate: '2026-03-06' }),
+    task('A-2', { startDate: '2026-03-04', endDate: '2026-03-10' }),
+    task('A-3'),
+    task('B-1', { startDate: '2026-03-05', endDate: '2026-03-07' }),
+    task('B-2', { startDate: '2026-03-20', endDate: '2026-03-21' }),
+    task('B-3', { startDate: '2026-03-01', endDate: '2026-03-01' }),
+  ]
+  const links = [
+    { from: 'A-1', to: 'B-1' },
+    { from: 'A-2', to: 'B-1' },
+    { from: 'A-3', to: 'B-1' },
+    { from: 'A-1', to: 'B-2' },
+    { from: 'A-3', to: 'B-3' },
+    { from: 'gone', to: 'B-3' },
+  ]
+  const ends = latestBlockerEnds(tasks, links)
+  const byKey = (key: string) => tasks.find((t) => t.key === key) ?? task(key)
+
+  it("indexes each blocked task by its scheduled blockers' latest end, skipping unscheduled and unknown blockers", () => {
+    assert.deepEqual(ends, { 'B-1': toDay('2026-03-10'), 'B-2': toDay('2026-03-06') })
+  })
+
+  it('starts a task the day after its last blocker ends, keeping its length', () => {
+    assert.deepEqual(moveAfterBlockers(byKey('B-1'), ends), { start: '2026-03-11', end: '2026-03-13' })
+  })
+
+  it('offers no move for a task already after its blockers, with no scheduled blocker, or with no dates', () => {
+    assert.equal(moveAfterBlockers(byKey('B-2'), ends), null)
+    assert.equal(moveAfterBlockers(byKey('B-3'), ends), null)
+    assert.equal(moveAfterBlockers(byKey('A-3'), { 'A-3': toDay('2026-03-01') }), null)
+  })
+
+  it('reads a task key that names an object property as an ordinary key', () => {
+    assert.equal(moveAfterBlockers(task('constructor', { startDate: '2026-03-01', endDate: '2026-03-02' }), ends), null)
   })
 })

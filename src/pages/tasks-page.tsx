@@ -2,7 +2,6 @@
 // sorting and the table's columns kept in the URL (so a filtered view is a
 // link), live refresh, and inline create at the end of the list.
 
-import { AppToolbar } from '@opencroft/client/app'
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, EyeOff, Rows3 } from 'lucide-react'
 import { type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -48,7 +47,7 @@ import { useBulkActions } from './use-bulk-actions'
 import { useSavedViews } from './use-saved-views'
 import { sortParam } from './view-state'
 
-const FILTER_IDS = ['status', 'assignee', 'type', 'priority', 'label', 'version', 'parent'] as const
+const FILTER_IDS = ['status', 'assignee', 'type', 'priority', 'label', 'version', 'milestone', 'parent'] as const
 type FilterId = (typeof FILTER_IDS)[number]
 
 // Module-level, so the table's memoised rows see the same values on every render.
@@ -110,7 +109,7 @@ function useViewState() {
 }
 
 export function TasksPage() {
-  const { api, instanceId, statuses, assignees, labels, versions, fail, menuFor } = useProject()
+  const { api, instanceId, statuses, assignees, labels, versions, milestones, fail, menuFor } = useProject()
   const { current, base, savedViews, query, values, sort, group, write } = useViewState()
   const columns = current.columns ?? [...DEFAULT_TASK_COLUMNS]
   const writeSort = (next: string) => write({ sort: textParam(next, sortParam(base.filter.sort)) })
@@ -198,8 +197,8 @@ export function TasksPage() {
   })
 
   const filters = useMemo(
-    () => taskFilterDefs(FILTER_IDS, { statuses, assignees, labels, versions, parents }),
-    [statuses, assignees, labels, versions, parents],
+    () => taskFilterDefs(FILTER_IDS, { statuses, assignees, labels, versions, milestones, parents }),
+    [statuses, assignees, labels, versions, milestones, parents],
   )
 
   // The columns live in the URL, so a link keeps them and a saved view stores them. The grouping lives there too, for links only.
@@ -382,36 +381,34 @@ export function TasksPage() {
   return (
     // Fills the pane: the table takes the height left and scrolls its rows inside it, heads and create row staying put.
     <div className='flex min-h-0 flex-1 flex-col gap-3 p-3 sm:p-4'>
-      {/* The filter panel sits in the host's toolbar. */}
-      <AppToolbar>
-        <TaskManagerToolbar
-          label='Tasks controls'
-          end={
-            <span className='text-xs text-muted-foreground tabular-nums'>
-              {`${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'}`}
-            </span>
-          }
+      {/* The page's controls, one row above the table; the search takes the width the others leave. */}
+      <TaskManagerToolbar
+        label='Tasks controls'
+        end={
+          <span className='text-xs text-muted-foreground tabular-nums'>
+            {`${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'}`}
+          </span>
+        }
+      >
+        <TaskFilterBar
+          layout='fill'
+          query={searchDraft}
+          onQueryChange={setSearchDraft}
+          searchRef={searchRef}
+          filters={filters}
+          values={values}
+          onValuesChange={(id, next) => write(selectionParams(id, next, base.filter[id as FilterId]))}
+          onClear={clearFilters}
         >
-          <TaskFilterBar
-            layout='row'
-            query={searchDraft}
-            onQueryChange={setSearchDraft}
-            searchRef={searchRef}
-            filters={filters}
-            values={values}
-            onValuesChange={(id, next) => write(selectionParams(id, next, base.filter[id as FilterId]))}
-            onClear={clearFilters}
-          >
-            <TaskSavedViews {...savedViews.picker} />
-          </TaskFilterBar>
-          <TaskColumnPicker
-            columns={columns}
-            onColumnsChange={setColumns}
-            required={REQUIRED_TASK_COLUMNS}
-            defaultColumns={DEFAULT_TASK_COLUMNS}
-          />
-        </TaskManagerToolbar>
-      </AppToolbar>
+          <TaskSavedViews {...savedViews.picker} />
+        </TaskFilterBar>
+        <TaskColumnPicker
+          columns={columns}
+          onColumnsChange={setColumns}
+          required={REQUIRED_TASK_COLUMNS}
+          defaultColumns={DEFAULT_TASK_COLUMNS}
+        />
+      </TaskManagerToolbar>
       {query ? (
         <TaskElsewhereList
           tasks={elsewhere.tasks}

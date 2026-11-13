@@ -2,6 +2,7 @@
 // chosen one's step editor (or its runs, or its statistics) on the right. The
 // selection and the tab live in the URL, so each of them is a link.
 
+import { MarkdownEditor } from '@opencroft/client/markdown'
 import { cn } from 'cn'
 import { Info, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -24,6 +25,7 @@ import {
   DEFAULT_STEP_INSTRUCTIONS,
   derivedGate,
   type SpaceChatState,
+  type SpaceChatThread,
   STEP_EFFORTS,
   STEP_PERMISSION_MODES,
   type StepEffort,
@@ -345,6 +347,27 @@ export function WorkflowsPage() {
     return () => clearTimeout(timer)
   }, [api, draft, dirty])
 
+  // The live threads of each agent the draft's steps are given to, which such a step can be worked in. Read once
+  // per agent in the space's chat; an agent outside it has none to offer, and its card says why already.
+  const [agentThreads, setAgentThreads] = useState<Record<string, SpaceChatThread[]>>({})
+  const threadsAsked = useRef(new Set<string>())
+  useEffect(() => {
+    for (const step of draft?.steps ?? []) {
+      const agent = step.worker.kind === 'agent' ? step.worker.agentNodeId : ''
+      if (!agent || threadsAsked.current.has(agent) || !spaceChat?.agents.some((a) => a.nodeId === agent)) {
+        continue
+      }
+      threadsAsked.current.add(agent)
+      api
+        .space_chat_threads({ agent })
+        .then((result) => setAgentThreads((current) => ({ ...current, [agent]: result.threads })))
+        .catch((error) => {
+          toast.error(`Couldn't list the agent's threads: ${errorMessage(error)}`)
+          setAgentThreads((current) => ({ ...current, [agent]: [] }))
+        })
+    }
+  }, [api, draft, spaceChat])
+
   const edit = (patch: Partial<Draft>) => {
     setDraft((current) => (current ? { ...current, ...patch } : current))
     setDirty(true)
@@ -662,6 +685,7 @@ export function WorkflowsPage() {
                         statuses={statusOptions}
                         agents={spaceChat?.agents ?? []}
                         chatName={spaceChat?.name ?? undefined}
+                        threads={step.worker.kind === 'agent' ? agentThreads[step.worker.agentNodeId] : undefined}
                         people={people}
                         steps={draft.steps.filter((s) => s.id !== step.id).map((s) => ({ id: s.id, name: s.name }))}
                         derivedGate={(toStep) => derivedGate(draft.steps, step.id, toStep)}
@@ -673,6 +697,19 @@ export function WorkflowsPage() {
                             { token: `steps.${slugOf(s.name)}.outcome`, label: `${s.name}: outcome` },
                           ]),
                         ]}
+                        renderInstructions={(field) => (
+                          // The task description's editor, toolbar on top. The card's box is the border (and
+                          // shows the invalid state), so the editor drops its own. The agent reads the
+                          // instructions raw, so they are written in the agent dialect: lines and `{{ … }}`
+                          // placeholders stay as typed.
+                          <MarkdownEditor
+                            value={field.value}
+                            onChange={field.onChange}
+                            placeholder={field.placeholder}
+                            dialect='agent'
+                            className='min-h-40 border-0'
+                          />
+                        )}
                         defaultCompactAbove={DEFAULT_COMPACT_ABOVE}
                         onMove={(direction) => reorderStep(index, index + direction)}
                         onDuplicate={() => edit({ steps: duplicateStep(draft.steps, index) })}

@@ -25,6 +25,7 @@ export const BOARD_FILTER_KEYS = [
   'priority',
   'label',
   'version',
+  'milestone',
   'parent',
 ] as const satisfies ReadonlyArray<keyof BoardFilter>
 

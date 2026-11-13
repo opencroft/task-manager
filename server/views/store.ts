@@ -50,6 +50,7 @@ const FILTER_KEYS: ReadonlyArray<keyof ViewFilter> = [
   'priority',
   'label',
   'version',
+  'milestone',
   'parent',
   'sort',
 ]

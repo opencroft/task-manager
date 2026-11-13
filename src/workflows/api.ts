@@ -11,6 +11,7 @@ import type {
   OpenApproval,
   RunsMatch,
   SpaceChatState,
+  SpaceChatThread,
   Spent,
   ValidationIssue,
   WorkflowDef,
@@ -35,6 +36,11 @@ type WorkflowActions = CheckedActionMap<{
   workflow_get: { input: ActionInputs['workflow_get']; output: WorkflowDef }
   space_chat: { input: ActionInputs['space_chat']; output: SpaceChatState }
   space_chat_grant: { input: ActionInputs['space_chat_grant']; output: SpaceChatState }
+  /** `cut`: the chat has more threads than were read, so the least active are missing. */
+  space_chat_threads: {
+    input: ActionInputs['space_chat_threads']
+    output: { agent: { nodeId: string; name: string }; threads: SpaceChatThread[]; cut?: true }
+  }
   workflow_validate: { input: { workflow: WorkflowDraft }; output: { issues: ValidationIssue[] } }
   workflow_save: { input: { workflow: WorkflowDraft }; output: WorkflowDef }
   workflow_delete: { input: ActionInputs['workflow_delete']; output: { deleted: string } }

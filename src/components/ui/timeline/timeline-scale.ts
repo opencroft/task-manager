@@ -230,3 +230,16 @@ export function scaleRange(dates: CalendarDate[], todayDay: number, padDays = 12
   }
   return { from: unitStart('year', min - padDays), to: nextUnit('year', unitStart('year', max + padDays)) }
 }
+
+/** A range that holds both `previous` (when there is one) and `next`: a scale that only ever widens. */
+export function widenRange(
+  previous: { from: number; to: number } | null,
+  next: { from: number; to: number },
+): { from: number; to: number } {
+  if (previous === null) {
+    return next
+  }
+  const from = Math.min(previous.from, next.from)
+  const to = Math.max(previous.to, next.to)
+  return from === previous.from && to === previous.to ? previous : { from, to }
+}

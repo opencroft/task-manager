@@ -1,11 +1,17 @@
-import { ArrowRight, CalendarRange, Columns3, Inbox, ListTodo, Loader2, Plus, SearchX, Workflow } from 'lucide-react'
+import { ArrowRight, Columns3, Flag, Inbox, ListTodo, Loader2, Plus, SearchX, Workflow } from 'lucide-react'
 import type { ComponentType } from 'react'
 
 import { Button } from '../button'
 import { TaskInlineCreate } from '../tasks/task-inline-create'
 import { cn } from '@/lib/utils'
 
-export type TaskManagerEmptyKind = 'no-tasks' | 'no-results' | 'timeline-unscheduled' | 'backlog' | 'no-workflows' | 'no-boards'
+export type TaskManagerEmptyKind =
+  | 'no-tasks'
+  | 'no-results'
+  | 'no-milestone'
+  | 'backlog'
+  | 'no-workflows'
+  | 'no-boards'
 
 export interface TaskManagerEmptyProps {
   kind: TaskManagerEmptyKind
@@ -19,6 +25,8 @@ export interface TaskManagerEmptyProps {
   onCreateWorkflow?: () => void
   /** `no-boards`: opens the setup of a new board. */
   onCreateBoard?: () => void
+  /** `no-milestone`: opens the dialog that creates a milestone. */
+  onCreateMilestone?: () => void
   /** An action is in flight: its button spins and the others wait. */
   busy?: boolean
   /** `page` fills a page's empty body; `compact` sits inside a pane or a table. Each kind has its natural size. */
@@ -46,16 +54,16 @@ const COPY: Record<TaskManagerEmptyKind, Copy> = {
     text: 'Nothing fits this search and these filters. Try other words, or clear them to see every task.',
     size: 'compact',
   },
-  'timeline-unscheduled': {
-    icon: CalendarRange,
-    title: 'Nothing on the timeline yet',
-    text: 'Drag a task from the backlog, or draw on a row across the days it should take.',
+  'no-milestone': {
+    icon: Flag,
+    title: 'Make a milestone to plan work on the timeline',
+    text: 'A milestone is a stage or a goal. The timeline shows one at a time: its tasks as a tree and on the scale. Until there is one, the backlog below holds every task.',
     size: 'compact',
   },
   backlog: {
     icon: Inbox,
     title: 'The backlog is empty',
-    text: 'Every task has dates. New tasks without dates wait here until you schedule them.',
+    text: 'Every task is in a milestone. New tasks outside one wait here until you plan them in.',
     size: 'compact',
   },
   'no-workflows': {
@@ -86,6 +94,7 @@ export function TaskManagerEmpty({
   onUseTemplate,
   onCreateWorkflow,
   onCreateBoard,
+  onCreateMilestone,
   busy = false,
   size,
   className,
@@ -131,6 +140,13 @@ export function TaskManagerEmpty({
         <Button onClick={onCreateBoard}>
           <Plus />
           Create board
+        </Button>
+      ) : null}
+
+      {kind === 'no-milestone' && onCreateMilestone ? (
+        <Button onClick={onCreateMilestone}>
+          <Plus />
+          New milestone…
         </Button>
       ) : null}
 

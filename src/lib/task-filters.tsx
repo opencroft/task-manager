@@ -7,18 +7,21 @@ import { TaskLabelChip } from '@/components/ui/tasks/task-label-chip'
 import { TASK_PRIORITIES, TASK_PRIORITY_LABELS, TaskPriorityIcon } from '@/components/ui/tasks/task-priority-icon'
 import { TaskStatusBadge } from '@/components/ui/tasks/task-status-badge'
 import { TASK_TYPE_LABELS, TASK_TYPES, TaskTypeIcon } from '@/components/ui/tasks/task-type-icon'
+import type { Milestone } from '../../shared/milestones'
 import type { AssigneeOption, Status, TaskParent } from '../../shared/types'
 import type { Version } from '../../shared/versions'
+import { milestoneFilter } from './milestones'
 import { versionFilter } from './versions'
 
-export type TaskFilterId = 'status' | 'assignee' | 'type' | 'priority' | 'label' | 'version' | 'parent'
+export type TaskFilterId = 'status' | 'assignee' | 'type' | 'priority' | 'label' | 'version' | 'milestone' | 'parent'
 
-/** What the menus list: the project's statuses, people and agents, labels, versions and parent tasks. */
+/** What the menus list: the project's statuses, people and agents, labels, versions, milestones and parent tasks. */
 export interface TaskFilterSources {
   statuses: readonly Status[]
   assignees: readonly AssigneeOption[]
   labels: readonly string[]
   versions: readonly Version[]
+  milestones: readonly Milestone[]
   parents?: readonly TaskParent[]
 }
 
@@ -38,6 +41,7 @@ function filterDef(id: TaskFilterId, sources: TaskFilterSources): TaskFilterDef 
       return {
         id,
         label: 'Assignee',
+        searchable: true,
         options: [
           { value: 'none', label: 'Unassigned', icon: <TaskAssignee assignee={null} withName size='sm' /> },
           ...sources.assignees.map((option) => ({
@@ -80,10 +84,13 @@ function filterDef(id: TaskFilterId, sources: TaskFilterSources): TaskFilterDef 
       }
     case 'version':
       return versionFilter(sources.versions)
+    case 'milestone':
+      return milestoneFilter(sources.milestones)
     case 'parent':
       return {
         id,
         label: 'Parent',
+        searchable: true,
         options: [
           { value: 'none', label: 'Top-level only' },
           ...(sources.parents ?? []).map((task) => ({ value: task.key, label: `${task.key} ${task.summary}` })),

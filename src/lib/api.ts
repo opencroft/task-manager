@@ -13,6 +13,7 @@ import type { DependencyActionMap } from '../../shared/dependencies'
 import type { ForgeActionMap } from '../../shared/forge'
 import type { InboxActionMap } from '../../shared/inbox'
 import type { MentionActionMap } from '../../shared/mentions'
+import type { MilestoneActionMap } from '../../shared/milestones'
 import type { MyWorkActionMap } from '../../shared/my-work'
 import type { OpenProjectActionMap } from '../../shared/openproject'
 import type { SettingsActionMap } from '../../shared/settings'
@@ -43,7 +44,7 @@ type InputOf<T> = T extends { input: infer I } ? I : never
  */
 export type CheckedActionMap<M extends { [A in keyof M]: { input: Accepted<A, InputOf<M[A]>>; output: unknown } }> = M
 
-/** The task actions a page calls: the task manager's, the dependencies', the saved views', the boards', My work's, the inbox's, the attachments', the mentions', the settings', the versions', the OpenProject import's and the forge links'. */
+/** The task actions a page calls: the task manager's, the dependencies', the saved views', the boards', My work's, the inbox's, the attachments', the mentions', the settings', the versions', the milestones', the OpenProject import's and the forge links'. */
 type ActionMap = CheckedActionMap<
   TasksActionMap &
     DependencyActionMap &
@@ -55,6 +56,7 @@ type ActionMap = CheckedActionMap<
     MentionActionMap &
     SettingsActionMap &
     VersionActionMap &
+    MilestoneActionMap &
     OpenProjectActionMap &
     ForgeActionMap
 >

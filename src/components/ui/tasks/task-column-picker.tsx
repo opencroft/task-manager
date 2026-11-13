@@ -35,8 +35,8 @@ function withColumn(columns: TaskTableColumn[], column: TaskTableColumn): TaskTa
 }
 
 /**
- * Which columns a task table shows, behind one Columns button for the App
- * toolbar. Every column is listed in the table's own order with a tick; the
+ * Which columns a task table shows, behind one Columns button for the row of
+ * controls above the table. Every column is listed in the table's own order with a tick; the
  * menu stays open while columns are ticked on and off.
  */
 export function TaskColumnPicker({ columns, onColumnsChange, required = [], defaultColumns, className }: TaskColumnPickerProps) {

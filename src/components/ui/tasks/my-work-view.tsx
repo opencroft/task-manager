@@ -163,6 +163,34 @@ type OpenTask = MyWorkViewProps['onOpen']
 /** A row's React key: task keys repeat when two projects share a project key. */
 const rowKey = (key: string, project?: MyWorkProject) => (project ? `${project.app ?? project.key}:${key}` : key)
 
+/** How a row that opens a task is drawn while hovered, focused from the keyboard, and selected; the same in every section. */
+const ROW_STATES =
+  'cursor-pointer outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset data-[state=selected]:bg-muted'
+
+/** What makes a row open its task: a press anywhere on it, or Enter or Space while it has focus. */
+function opensTask(open: () => void) {
+  return {
+    role: 'button',
+    tabIndex: 0,
+    onClick: open,
+    onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+      if ((event.key === 'Enter' || event.key === ' ') && event.target === event.currentTarget) {
+        event.preventDefault()
+        open()
+      }
+    },
+  }
+}
+
+/** A control inside a row: pressing it does not also open the row's task. */
+function RowControl({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <span className={className} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+      {children}
+    </span>
+  )
+}
+
 function TaskRow({ task, date, selected, onOpen, menu }: { task: MyWorkTask; date: ReactNode; selected: boolean; onOpen: OpenTask; menu?: TaskMenuProps }) {
   const content = (
     <>
@@ -174,27 +202,19 @@ function TaskRow({ task, date, selected, onOpen, menu }: { task: MyWorkTask; dat
       <TaskPriorityIcon priority={task.priority} className='hidden @xl:inline-flex' />
       <TaskStatusBadge name={task.status.name} category={task.status.category} color={task.status.color} size='sm' className='hidden max-w-28 @xl:inline-flex' />
       {menu ? (
-        <span onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+        <RowControl>
           <TaskActionsMenu {...menu} label={`Actions for ${task.key}`} />
-        </span>
+        </RowControl>
       ) : null}
     </>
   )
   const rowProps = {
-    role: 'button',
-    tabIndex: 0,
+    ...opensTask(() => onOpen(task.key, task.project)),
     // A page's key handler moves J/K through elements carrying this, in on-screen order;
     // a task of another project is not one its keys can act on.
     'data-task-key': task.project ? undefined : task.key,
     'data-state': selected && !task.project ? 'selected' : undefined,
-    onClick: () => onOpen(task.key, task.project),
-    onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
-      if (event.key === 'Enter' && event.target === event.currentTarget) {
-        onOpen(task.key, task.project)
-      }
-    },
-    className:
-      'flex h-10 min-w-0 cursor-pointer items-center gap-2.5 border-b px-3 outline-none last:border-b-0 hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset data-[state=selected]:bg-muted',
+    className: cn('flex h-10 min-w-0 items-center gap-2.5 border-b px-3 last:border-b-0', ROW_STATES),
   }
   return menu ? (
     <TaskContextMenu {...menu} render={<div {...rowProps} />}>
@@ -237,15 +257,11 @@ function StepRow({ step, selected, onOpen, menu = [], now }: { step: MyWorkStep;
   return (
     <ItemContextMenu
       entries={menu}
-      render={<div data-task-key={own ? step.task.key : undefined} data-state={selected && own ? 'selected' : undefined} />}
-      className='flex min-w-0 items-start gap-3 border-b px-3 py-2.5 last:border-b-0 data-[state=selected]:bg-muted'
+      render={<div {...opensTask(() => onOpen(step.task.key, step.project))} data-task-key={own ? step.task.key : undefined} data-state={selected && own ? 'selected' : undefined} />}
+      className={cn('flex min-w-0 items-start gap-3 border-b px-3 py-2.5 last:border-b-0', ROW_STATES)}
     >
       <TaskNotificationKindIcon kind={STEP_KIND[step.state]} className='mt-0.5' />
-      <button
-        type='button'
-        onClick={() => onOpen(step.task.key, step.project)}
-        className='flex min-w-0 flex-1 flex-col gap-0.5 rounded-sm text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50'
-      >
+      <div className='flex min-w-0 flex-1 flex-col gap-0.5'>
         <span className='flex min-w-0 items-baseline gap-2'>
           <span className='min-w-0 truncate text-sm'>
             <span className='font-semibold'>{step.step}</span>
@@ -265,11 +281,13 @@ function StepRow({ step, selected, onOpen, menu = [], now }: { step: MyWorkStep;
           {STEP_LABEL[step.state]}
           {step.state === 'attention' && step.reason ? <span className='line-clamp-2 break-words'>{step.reason}</span> : null}
         </span>
-      </button>
+      </div>
       {step.sessionHref ? (
-        <Button variant='ghost' size='icon-sm' className='-my-1 shrink-0' aria-label={`Open the ${step.step} session`} title='Open the session' render={<a href={step.sessionHref} target='_blank' rel='noreferrer' />}>
-          <ExternalLink />
-        </Button>
+        <RowControl className='-my-1 flex shrink-0'>
+          <Button variant='ghost' size='icon-sm' aria-label={`Open the ${step.step} session`} title='Open the session' render={<a href={step.sessionHref} target='_blank' rel='noreferrer' />}>
+            <ExternalLink />
+          </Button>
+        </RowControl>
       ) : null}
     </ItemContextMenu>
   )

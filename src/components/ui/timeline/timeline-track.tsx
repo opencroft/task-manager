@@ -20,7 +20,8 @@ export interface TimelineTrackProps {
   barShiftDays?: number
   /** True while this task's bar is dragged off the scale. */
   barDetached?: boolean
-  menu: TaskMenuProps
+  /** Builds the task's menu; called when the menu opens, not on render. */
+  menu: () => TaskMenuProps
   /** Starts a drag of the bar; the surrounding timeline runs it. */
   onBarDragStart?: (event: PointerEvent<HTMLElement>) => void
   /** Starts drawing a dependency out of the bar's end; the surrounding timeline runs it. */
@@ -97,7 +98,7 @@ export function TimelineTrack({
 
   return (
     <TaskContextMenu
-      {...menu}
+      build={menu}
       render={
         <div
           onPointerDown={onPointerDown}

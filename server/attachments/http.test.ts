@@ -26,9 +26,8 @@ async function setup() {
         `http://localhost/api/ext/opencroft.task-manager/http/attachments?${new URLSearchParams(query)}`,
         init,
       ),
-      {
-        person,
-      },
+      // The route reads only the person; the directory APIs are stubs it never reaches.
+      { person, spaces: {} as never, apps: {} as never },
     )
   return { scope, key, call }
 }

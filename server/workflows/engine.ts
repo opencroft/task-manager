@@ -30,6 +30,7 @@ import {
   type CouldntStartReason,
   type RunStep,
   type SessionOptionsOutcome,
+  type StepApprover,
   type StepSessionOptions,
   stepStartedBy,
   type TransitionGate,
@@ -76,6 +77,7 @@ import {
   markCompactionUnsent,
   orphanedCompactions,
   type PendingMove,
+  pendingMove,
   recordDecision,
   roundNeedsAttention,
   runsForTask,
@@ -113,11 +115,32 @@ export interface ChatsPort extends UsagePort, CompactPort {
     sessionOptions?: StepSessionOptions
   }): Promise<{ sessionOptions?: SessionOptionsOutcome } | undefined>
   /** A thread of a chat the extension is in, refused as "Not available" when it cannot reach it; absent on an older host. */
-  thread?(ref: string): Promise<{ archived: boolean }>
+  thread?(ref: string): Promise<ChatThread>
   /** Archive a thread the extension opened; absent on a host without archiving. */
   archive?(ref: string): Promise<unknown>
   /** Bring an archived thread back; absent on a host without archiving. */
   unarchive?(ref: string): Promise<unknown>
+  /** A page of a chat's live threads, most recently active first; absent on an older host. */
+  activity?(options: { chat?: string; limit?: number; cursor?: string }): Promise<{
+    threads: Array<
+      ChatThread & {
+        ref: string
+        threadId: string
+        title: string | null
+        agent: { nodeId: string }
+        folder?: string | null
+      }
+    >
+    nextCursor: string | null
+  }>
+}
+
+/** A thread as the host's `thread` describes it: enough to check a step's given thread before writing to it. */
+export interface ChatThread {
+  archived: boolean
+  threadId?: string
+  agent?: { nodeId: string }
+  chat?: { ref: string; slug: string }
 }
 
 /** The part of the task model the engine uses. `changeStatus` is its single writer of status. */
@@ -215,9 +238,11 @@ function openStepOf(run: WorkflowRun): RunStep | undefined {
  * Inside the status transaction (synchronous; a throw refuses the change):
  * the agent working the open step may only move the task to that step's
  * allowed transitions, and while an approval step is open no agent moves it
- * at all: its approvers decide. People are not bound by either: a step's
- * list describes what its worker may decide, and a person overriding it on
- * the board is the point of a board.
+ * at all: its approvers decide. The one agent move it lets through is the
+ * reject an agent made for an approver (see `decideStep`), which holds its
+ * transition on the run as a pending move. People are not bound by either: a
+ * step's list describes what its worker may decide, and a person overriding
+ * it on the board is the point of a board.
  */
 export function beforeStatusChange(db: Db, projectKey: string, change: StatusChange): void {
   if (change.actor.kind !== 'agent') {
@@ -225,11 +250,17 @@ export function beforeStatusChange(db: Db, projectKey: string, change: StatusCha
   }
   const run = activeRunForTask(db, projectKey, taskId(db, change.task.number))
   const open = run ? openStepOf(run) : undefined
-  const step = run && open ? getWorkflow(db, run.workflowId)?.steps.find((s) => s.id === open.stepId) : undefined
-  if (!open || !step) {
+  const workflow = run && open ? getWorkflow(db, run.workflowId) : undefined
+  const step = open ? workflow?.steps.find((s) => s.id === open.stepId) : undefined
+  if (!run || !open || !workflow || !step) {
     return
   }
   if (step.kind === 'approval') {
+    const move = pendingMove(db, run.id)
+    const rejects = verdictTransitions(workflow.steps, step).reject
+    if (move && 'transition' in move && move.status === change.to.id && rejects.some((t) => t.id === move.transition)) {
+      return
+    }
     throw new Error(
       `${change.task.key} waits on the approvers of "${open.name}": only people can move it until they decide`,
     )
@@ -267,7 +298,8 @@ export async function afterStatusChange(env: EngineEnv, change: StatusChange): P
  * active still has its earlier runs' threads archived.
  *
  * The thread of a step open NOW is left alone: a done status can itself be a
- * step's trigger, and that step has just been handed the task.
+ * step's trigger, and that step has just been handed the task. So is a thread
+ * a step was given by its workflow: it is its agent's, and outlives the task.
  *
  * Never throws: the task is closed either way, and a thread left active is a
  * tidiness miss, not a failed status change. A host without archiving is
@@ -281,7 +313,9 @@ async function archiveTaskThreads(env: EngineEnv, taskNumber: number): Promise<v
   const runs = runsForTask(env.db, env.projectKey, taskId(env.db, taskNumber))
   const open = new Set(runs.flatMap((run) => (run.state === 'active' ? [openStepOf(run)?.threadRef] : [])))
   const refs = new Set(
-    runs.flatMap((run) => run.steps.flatMap((s) => (s.threadRef && !open.has(s.threadRef) ? [s.threadRef] : []))),
+    runs.flatMap((run) =>
+      run.steps.flatMap((s) => (s.threadRef && !s.threadGiven && !open.has(s.threadRef) ? [s.threadRef] : [])),
+    ),
   )
   for (const ref of refs) {
     try {
@@ -344,7 +378,7 @@ async function closeStep(
   endRound(env.db, run.id, open.stepId, { at: now, by: 'transition', outcome: end.outcome, transition: end.taken })
   // Before the next step opens, possibly in the same thread: whether a turn
   // is still running is read while it can only be this round's. Never throws.
-  await recordRoundUsage(env.db, env.chats, { runId: run.id, stepId: open.stepId, threadRef: open.threadRef })
+  await recordRoundUsage(env.db, env.chats, run.id, open)
 }
 
 async function advanceRun(env: EngineEnv, change: StatusChange): Promise<void> {
@@ -389,15 +423,66 @@ interface EnterInput {
   reason?: string | null
 }
 
-/** A thread that cannot open in the space's chat, with the reason as it is shown and as the statistics count it. */
-class SpaceChatProblem extends Error {
+/** A step's session that cannot be opened or messaged, with the reason as it is shown and as the statistics count it. */
+class SessionProblem extends Error {
   readonly reason: CouldntStartReason
 
-  constructor(problem: string, kind: SpaceChatProblemKind) {
+  constructor(problem: string, reason: CouldntStartReason) {
     super(problem)
-    // An agent missing from the chat is the session failing to open; the rest is the task manager's own access.
-    this.reason = kind === 'agent_not_in_chat' ? 'session_failed' : 'not_in_chat'
+    this.reason = reason
   }
+}
+
+/** A thread that cannot open in the space's chat. */
+function spaceChatProblem(problem: string, kind: SpaceChatProblemKind): SessionProblem {
+  // An agent missing from the chat is the session failing to open; the rest is the task manager's own access.
+  return new SessionProblem(problem, kind === 'agent_not_in_chat' ? 'session_failed' : 'not_in_chat')
+}
+
+/** Why a step's given thread cannot take the step, and what to do about it. */
+const givenThreadProblem = (ref: string, why: string) =>
+  new SessionProblem(
+    `The step's thread "${ref}" ${why}: choose another thread for the step, or fix this one, then restart the step`,
+    'session_failed',
+  )
+
+/** The host answers "Not available" alike for a thread that was deleted and one the task manager cannot reach. */
+const GIVEN_THREAD_GONE = "is gone, or the task manager can't reach it"
+
+/**
+ * Whether the thread a step names can take it: one the host still has, not
+ * archived, in the space's chat and addressed to the step's agent. Answers
+ * the thread, or why not. A host that cannot look a thread up passes it, and
+ * the send into it then fails for one that is gone. Any failure other than
+ * the host refusing the thread throws.
+ */
+export async function checkGivenThread(
+  chats: Pick<ChatsPort, 'thread'>,
+  ref: string,
+  expected: { agentNodeId: string; chatSlug: string },
+): Promise<{ thread: ChatThread } | { why: string }> {
+  if (!chats.thread) {
+    return { thread: { archived: false } }
+  }
+  let thread: ChatThread
+  try {
+    thread = await chats.thread(ref)
+  } catch (error) {
+    if (isUnreachable(error)) {
+      return { why: GIVEN_THREAD_GONE }
+    }
+    throw error
+  }
+  if (thread.chat && thread.chat.slug !== expected.chatSlug) {
+    return { why: "isn't in this space's chat" }
+  }
+  if (thread.agent && thread.agent.nodeId !== expected.agentNodeId) {
+    return { why: "is another agent's thread" }
+  }
+  if (thread.archived) {
+    return { why: 'is archived' }
+  }
+  return { thread }
 }
 
 /** Who works a step for this task, or why nobody can. */
@@ -548,6 +633,20 @@ export async function enterStep(env: EngineEnv, input: EnterInput): Promise<void
       setRoundSessionOptions(db, run.id, step.id, outcome)
     }
   }
+  // A thread the step had before gets the task back for rework; any other thread gets the step as new.
+  const messageFor = (rework: boolean, compacted: boolean) => {
+    const sentBack = input.cause
+    return rework
+      ? reworkMessage({
+          ...message,
+          attempt: attempts,
+          from: sentBack?.from.name ?? task.status.name,
+          movedBy: sentBack?.actor.name ?? 'The workflow',
+          reason: input.reason ?? null,
+          compacted,
+        })
+      : openingMessage(message)
+  }
   // Set when the session is compacted first: the message then goes out after this entry returns.
   let deferred = false
 
@@ -555,18 +654,51 @@ export async function enterStep(env: EngineEnv, input: EnterInput): Promise<void
     const where = await spaceChatFor(env.chats, env.spaceSlug, worker)
     if ('problem' in where || !env.chats) {
       throw 'problem' in where
-        ? new SpaceChatProblem(where.problem, where.kind)
-        : new SpaceChatProblem(NO_GROUP_CHATS, 'no_chats')
+        ? spaceChatProblem(where.problem, where.kind)
+        : spaceChatProblem(NO_GROUP_CHATS, 'no_chats')
     }
     const { chat } = where
     const chats = env.chats
+    const given = step.worker.kind === 'agent' ? step.worker.thread : undefined
+    if (given) {
+      const checked = await checkGivenThread(chats, given, { agentNodeId: worker.nodeId, chatSlug: chat.slug })
+      if ('why' in checked) {
+        throw givenThreadProblem(given, checked.why)
+      }
+      updateRunStep(db, run.id, step.id, {
+        threadRef: given,
+        threadId: checked.thread.threadId ?? null,
+        chatRef: checked.thread.chat?.ref ?? chat.ref,
+        chatSlug: chat.slug,
+        threadGiven: true,
+      })
+      setRoundThread(db, run.id, step.id, given)
+      // Queued behind the running turn: the thread is the agent's own, and may be busy with other work.
+      // Its session is the agent's too, so the step leaves it as it is: no session options (a step
+      // with a thread has none, see definition.ts), no compaction.
+      await chats
+        .send({
+          thread: given,
+          queue: 'wait',
+          message: messageFor(previous?.threadRef === given && previous.threadGiven, false),
+        })
+        .catch((error: unknown) => {
+          throw isUnreachable(error) ? givenThreadProblem(given, GIVEN_THREAD_GONE) : error
+        })
+      await stepOpened(env, input, worker)
+      return
+    }
     const tid = taskId(db, task.number)
     const lane = { app: env.app, taskId: tid, agentId: worker.nodeId }
     await oneThreadAtATime(lane, async () => {
       // A thread in a chat other than the space's stays readable where it is; the task goes to a new one.
       // A reused thread also stays in whatever folder it is in: the step's folder only files a thread it opens.
+      // A thread the step was given before it stopped naming one is not the agent's thread on the task.
       const own =
-        previous?.threadRef && previous.agentNodeId === worker.nodeId && previous.chatSlug === chat.slug
+        previous?.threadRef &&
+        !previous.threadGiven &&
+        previous.agentNodeId === worker.nodeId &&
+        previous.chatSlug === chat.slug
           ? { ref: previous.threadRef, threadId: previous.threadId, chatRef: previous.chatRef }
           : null
       const recorded = own ?? agentTaskThread(db, { taskId: tid, agentId: worker.nodeId, chatSlug: chat.slug })
@@ -574,12 +706,12 @@ export async function enterStep(env: EngineEnv, input: EnterInput): Promise<void
       // One the host refuses as unreachable is left, and the step opens a new thread.
       const reuse = recorded && (await reopenTaskThread(chats, recorded.ref)) ? recorded : null
       if (reuse) {
-        const sentBack = input.cause
         updateRunStep(db, run.id, step.id, {
           threadRef: reuse.ref,
           threadId: reuse.threadId,
           chatRef: reuse.chatRef ?? chat.ref,
           chatSlug: chat.slug,
+          threadGiven: false,
         })
         setRoundThread(db, run.id, step.id, reuse.ref)
         const deliver = async (compacted: boolean) => {
@@ -589,17 +721,7 @@ export async function enterStep(env: EngineEnv, input: EnterInput): Promise<void
             thread: reuse.ref,
             queue: 'wait',
             sessionOptions,
-            // The step's own thread gets the task back for rework; any other thread of the agent's gets the step as new.
-            message: own
-              ? reworkMessage({
-                  ...message,
-                  attempt: attempts,
-                  from: sentBack?.from.name ?? task.status.name,
-                  movedBy: sentBack?.actor.name ?? 'The workflow',
-                  reason: input.reason ?? null,
-                  compacted,
-                })
-              : openingMessage(message),
+            message: messageFor(Boolean(own), compacted),
           })
           recordSessionOptions(sent?.sessionOptions)
         }
@@ -643,6 +765,7 @@ export async function enterStep(env: EngineEnv, input: EnterInput): Promise<void
         threadId: thread.threadId,
         chatRef: thread.chat.ref,
         chatSlug: thread.chat.slug,
+        threadGiven: false,
       })
       setRoundThread(db, run.id, step.id, thread.ref)
       recordSessionOptions(started.sessionOptions)
@@ -664,10 +787,10 @@ export async function enterStep(env: EngineEnv, input: EnterInput): Promise<void
 async function sessionUnreachable(env: EngineEnv, input: StepOfRun, error: unknown): Promise<string> {
   const reason = error instanceof Error ? error.message : String(error)
   // The host answers "Not available" for a chat the task manager may not post in, e.g. one it was removed from since it was checked.
-  const refused = !(error instanceof SpaceChatProblem) && isUnreachable(error)
+  const refused = !(error instanceof SessionProblem) && isUnreachable(error)
   const hint = refused ? notInSpaceChat(env.spaceSlug) : reason
   updateRunStep(env.db, input.run.id, input.step.id, { state: 'waiting', error: hint })
-  const why = error instanceof SpaceChatProblem ? error.reason : refused ? 'not_in_chat' : 'session_failed'
+  const why = error instanceof SessionProblem ? error.reason : refused ? 'not_in_chat' : 'session_failed'
   await attention(env, input, why, hint)
   return hint
 }
@@ -976,12 +1099,82 @@ function settlingDecision(
   return { decision, transition }
 }
 
+/** Who a decision is recorded for, and who made it. */
+interface Decider {
+  approver: StepApprover
+  agent: { agentNodeId: string; name: string } | null
+  actor: Actor
+}
+
+/** A person decides as themselves, and only as one of the step's approvers. */
+function personDecider(step: WorkflowStepDef, person: { id: string; name: string } | null): Decider {
+  if (!person) {
+    throw new Error('Only a person can approve or reject: decide from the task, signed in')
+  }
+  const approvers = step.approval?.approvers ?? []
+  const approver = approvers.find((a) => a.personId === person.id)
+  if (!approver) {
+    throw new Error(
+      `You aren't an approver of "${step.name}". Its approvers: ${approvers.map((a) => a.name).join(', ')}`,
+    )
+  }
+  return { approver: { ...approver, name: person.name }, agent: null, actor: { kind: 'person', name: person.name } }
+}
+
+/**
+ * An agent the step lists may reject it for one of its approvers, on their
+ * word: it names the approver and quotes them in the comment. Approving stays
+ * with the approvers.
+ */
+function agentDecider(
+  step: WorkflowStepDef,
+  agent: { id: string | null; name: string },
+  input: { verdict: ApprovalVerdict; approver?: string; comment?: string },
+): Decider {
+  const listed = step.approval?.rejectingAgents ?? []
+  const approvers = step.approval?.approvers ?? []
+  const names = approvers.map((a) => a.name).join(', ')
+  const own = agent.id ? listed.find((a) => a.agentNodeId === agent.id) : undefined
+  if (!own) {
+    throw new Error(
+      listed.length > 0
+        ? `${agent.name} may not decide "${step.name}": its approvers decide it, and only ${listed.map((a) => a.name).join(', ')} may reject it for them`
+        : `${agent.name} may not decide "${step.name}": its approvers decide it, and it lets no agent reject for them`,
+    )
+  }
+  if (input.verdict !== 'reject') {
+    throw new Error(`Only people approve "${step.name}": an agent may only reject it, for an approver, on their word`)
+  }
+  const wanted = input.approver?.trim().toLowerCase()
+  if (!wanted) {
+    throw new Error(`"approver" is required: the approver of "${step.name}" you reject for, one of ${names}`)
+  }
+  const approver = approvers.find((a) => a.personId === input.approver?.trim() || a.name.toLowerCase() === wanted)
+  if (!approver) {
+    throw new Error(`"${input.approver}" isn't an approver of "${step.name}". Its approvers: ${names}`)
+  }
+  if (!input.comment?.trim()) {
+    throw new Error(`"comment" is required: quote ${approver.name}'s words, which the reject is recorded with`)
+  }
+  return {
+    approver,
+    agent: { agentNodeId: own.agentNodeId, name: agent.name },
+    actor: { kind: 'agent', name: agent.name },
+  }
+}
+
+/** Who made a decision, as the step's summary and its finisher name it: "<agent> for <approver>" for an agent's. */
+function decidedBy(decision: Pick<ApprovalDecision, 'approver' | 'agent'>): string {
+  return decision.agent ? `${decision.agent.name} for ${decision.approver.name}` : decision.approver.name
+}
+
 /**
  * An approver decides an approval step: Approve or Reject, by one of the
  * transitions the verdict may take. The decision is recorded on the open
  * round; when it settles the round (see `approvalOutcome`), the task moves by
  * the settling decision's transition and its comment becomes the step's summary.
- * Only the step's approvers decide, and only as themselves.
+ * Only the step's approvers decide, as themselves; an agent the step lists
+ * may reject it for one of them (see `agentDecider`).
  */
 export async function decideStep(
   env: EngineEnv,
@@ -993,6 +1186,10 @@ export async function decideStep(
     comment?: string
     /** The signed-in person deciding; null for anyone else (an agent, an internal call). */
     person: { id: string; name: string } | null
+    /** The calling agent; null for anyone else. `id` is null when its name does not single out one agent. */
+    agent: { id: string | null; name: string } | null
+    /** For an agent: the approver it rejects for, by name or person id. */
+    approver?: string
   },
 ): Promise<WorkflowRun> {
   const { db, projectKey } = env
@@ -1007,23 +1204,15 @@ export async function decideStep(
   if (!open || !workflow || !step?.approval) {
     throw new Error(open ? `"${open.name}" of ${key} is not an approval step` : `${key} has no open step to decide`)
   }
-  const person = input.person
-  if (!person) {
-    throw new Error('Only a person can approve or reject: decide from the task, signed in')
-  }
-  const approver = step.approval.approvers.find((a) => a.personId === person.id)
-  if (!approver) {
-    throw new Error(
-      `You aren't an approver of "${step.name}". Its approvers: ${step.approval.approvers.map((a) => a.name).join(', ')}`,
-    )
-  }
+  const decider = input.agent ? agentDecider(step, input.agent, input) : personDecider(step, input.person)
   if (hasPendingMove(db, run.id)) {
     throw new Error(`"${step.name}" has just been decided: ${key} is moving on`)
   }
   const transition = verdictTransition(workflow.steps, step, input.verdict, input.transition)
   const comment = input.comment?.trim() || null
   recordDecision(db, run.id, step.id, {
-    approver: { personId: person.id, name: person.name },
+    approver: { personId: decider.approver.personId, name: decider.approver.name },
+    agent: decider.agent,
     verdict: input.verdict,
     transition,
     comment,
@@ -1038,8 +1227,11 @@ export async function decideStep(
     return getRun(db, projectKey, run.id) ?? run
   }
   const settled = settlingDecision(workflow.steps, step, decisions, gate)
-  const summary = settled.decision.comment
-  updateRunStep(db, run.id, open.stepId, { summary, finishedBy: settled.decision.approver.name })
+  // An agent's reject says on the step, and so on the task's comment, whose word it was.
+  const summary = settled.decision.agent
+    ? `Rejected by ${decidedBy(settled.decision)}: ${settled.decision.comment ?? ''}`.trim()
+    : settled.decision.comment
+  updateRunStep(db, run.id, open.stepId, { summary, finishedBy: decidedBy(settled.decision) })
   await moveTask(
     env,
     tasks,
@@ -1047,10 +1239,7 @@ export async function decideStep(
     input.task,
     { status: settled.transition.status, transition: settled.transition.id },
     summary,
-    {
-      kind: 'person',
-      name: person.name,
-    },
+    decider.actor,
   )
   return getRun(db, projectKey, run.id) ?? run
 }
@@ -1147,7 +1336,7 @@ export async function cancelRun(env: EngineEnv, input: { task: TaskSummary; acto
     endRun(db, run.id, 'cancelled', now)
   })
   if (open) {
-    await recordRoundUsage(db, env.chats, { runId: run.id, stepId: open.stepId, threadRef: open.threadRef })
+    await recordRoundUsage(db, env.chats, run.id, open)
   }
   await tell(env, {
     kind: 'workflow_cancelled',

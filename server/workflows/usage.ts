@@ -27,9 +27,21 @@
  * and settles the next time its run or its workflow's statistics are read,
  * once that turn has ended. No timer: the next read settles it, however late.
  * An open round's figures are read live and not stored.
+ *
+ * GIVEN THREADS. A round worked in a thread its step was given is never read
+ * (`readsUsage`): that thread is the agent's own and carries work outside the
+ * task, so the round records no usage and no context.
  */
 
-import type { RoundUsageState, RunRound, Spent, Usage, UsageTokens, WorkflowRun } from '../../shared/workflows.ts'
+import type {
+  RoundUsageState,
+  RunRound,
+  RunStep,
+  Spent,
+  Usage,
+  UsageTokens,
+  WorkflowRun,
+} from '../../shared/workflows.ts'
 import type { Db } from '../db.ts'
 
 /**
@@ -290,15 +302,26 @@ async function readThread(chats: UsagePort | null, threadRef: string, since: str
 }
 
 /**
+ * Whether the round the step is in, or has just ended, has its usage read:
+ * not in a thread the step was given. Such a round is never recorded, so it
+ * is never `pending` and settling never reads it either.
+ */
+export function readsUsage(step: Pick<RunStep, 'threadGiven'>): boolean {
+  return !step.threadGiven
+}
+
+/**
  * The step's round that just ended: read its session's usage and record it.
  * Only a round an agent worked, in a session the workflow opened, has usage.
  */
 export async function recordRoundUsage(
   db: Db,
   chats: UsagePort | null,
-  input: { runId: string; stepId: string; threadRef: string | null },
+  runId: string,
+  step: Pick<RunStep, 'stepId' | 'threadRef' | 'threadGiven'>,
 ): Promise<void> {
-  if (!input.threadRef) {
+  const { stepId, threadRef } = step
+  if (!threadRef || !readsUsage(step)) {
     return
   }
   const round = db
@@ -306,23 +329,19 @@ export async function recordRoundUsage(
       `SELECT round_no, worker_kind, started_at, ended_at FROM workflow_run_round
        WHERE run_id = ? AND step_id = ? AND ended_at IS NOT NULL ORDER BY round_no DESC LIMIT 1`,
     )
-    .get(input.runId, input.stepId) as
+    .get(runId, stepId) as
     | { round_no: number; worker_kind: string | null; started_at: string; ended_at: string }
     | undefined
   if (round?.worker_kind !== 'agent') {
     return
   }
-  const read = await readWindow(db, chats, {
-    threadRef: input.threadRef,
-    startedAt: round.started_at,
-    endedAt: round.ended_at,
-  })
+  const read = await readWindow(db, chats, { threadRef, startedAt: round.started_at, endedAt: round.ended_at })
   if (!read) {
     return
   }
-  const key = { runId: input.runId, stepId: input.stepId, roundNo: round.round_no }
-  saveUsage(db, key, input.threadRef, attribute(read.usage, read.window))
-  saveContext(db, key, { threadRef: input.threadRef, startedAt: round.started_at }, read.usage)
+  const key = { runId, stepId, roundNo: round.round_no }
+  saveUsage(db, key, threadRef, attribute(read.usage, read.window))
+  saveContext(db, key, { threadRef, startedAt: round.started_at }, read.usage)
 }
 
 /**
@@ -433,7 +452,7 @@ export function sumSpent(parts: Spent[]): Spent {
 export async function withLiveUsage(db: Db, chats: UsagePort | null, run: WorkflowRun): Promise<WorkflowRun> {
   const open = run.steps.find((step) => step.state === 'active')
   const round = open?.rounds.at(-1)
-  if (!open?.threadRef || !round || round.endedAt !== null || round.worker?.kind !== 'agent') {
+  if (!open?.threadRef || !readsUsage(open) || !round || round.endedAt !== null || round.worker?.kind !== 'agent') {
     return run
   }
   const read = await readWindow(db, chats, { threadRef: open.threadRef, startedAt: round.startedAt, endedAt: null })

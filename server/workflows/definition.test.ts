@@ -18,7 +18,11 @@ const people = [
   { id: 'person-bob', name: 'Bob' },
   { id: 'person-carol', name: 'Carol' },
 ]
-const env: ValidationEnv = { statuses, otherNames: ['Hotfix'], people }
+const agents = [
+  { id: 'agent-lead', name: 'Lead' },
+  { id: 'agent-qa', name: 'QA' },
+]
+const env: ValidationEnv = { statuses, otherNames: ['Hotfix'], people, agents }
 
 function draft(overrides: Partial<WorkflowDraft> = {}): WorkflowDraft {
   return {
@@ -44,7 +48,7 @@ function draft(overrides: Partial<WorkflowDraft> = {}): WorkflowDraft {
 }
 
 const issues = (d: WorkflowDraft, e: ValidationEnv = env) =>
-  validateWorkflow(normalizeDraft(d, mint, e.statuses, e.people), e)
+  validateWorkflow(normalizeDraft(d, mint, e.statuses, e.people, e.agents), e)
 const paths = (d: WorkflowDraft, e: ValidationEnv = env) => issues(d, e).map((i) => i.path)
 
 /** A normalised step's transitions without their minted ids. */
@@ -336,6 +340,7 @@ test('an approval step keeps its approvers by id, resolves one given by name, ne
       { personId: 'person-bob', name: 'Bob', required: false },
     ],
     needed: 1,
+    rejectingAgents: [],
   })
   assert.deepEqual(
     [step.worker, step.instructions, step.folder, step.sessionOptions],
@@ -367,6 +372,40 @@ test('approvers are people of the directory, each once', () => {
   assert.deepEqual(issues(approvalDraft({ approvers: [{ personId: 'person-bob' }, { name: 'Bob' }] })), [
     { path: 'steps.1.approval.approvers.1', message: 'Bob is already an approver of this step' },
   ])
+})
+
+test('an approval step keeps the agents that may reject it by id, and resolves one given by name', () => {
+  const d = approvalDraft({
+    approvers: [{ personId: 'person-alice' }],
+    rejectingAgents: [{ agentNodeId: 'agent-lead' }, { name: ' qa ' }],
+  })
+  const wf = normalizeDraft(d, mint, statuses, people, agents)
+  assert.deepEqual(wf.steps[1]?.approval?.rejectingAgents, [
+    { agentNodeId: 'agent-lead', name: 'Lead' },
+    { agentNodeId: 'agent-qa', name: 'QA' },
+  ])
+  assert.deepEqual(validateWorkflow(wf, env), [])
+})
+
+test('the agents that may reject are agents of the instance, each once', () => {
+  assert.deepEqual(
+    issues(
+      approvalDraft({
+        approvers: [{ personId: 'person-alice' }],
+        rejectingAgents: [
+          { name: 'Alice' },
+          { agentNodeId: 'agent-nobody' },
+          { agentNodeId: 'agent-lead' },
+          { name: 'Lead' },
+        ],
+      }),
+    ),
+    [
+      { path: 'steps.1.approval.rejectingAgents.0', message: '"Alice" is not an agent of this instance' },
+      { path: 'steps.1.approval.rejectingAgents.1', message: '"agent-nobody" is not an agent of this instance' },
+      { path: 'steps.1.approval.rejectingAgents.3', message: 'Lead may already reject this step' },
+    ],
+  )
 })
 
 test('approvals needed lie between the required approvers (at least 1) and every approver', () => {

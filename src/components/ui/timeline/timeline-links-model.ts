@@ -68,28 +68,38 @@ export function openBlockers(key: string, tasks: LinkedTask[], links: TimelineLi
 }
 
 /**
+ * For each task with a scheduled blocker, the day number its last scheduled
+ * blocker ends on. One pass over the tasks and links, so a surface builds it
+ * once per change of either and asks `moveAfterBlockers` for any task.
+ */
+export function latestBlockerEnds(tasks: LinkedTask[], links: TimelineLink[]): Record<string, number> {
+  const index = byKey(tasks)
+  const out: Record<string, number> = {}
+  for (const link of links) {
+    const end = Object.hasOwn(index, link.from) ? index[link.from].endDate : null
+    if (end) {
+      out[link.to] = Object.hasOwn(out, link.to) ? Math.max(out[link.to], toDay(end)) : toDay(end)
+    }
+  }
+  return out
+}
+
+/**
  * The dates that move `task` to start the day after its last scheduled blocker
- * ends, keeping its length. Null when it has no dates, no scheduled blocker, or
- * already starts after them all.
+ * ends, keeping its length, from `latestBlockerEnds` over the same tasks and
+ * links. Null when it has no dates, no scheduled blocker, or already starts
+ * after them all.
  */
 export function moveAfterBlockers(
   task: LinkedTask,
-  tasks: LinkedTask[],
-  links: TimelineLink[],
+  blockerEnds: Record<string, number>,
 ): { start: CalendarDate; end: CalendarDate } | null {
-  if (task.startDate === null || task.endDate === null) {
+  if (task.startDate === null || task.endDate === null || !Object.hasOwn(blockerEnds, task.key)) {
     return null
   }
-  const index = byKey(tasks)
-  let latest: number | null = null
-  for (const link of links) {
-    const end = link.to === task.key ? index[link.from]?.endDate : null
-    if (end) {
-      latest = latest === null ? toDay(end) : Math.max(latest, toDay(end))
-    }
-  }
+  const latest = blockerEnds[task.key]
   const start = toDay(task.startDate)
-  if (latest === null || start > latest) {
+  if (start > latest) {
     return null
   }
   const length = toDay(task.endDate) - start

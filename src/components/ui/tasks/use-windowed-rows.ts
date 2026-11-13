@@ -53,6 +53,31 @@ function firstBelow(offsets: readonly number[], y: number): number {
   return low
 }
 
+/**
+ * The rows to render for a visible band (`top` and `height` in list
+ * coordinates), plus `overscan` on each side. `end` is not clamped to the
+ * row count: a window near the last row reaches past it, so when rows are
+ * added at the end, the row that was last stays rendered in the render that
+ * adds them, and up to `overscan` new rows show before the next measure.
+ * Clamped to the old count, that row would leave the slice for one render and
+ * mount again, losing its state (an open field, its focus).
+ */
+export function windowRange(
+  offsets: readonly number[],
+  view: { top: number; height: number },
+  overscan: number,
+): { start: number; end: number } {
+  const count = offsets.length - 1
+  const first = firstBelow(offsets, Math.max(0, view.top))
+  const last = firstBelow(offsets, Math.max(0, view.top + view.height))
+  return { start: Math.max(0, Math.min(count, first) - overscan), end: last + 1 + overscan }
+}
+
+/** The slice of a `count`-row list a range renders. */
+export function windowSlice(range: { start: number; end: number }, count: number): { start: number; end: number } {
+  return { start: Math.min(range.start, count), end: Math.min(range.end, count) }
+}
+
 function scrollingAncestor(element: HTMLElement): HTMLElement | null {
   for (let node = element.parentElement; node; node = node.parentElement) {
     const { overflowY } = getComputedStyle(node)
@@ -78,7 +103,7 @@ export function useWindowedRows({
   stickyTop = 0,
 }: WindowedRowsOptions): WindowedRows {
   const offsets = useMemo(() => rowOffsets(count, rowHeight), [count, rowHeight])
-  const [range, setRange] = useState(() => ({ start: 0, end: Math.min(count, overscan * 3) }))
+  const [range, setRange] = useState(() => ({ start: 0, end: overscan * 3 }))
   const frame = useRef(0)
 
   const scroller = useCallback(
@@ -103,12 +128,9 @@ export function useWindowedRows({
     if (!view) {
       return
     }
-    const first = firstBelow(offsets, Math.max(0, view.top))
-    const last = firstBelow(offsets, Math.max(0, view.top + view.height))
-    const start = Math.max(0, Math.min(count, first) - overscan)
-    const end = Math.min(count, last + 1 + overscan)
+    const { start, end } = windowRange(offsets, view, overscan)
     setRange((prev) => (prev.start === start && prev.end === end ? prev : { start, end }))
-  }, [band, count, offsets, overscan])
+  }, [band, offsets, overscan])
 
   useLayoutEffect(() => {
     measure()
@@ -152,8 +174,7 @@ export function useWindowedRows({
     [band, count, offsets, scroller, stickyTop],
   )
 
-  const start = Math.min(range.start, count)
-  const end = Math.min(range.end, count)
+  const { start, end } = windowSlice(range, count)
   return {
     start,
     end,

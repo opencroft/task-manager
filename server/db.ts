@@ -17,6 +17,7 @@ import { dependencyMigrations } from './dependencies/migrations.ts'
 import { forgeMigrations } from './forge/migrations.ts'
 import { inboxMigrations } from './inbox/migrations.ts'
 import { mentionMigrations } from './mentions/migrations.ts'
+import { milestoneMigrations } from './milestones/migrations.ts'
 import { openProjectMigrations } from './openproject/migrations.ts'
 import { settingsMigrations } from './settings/migrations.ts'
 import { versionMigrations } from './versions/migrations.ts'
@@ -158,6 +159,7 @@ export function allMigrations(): Migration[] {
     ...openProjectMigrations,
     ...forgeMigrations,
     ...boardMigrations,
+    ...milestoneMigrations,
   ]
 }
 

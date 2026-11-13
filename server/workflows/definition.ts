@@ -11,7 +11,11 @@
  * Which chat a step's session opens in is not part of a definition: it is
  * always the space's chat, and whether the step's agent is in it is known only
  * when the step opens (the chat's members change without the workflow). A step
- * may name the folder of that chat's thread list its thread is filed in.
+ * may name the folder of that chat's thread list its thread is filed in, and a
+ * fixed agent's step may name an existing thread of that agent to be worked
+ * in. Whether that thread exists is the host's to say, so it is checked where
+ * the host is reached: when the workflow is saved (see `threadIssues` in
+ * ./actions.ts) and again each time the step opens.
  */
 
 import type { StatusRef } from '../../shared/types.ts'
@@ -29,6 +33,7 @@ import {
   type StepApprover,
   type StepKind,
   type StepPresence,
+  type StepRejectingAgent,
   type StepSessionOptions,
   type StepWorker,
   stepStartedBy,
@@ -57,6 +62,8 @@ export interface ValidationEnv {
   otherNames: ReadonlyArray<string>
   /** The host's directory of people: the only ones who can approve. */
   people: ReadonlyArray<{ id: string; name: string }>
+  /** The host's agents: the ones an approval step can let reject for its approvers. */
+  agents: ReadonlyArray<{ id: string; name: string }>
 }
 
 export interface NormalizedWorkflow {
@@ -69,7 +76,8 @@ export interface NormalizedWorkflow {
 
 function normalizeWorker(worker: StepWorker | undefined): StepWorker {
   if (worker?.kind === 'agent') {
-    return { kind: 'agent', agentNodeId: String(worker.agentNodeId ?? '').trim() }
+    const thread = String(worker.thread ?? '').trim()
+    return { kind: 'agent', agentNodeId: String(worker.agentNodeId ?? '').trim(), ...(thread ? { thread } : {}) }
   }
   return { kind: 'assignee' }
 }
@@ -186,28 +194,47 @@ function targetStep(
 }
 
 /**
- * An approval step's approvers: each by directory id, or by name when no id is
- * given (case-insensitive, and only when exactly one person has it). One that
+ * Someone in a directory by id, or by name when no id is given
+ * (case-insensitive, and only when exactly one entry has it). One that
  * resolves to nobody keeps an empty id, which validation reports by its name.
  */
-function normalizeApproval(draft: StepApprovalDraft | null | undefined, people: ValidationEnv['people']): StepApproval {
+function resolveEntry(
+  directory: ReadonlyArray<{ id: string; name: string }>,
+  givenId: unknown,
+  givenName: unknown,
+): { id: string; name: string } {
+  const id = String(givenId ?? '').trim()
+  const name = String(givenName ?? '').trim()
+  const byName = directory.filter((p) => p.name.trim().toLowerCase() === name.toLowerCase())
+  const found = id ? directory.find((p) => p.id === id) : byName.length === 1 ? byName[0] : undefined
+  return { id: id || found?.id || '', name: found?.name ?? (name || id) }
+}
+
+/** An approval step's approvers, from the people's directory, and the agents that may reject for them. */
+function normalizeApproval(
+  draft: StepApprovalDraft | null | undefined,
+  people: ValidationEnv['people'],
+  agents: ValidationEnv['agents'],
+): StepApproval {
   const approvers = (draft?.approvers ?? []).map((a): StepApprover => {
-    const id = String(a.personId ?? '').trim()
-    const name = String(a.name ?? '').trim()
-    const byName = people.filter((p) => p.name.trim().toLowerCase() === name.toLowerCase())
-    const person = id ? people.find((p) => p.id === id) : byName.length === 1 ? byName[0] : undefined
-    return { personId: id || person?.id || '', name: person?.name ?? (name || id), required: a.required === true }
+    const { id, name } = resolveEntry(people, a.personId, a.name)
+    return { personId: id, name, required: a.required === true }
   })
   const needed = draft?.needed ?? Math.max(1, approvers.filter((a) => a.required).length)
-  return { approvers, needed: Number(needed) }
+  const rejectingAgents = (draft?.rejectingAgents ?? []).map((a): StepRejectingAgent => {
+    const { id, name } = resolveEntry(agents, a.agentNodeId, a.name)
+    return { agentNodeId: id, name }
+  })
+  return { approvers, needed: Number(needed), rejectingAgents }
 }
 
 function approvalIssues(
   approval: StepApproval,
-  people: ValidationEnv['people'],
+  env: Pick<ValidationEnv, 'people' | 'agents'>,
   issue: (field: string, message: string) => void,
 ): void {
-  const { approvers, needed } = approval
+  const { approvers, needed, rejectingAgents } = approval
+  const { people, agents } = env
   if (approvers.length === 0) {
     issue('approval.approvers', 'Add at least one approver')
   }
@@ -230,6 +257,15 @@ function approvalIssues(
       `Approvals needed must be a whole number from ${Math.max(1, required)} (the required approvers, at least 1) to ${approvers.length} (every approver)`,
     )
   }
+  const seenAgents = new Set<string>()
+  rejectingAgents.forEach((a, i) => {
+    if (!a.agentNodeId || !agents.some((agent) => agent.id === a.agentNodeId)) {
+      issue(`approval.rejectingAgents.${i}`, `"${a.name}" is not an agent of this instance`)
+    } else if (seenAgents.has(a.agentNodeId)) {
+      issue(`approval.rejectingAgents.${i}`, `${a.name} may already reject this step`)
+    }
+    seenAgents.add(a.agentNodeId)
+  })
 }
 
 function normalizeGate(gate: unknown): TransitionGate | null {
@@ -247,6 +283,8 @@ export function normalizeDraft(
   statuses: ValidationEnv['statuses'],
   /** What an approver given by name is resolved against. */
   people: ValidationEnv['people'] = [],
+  /** What an agent that may reject, given by name, is resolved against. */
+  agents: ValidationEnv['agents'] = [],
 ): NormalizedWorkflow {
   const status = (ref: StatusRef | null | undefined) => statusId(statuses, ref)
   const statusName = (id: number) => statuses.find((s) => s.id === id)?.name ?? `#${id}`
@@ -299,7 +337,7 @@ export function normalizeDraft(
         return {
           ...self,
           kind: 'approval',
-          approval: normalizeApproval(step.approval, people),
+          approval: normalizeApproval(step.approval, people, agents),
           worker: { kind: 'assignee' },
           instructions: '',
           transitions,
@@ -373,7 +411,7 @@ export function validateWorkflow(workflow: NormalizedWorkflow, env: ValidationEn
       issue(at('kind'), `No step kind "${step.kind}". Kinds: ${STEP_KINDS.join(', ')}`)
     }
     if (step.approval) {
-      approvalIssues(step.approval, env.people, (field, message) => issue(at(field), message))
+      approvalIssues(step.approval, env, (field, message) => issue(at(field), message))
       const byVerdict = verdictTransitions(workflow.steps, step)
       for (const verdict of APPROVAL_VERDICTS) {
         if (step.transitions.length > 0 && byVerdict[verdict].length === 0) {
@@ -402,6 +440,14 @@ export function validateWorkflow(workflow: NormalizedWorkflow, env: ValidationEn
     }
 
     sessionOptionIssues(step.sessionOptions, (field, message) => issue(at(`sessionOptions.${field}`), message))
+    // A given thread's session is its agent's own, which the step leaves as it is.
+    const setOptions = Object.keys(step.sessionOptions)
+    if (step.worker.kind === 'agent' && step.worker.thread && setOptions.length > 0) {
+      issue(
+        at('worker.thread'),
+        `A step with a worker.thread has no sessionOptions (it sets ${setOptions.join(', ')}): clear one or the other`,
+      )
+    }
 
     if (step.transitions.length === 0) {
       issue(at('transitions'), 'Give the step at least one transition its agent can finish it by')

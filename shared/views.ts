@@ -23,6 +23,7 @@ export const TASK_COLUMNS = [
   'parent',
   'labels',
   'version',
+  'milestone',
   'dates',
   'created',
   'updated',
@@ -59,6 +60,8 @@ export interface ViewFilter {
   label?: FieldFilter<string>
   /** Version names; `'none'` matches tasks in no version. */
   version?: FieldFilter<string>
+  /** Milestone names; `'none'` matches tasks in no milestone. */
+  milestone?: FieldFilter<string>
   /** Parent task keys; `'none'` matches top-level tasks. */
   parent?: FieldFilter<TaskKey | 'none'>
   sort?: TaskSort

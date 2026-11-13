@@ -8,8 +8,8 @@ import { readTaskKeyQuery } from '../../src/components/ui/navigation/task-key-qu
 import { TaskError } from '../service.ts'
 import { tagged } from './across.ts'
 
-/** Filters that name something of one project: a status, a version, a parent task, a board, an order or a page of its own. */
-const PROJECT_SPECIFIC = ['status', 'version', 'parent', 'board', 'sort', 'offset'] as const
+/** Filters that name something of one project: a status, a version, a milestone, a parent task, a board, an order or a page of its own. */
+const PROJECT_SPECIFIC = ['status', 'version', 'milestone', 'parent', 'board', 'sort', 'offset'] as const
 
 /** What each project is asked, and how many rows the merged answer keeps. */
 export function acrossListInput(input: ActionInputs['task_list']): {

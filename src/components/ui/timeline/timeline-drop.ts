@@ -3,14 +3,16 @@ import { type CalendarDate, DEFAULT_SPAN_DAYS, fromDay, toDay } from './timeline
 
 // What a finished drag means on the timeline, as a list of changes to make.
 // One place decides it for every source (a bar, a tree row, a backlog item)
-// and every target (the scale, a row, the backlog), so the three lists cannot
-// disagree about what a drop does. Pure and DOM-free.
+// and every target (the scale, a row, the tree's empty end, the backlog), so
+// the lists cannot disagree about what a drop does. Pure and DOM-free.
 
 export type DragSource = 'bar' | 'row' | 'backlog'
 
 export type DropTarget =
   | { kind: 'scale'; day: number }
   | { kind: 'row'; key: string; zone: DropZone }
+  /** The tree column past its last row (its create row, or the space below). */
+  | { kind: 'tree-end' }
   | { kind: 'backlog-item'; key: string; zone: 'before' | 'after' }
   | { kind: 'backlog' }
 
@@ -18,9 +20,19 @@ export type TimelineChange =
   | { type: 'schedule'; key: string; start: CalendarDate; end: CalendarDate }
   | { type: 'unschedule'; key: string }
   | { type: 'move'; key: string; placement: TaskPlacement }
+  /**
+   * A backlog task joins the tree's list: with the dates it was dropped on,
+   * or at a place in the tree, or (neither) where the host puts new members.
+   */
+  | { type: 'join'; key: string; start?: CalendarDate; end?: CalendarDate; placement?: TaskPlacement }
+  /** A tree task leaves for the backlog, its dates as they are; next to an item when dropped on one. */
+  | { type: 'leave'; key: string; placement?: TaskPlacement }
 
 export interface DropInput {
+  /** The tree's tasks. */
   tasks: TimelineTask[]
+  /** The backlog's tasks; no task is in both lists. */
+  backlog: TimelineTask[]
   key: string
   source: DragSource
   target: DropTarget | null
@@ -30,17 +42,22 @@ export interface DropInput {
 
 /**
  * The changes a drop makes.
- * - On the scale: a bar shifts by the days it moved; anything else is scheduled
- *   from the drop day, keeping its length if it had dates, else for the default length.
- * - On a tree row: reorder or nest (a bar never reorders — it only changes dates).
- * - On the backlog: unschedule, and on an item also take its place in the order.
+ * - Within the tree and the scale: a bar shifts by the days it moved, a row
+ *   dropped on the scale is scheduled from that day, a row dropped on a row
+ *   reorders or nests (a bar never reorders: it only changes dates).
+ * - Backlog to tree or scale: the task joins the tree's list, scheduled from
+ *   the drop day (keeping its length, or the default length when undated) or
+ *   placed by the row it lands on.
+ * - Tree or scale to backlog: the task leaves, its dates untouched, and takes
+ *   its place next to the item it lands on.
+ * - Within the backlog: reorder.
  */
-export function changesForDrop({ tasks, key, source, target, shiftDays = 0 }: DropInput): TimelineChange[] {
-  const task = tasks.find((t) => t.key === key)
+export function changesForDrop({ tasks, backlog, key, source, target, shiftDays = 0 }: DropInput): TimelineChange[] {
+  const fromBacklog = source === 'backlog'
+  const task = (fromBacklog ? backlog : tasks).find((t) => t.key === key)
   if (!task || !target) {
     return []
   }
-  const unschedule: TimelineChange[] = isScheduled(task) ? [{ type: 'unschedule', key }] : []
   switch (target.kind) {
     case 'scale': {
       if (source === 'bar') {
@@ -52,10 +69,11 @@ export function changesForDrop({ tasks, key, source, target, shiftDays = 0 }: Dr
         return [{ type: 'schedule', key, start: fromDay(start), end: fromDay(end) }]
       }
       const length = isScheduled(task) ? toDay(task.endDate) - toDay(task.startDate) : DEFAULT_SPAN_DAYS - 1
-      if (isScheduled(task) && toDay(task.startDate) === target.day) {
-        return []
+      const dates = { start: fromDay(target.day), end: fromDay(target.day + length) }
+      if (fromBacklog) {
+        return [{ type: 'join', key, ...dates }]
       }
-      return [{ type: 'schedule', key, start: fromDay(target.day), end: fromDay(target.day + length) }]
+      return isScheduled(task) && toDay(task.startDate) === target.day ? [] : [{ type: 'schedule', key, ...dates }]
     }
     case 'row': {
       if (source === 'bar' || target.key === key) {
@@ -63,15 +81,21 @@ export function changesForDrop({ tasks, key, source, target, shiftDays = 0 }: Dr
       }
       const targetTask = tasks.find((t) => t.key === target.key)
       const placement = targetTask ? placementFor(tasks, key, targetTask, target.zone) : null
-      return placement ? [{ type: 'move', key, placement }] : []
+      if (!placement) {
+        return []
+      }
+      return fromBacklog ? [{ type: 'join', key, placement }] : [{ type: 'move', key, placement }]
     }
+    case 'tree-end':
+      return fromBacklog ? [{ type: 'join', key }] : []
     case 'backlog-item': {
       if (target.key === key) {
-        return unschedule
+        return []
       }
-      return [...unschedule, { type: 'move', key, placement: { [target.zone]: target.key } }]
+      const placement = { [target.zone]: target.key }
+      return fromBacklog ? [{ type: 'move', key, placement }] : [{ type: 'leave', key, placement }]
     }
     case 'backlog':
-      return unschedule
+      return fromBacklog ? [] : [{ type: 'leave', key }]
   }
 }

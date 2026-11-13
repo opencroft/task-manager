@@ -402,4 +402,38 @@ export const workflowMigrations: Migration[] = [
       `)
     },
   },
+  {
+    // An agent step may name an existing thread of its agent to be worked in
+    // (NULL: the agent's thread on the task), and a run's step records when
+    // its thread was that one. Every existing step and run step has none.
+    id: 'wf-0013-step-thread',
+    up(db) {
+      db.exec(`
+        ALTER TABLE workflow_step ADD COLUMN worker_thread TEXT;
+        ALTER TABLE workflow_run_step ADD COLUMN thread_given INTEGER NOT NULL DEFAULT 0 CHECK (thread_given IN (0, 1));
+      `)
+    },
+  },
+  {
+    // Agents an approval step lets reject it for one of its approvers, and on
+    // a decision the agent that made it for the approver. Existing steps list
+    // none, and every existing decision is its approver's own: NULL.
+    id: 'wf-0014-rejecting-agents',
+    up(db) {
+      db.exec(`
+        CREATE TABLE workflow_step_rejecting_agent (
+          workflow_id TEXT NOT NULL REFERENCES workflow (id) ON DELETE CASCADE,
+          step_id TEXT NOT NULL,
+          position INTEGER NOT NULL,
+          agent_node_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          PRIMARY KEY (step_id, agent_node_id)
+        );
+        CREATE INDEX workflow_step_rejecting_agent_workflow ON workflow_step_rejecting_agent (workflow_id);
+
+        ALTER TABLE workflow_run_vote ADD COLUMN agent_node_id TEXT;
+        ALTER TABLE workflow_run_vote ADD COLUMN agent_name TEXT;
+      `)
+    },
+  },
 ]

@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 
 import type { Actor, Status, TaskSummary } from '../../shared/types.ts'
-import type { StepSessionOptions, WorkflowStepDraft } from '../../shared/workflows.ts'
+import type { StepApprovalDraft, StepSessionOptions, WorkflowStepDraft } from '../../shared/workflows.ts'
 import { allMigrations, migrate } from '../db.ts'
 import type { NotificationDraft } from '../inbox/store.ts'
 import { oneThreadAtATime } from '../task-threads.ts'
@@ -75,7 +75,9 @@ function outcomeOf(options: StepSessionOptions | undefined, unoffered: ReadonlyA
  * by default it shrinks the thread's context to 20k. A thread in `gone` was
  * deleted, and the host refuses every call on it; one in `foreign` is one the
  * host does not count as the task manager's, so it refuses to archive or
- * unarchive it while still taking messages into it.
+ * unarchive it while still taking messages into it. `existing` holds threads
+ * the task manager did not open, by ref, with the agent and chat each is in:
+ * what a step can be given; the host describes them with that agent and chat.
  */
 function fakeChats(
   opts: {
@@ -92,8 +94,10 @@ function fakeChats(
   titles: Set<string>
   gone: Set<string>
   foreign: Set<string>
+  existing: Map<string, { agentNodeId: string; chatSlug: string }>
 } {
   const sent: Sent[] = []
+  const existing = new Map<string, { agentNodeId: string; chatSlug: string }>()
   const titles = new Set<string>()
   // What each thread has spent, as the host's turn records would say.
   const threads = new Map<string, ThreadUsage>()
@@ -116,9 +120,18 @@ function fakeChats(
     titles,
     gone,
     foreign,
+    existing,
     thread: async (ref) => {
       reach(ref)
-      return { archived: archived.has(ref) }
+      const known = existing.get(ref)
+      return known
+        ? {
+            archived: archived.has(ref),
+            threadId: `id-${ref}`,
+            agent: { nodeId: known.agentNodeId },
+            chat: { ref: known.chatSlug === 'dev' ? 'chat-1' : 'chat-other', slug: known.chatSlug },
+          }
+        : { archived: archived.has(ref) }
     },
     archive: async (ref) => {
       archiveCalls.push(`archive ${ref}`)
@@ -288,6 +301,7 @@ function setup(
       childDoneCount: 0,
       labels: [],
       version: null,
+      milestone: null,
       startDate: null,
       endDate: null,
       rank: 'a',
@@ -1980,9 +1994,14 @@ const as = (p: { name: string }): Actor => ({ kind: 'person', name: p.name })
 /**
  * Development, then a Sign-off decided by Alice (required), Bob and Carol, two
  * approvals needed: Approve finishes the run in Done, Rework sends the task
- * back to Development. `extra` adds transitions to Sign-off, `after` steps after it.
+ * back to Development. `extra` adds transitions to Sign-off, `after` steps after
+ * it, `rejectingAgents` the agents that may reject it for an approver.
  */
-function approvalSetup(extra: WorkflowStepDraft['transitions'] = [], after: WorkflowStepDraft[] = []) {
+function approvalSetup(
+  extra: WorkflowStepDraft['transitions'] = [],
+  after: WorkflowStepDraft[] = [],
+  rejectingAgents: StepApprovalDraft['rejectingAgents'] = [],
+) {
   const ctx = withInbox({
     steps: [
       {
@@ -2003,6 +2022,7 @@ function approvalSetup(extra: WorkflowStepDraft['transitions'] = [], after: Work
             { personId: CAROL.id, name: CAROL.name },
           ],
           needed: 2,
+          rejectingAgents,
         },
         transitions: [{ label: 'Approve', status: 4 }, { label: 'Rework', status: 2 }, ...extra],
       },
@@ -2013,7 +2033,20 @@ function approvalSetup(extra: WorkflowStepDraft['transitions'] = [], after: Work
     person: { id: string; name: string },
     verdict: 'approve' | 'reject',
     more: { transition?: string; comment?: string } = {},
-  ) => decideStep(ctx.env, ctx.changeAs(as(person)), { task: ctx.task(), verdict, person, ...more })
+  ) => decideStep(ctx.env, ctx.changeAs(as(person)), { task: ctx.task(), verdict, person, agent: null, ...more })
+  /** An agent's decision, for `approver` when given. */
+  const decideAsAgent = (
+    agent: { id: string | null; name: string },
+    verdict: 'approve' | 'reject',
+    more: { approver?: string; transition?: string; comment?: string } = {},
+  ) =>
+    decideStep(ctx.env, ctx.changeAs({ kind: 'agent', name: agent.name }), {
+      task: ctx.task(),
+      verdict,
+      person: null,
+      agent,
+      ...more,
+    })
   /** Start, and let Development hand the task to Sign-off. */
   const reachSignOff = async () => {
     await startWorkflow(ctx.env, ctx.changeAs(PERSON), { task: ctx.task(), actor: PERSON })
@@ -2025,7 +2058,7 @@ function approvalSetup(extra: WorkflowStepDraft['transitions'] = [], after: Work
     })
   }
   const signOff = () => activeRunForTask(ctx.env.db, 'TASK', 1)?.steps.find((s) => s.name === 'Sign-off') ?? null
-  return { ...ctx, decide, reachSignOff, signOff }
+  return { ...ctx, decide, decideAsAgent, reachSignOff, signOff }
 }
 
 test('an approval step opens no session: it waits on its approvers, each of whom is asked', async () => {
@@ -2234,7 +2267,7 @@ test('a settling decision moves the task only by the transition it chose; one th
     },
   }
   await assert.rejects(
-    decideStep(env, refusing, { task: task(), verdict: 'reject', person: ALICE }),
+    decideStep(env, refusing, { task: task(), verdict: 'reject', person: ALICE, agent: null }),
     /the store is read-only/,
   )
   // Rework is replaced by a new transition to the same place.
@@ -2276,7 +2309,322 @@ test('only the approvers decide, only as signed-in people, and only an open appr
     /You aren't an approver of "Sign-off". Its approvers: Alice, Bob, Carol/,
   )
   await assert.rejects(
-    decideStep(env, changeAs(DEV), { task: task(), verdict: 'approve', person: null }),
+    decideStep(env, changeAs(DEV), { task: task(), verdict: 'approve', person: null, agent: null }),
     /Only a person can approve or reject/,
   )
+})
+
+const LEAD = { id: 'agent_lead', name: 'Lead' }
+const LEAD_MAY_REJECT = [{ agentNodeId: LEAD.id, name: LEAD.name }]
+
+test("an agent the step lists rejects it for an approver on their word: the task goes back as by that approver's Reject, recorded as the agent's for them", async () => {
+  const { env, chats, task, decideAsAgent, reachSignOff } = approvalSetup([], [], LEAD_MAY_REJECT)
+  await reachSignOff()
+  await decideAsAgent(LEAD, 'reject', { approver: 'alice', comment: 'Alice: "not before the demo"' })
+  assert.equal(task().status.name, 'In Progress')
+  const run = activeRunForTask(env.db, 'TASK', 1)
+  assert.ok(run)
+  const [dev, signOff] = run.steps
+  assert.deepEqual([dev?.state, dev?.attempts], ['active', 2])
+  assert.deepEqual(
+    [signOff?.state, signOff?.finishedBy, signOff?.summary],
+    ['done', 'Lead for Alice', 'Rejected by Lead for Alice: Alice: "not before the demo"'],
+  )
+  const round = signOff?.rounds[0]
+  assert.deepEqual([round?.transition, round?.gate], ['Rework', 'fail'])
+  assert.deepEqual(
+    round?.decisions.map((d) => [d.approver, d.agent, d.verdict, d.transition, d.comment]),
+    [
+      [
+        { personId: ALICE.id, name: 'Alice' },
+        { agentNodeId: LEAD.id, name: 'Lead' },
+        'reject',
+        'Rework',
+        'Alice: "not before the demo"',
+      ],
+    ],
+  )
+  assert.match(chats.sent.at(-1)?.message ?? '', /Rejected by Lead for Alice: Alice: "not before the demo"/)
+})
+
+test("on a step that lists an agent, an approver's own Reject is still theirs alone: no agent, their comment as the summary", async () => {
+  const { env, task, decide, reachSignOff } = approvalSetup([], [], LEAD_MAY_REJECT)
+  await reachSignOff()
+  await decide(BOB, 'reject', { comment: 'No' })
+  assert.equal(task().status.name, 'In Progress')
+  const signOff = activeRunForTask(env.db, 'TASK', 1)?.steps[1]
+  assert.deepEqual(
+    [signOff?.finishedBy, signOff?.summary, signOff?.rounds[0]?.decisions.map((d) => d.agent)],
+    ['Bob', 'No', [null]],
+  )
+})
+
+test('a listed agent cannot approve, nor reject without naming an approver and quoting them; the step stays open and nothing is recorded', async () => {
+  const { env, task, changeAs, decideAsAgent, reachSignOff, signOff } = approvalSetup([], [], LEAD_MAY_REJECT)
+  await reachSignOff()
+  await assert.rejects(
+    decideAsAgent(LEAD, 'approve', { approver: 'Alice', comment: 'Alice: "ship it"' }),
+    /Only people approve "Sign-off": an agent may only reject it, for an approver, on their word/,
+  )
+  await assert.rejects(
+    decideAsAgent(LEAD, 'reject', { comment: 'No' }),
+    /"approver" is required: the approver of "Sign-off" you reject for, one of Alice, Bob, Carol/,
+  )
+  await assert.rejects(
+    decideAsAgent(LEAD, 'reject', { approver: 'Dave', comment: 'No' }),
+    /"Dave" isn't an approver of "Sign-off". Its approvers: Alice, Bob, Carol/,
+  )
+  await assert.rejects(
+    decideAsAgent(LEAD, 'reject', { approver: BOB.id, comment: '  ' }),
+    /"comment" is required: quote Bob's words/,
+  )
+  await assert.rejects(
+    changeAs({ kind: 'agent', name: LEAD.name }).changeStatus({ key: 'TASK-1', status: 2 }),
+    /waits on the approvers of "Sign-off": only people can move it/,
+    'being listed lets the agent reject, not move the task',
+  )
+  assert.deepEqual(
+    [task().status.name, signOff()?.state, signOff()?.rounds[0]?.decisions],
+    ['In Review', 'waiting', []],
+  )
+  assert.equal(activeRunForTask(env.db, 'TASK', 1)?.state, 'active')
+})
+
+test('an agent the step does not list is refused, naming the step, and so is every agent on a step that lists none', async () => {
+  const listed = approvalSetup([], [], LEAD_MAY_REJECT)
+  await listed.reachSignOff()
+  await assert.rejects(
+    listed.decideAsAgent({ id: 'agent_dev', name: 'Dev' }, 'reject', { approver: 'Alice', comment: 'No' }),
+    /Dev may not decide "Sign-off": its approvers decide it, and only Lead may reject it for them/,
+  )
+  await assert.rejects(
+    listed.decideAsAgent({ id: null, name: 'Lead' }, 'reject', { approver: 'Alice', comment: 'No' }),
+    /Lead may not decide "Sign-off"/,
+    'a name that does not single out one agent is not the listed agent',
+  )
+  assert.deepEqual([listed.task().status.name, listed.signOff()?.rounds[0]?.decisions], ['In Review', []])
+
+  const unlisted = approvalSetup()
+  await unlisted.reachSignOff()
+  await assert.rejects(
+    unlisted.decideAsAgent(LEAD, 'reject', { approver: 'Alice', comment: 'No' }),
+    /Lead may not decide "Sign-off": its approvers decide it, and it lets no agent reject for them/,
+  )
+  assert.deepEqual([unlisted.task().status.name, unlisted.signOff()?.state], ['In Review', 'waiting'])
+})
+
+// ── A step given a thread ───────────────────────────────────────────────────
+
+/** Rev's existing thread in the space's chat, not one the task manager opened. */
+const GIVEN = 'dev.rev.coordination'
+
+/** Development for the assignee, then Review in Rev's given thread, or worked as `review` says. */
+function givenSetup(reviewDraft: Partial<WorkflowStepDraft> = {}) {
+  const s = setup({
+    steps: [
+      {
+        name: 'Development',
+        triggerStatus: 2,
+        worker: { kind: 'assignee' },
+        instructions: 'Implement {{ task.key }}',
+        transitions: [3],
+      },
+      {
+        name: 'Review',
+        triggerStatus: 3,
+        worker: { kind: 'agent', agentNodeId: 'agent_rev', thread: GIVEN },
+        instructions: 'Review {{ task.key }}',
+        transitions: [4, 2],
+        folder: 'Review queue',
+        ...reviewDraft,
+      },
+    ],
+  })
+  s.chats.existing.set(GIVEN, { agentNodeId: 'agent_rev', chatSlug: 'dev' })
+  const review = () => activeRunForTask(s.env.db, 'TASK', 1)?.steps.find((step) => step.name === 'Review')
+  return { ...s, review }
+}
+
+test('a step given a thread is sent into it, queued, as a new step, and the run shows that thread', async () => {
+  const { env, chats, task, changeAs, warnings, review } = givenSetup()
+  await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
+  await finishStep(env, changeAs(DEV), { task: task(), transition: 'In Review', summary: 'done', actor: DEV })
+  assert.deepEqual(warnings, [])
+  const delivered = chats.sent.at(-1)
+  assert.deepEqual([delivered?.kind, delivered?.target, delivered?.queue], ['send', GIVEN, 'wait'])
+  assert.ok(delivered?.message.startsWith('Review TASK-1\n'), 'the opening message, not a rework')
+  assert.deepEqual(
+    chats.sent.filter((s) => s.kind === 'start').map((s) => s.agentNodeId),
+    ['agent_dev'],
+    'no thread is opened for Rev, so the step folder files nothing',
+  )
+  const step = review()
+  assert.deepEqual(
+    [step?.state, step?.agentName, step?.threadRef, step?.threadId, step?.chatRef, step?.threadGiven, step?.error],
+    ['active', 'Rev', GIVEN, `id-${GIVEN}`, 'chat-1', true, null],
+  )
+  assert.equal(step?.rounds[0]?.compaction, null, 'a given thread is never compacted before its message')
+})
+
+test('the agent finishes a given-thread step from its thread; closing the task leaves that thread unarchived', async () => {
+  const { env, chats, task, changeAs } = givenSetup()
+  await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
+  await finishStep(env, changeAs(DEV), { task: task(), transition: 'In Review', summary: 'done', actor: DEV })
+  const run = await finishStep(env, changeAs(REV), { task: task(), transition: 'Done', summary: 'ok', actor: REV })
+  assert.equal(task().status.name, 'Done')
+  assert.equal(run.state, 'finished')
+  assert.deepEqual(
+    run.steps.map((s) => [s.name, s.state, s.summary, s.finishedBy]),
+    [
+      ['Development', 'done', 'done', 'Dev'],
+      ['Review', 'done', 'ok', 'Rev'],
+    ],
+  )
+  assert.deepEqual(chats.archiveCalls, ['archive dev.agent.t1'], "only Development's own thread is archived")
+})
+
+test('sent back and returned, a given-thread step gets the task again in that thread as rework', async () => {
+  const { env, chats, task, changeAs, review } = givenSetup()
+  await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
+  await finishStep(env, changeAs(DEV), { task: task(), transition: 'In Review', summary: 'done', actor: DEV })
+  await finishStep(env, changeAs(REV), { task: task(), transition: 'In Progress', summary: 'add a test', actor: REV })
+  await finishStep(env, changeAs(DEV), { task: task(), transition: 'In Review', summary: 'test added', actor: DEV })
+  assert.deepEqual(
+    chats.sent.map((s) => [s.kind, s.target]),
+    [
+      ['start', 'chat-1'],
+      ['send', GIVEN],
+      ['send', 'dev.agent.t1'],
+      ['send', GIVEN],
+    ],
+  )
+  assert.match(chats.sent.at(-1)?.message ?? '', /back at Review\*\* \(round 2\): Dev moved it from "In Progress"/)
+  assert.match(chats.sent.at(-1)?.message ?? '', /test added/)
+  assert.deepEqual([review()?.attempts, review()?.threadRef], [2, GIVEN])
+})
+
+test("a given thread that is gone leaves the step waiting with an error naming it; restarting sends once it's back", async () => {
+  const { env, chats, task, changeAs, warnings, review } = givenSetup()
+  await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
+  chats.gone.add(GIVEN)
+  await finishStep(env, changeAs(DEV), { task: task(), transition: 'In Review', summary: 'done', actor: DEV })
+  const gone = `The step's thread "${GIVEN}" is gone, or the task manager can't reach it`
+  assert.equal(warnings.length, 1)
+  assert.ok(warnings[0]?.includes(gone), warnings[0])
+  assert.equal(review()?.state, 'waiting')
+  assert.ok(review()?.error?.startsWith(gone), review()?.error ?? '')
+  assert.equal(review()?.threadRef, null)
+  assert.ok(!chats.sent.some((s) => s.target === GIVEN), 'nothing was sent anywhere for the step')
+  assert.ok(!chats.sent.some((s) => s.kind === 'start' && s.agentNodeId === 'agent_rev'), 'no thread opened instead')
+
+  chats.gone.delete(GIVEN)
+  await restartStep(env, changeAs(PERSON), { task: task(), step: 'Review', actor: PERSON })
+  assert.deepEqual([review()?.state, review()?.error, review()?.threadRef], ['active', null, GIVEN])
+  assert.ok(chats.sent.at(-1)?.message.startsWith('Review TASK-1\n'), 'the step as new: it never reached the thread')
+})
+
+test("a given thread that is archived, or another agent's, leaves the step waiting with the reason", async () => {
+  const archived = givenSetup()
+  archived.chats.archived.add(GIVEN)
+  await startWorkflow(archived.env, archived.changeAs(PERSON), { task: archived.task(), actor: PERSON })
+  await finishStep(archived.env, archived.changeAs(DEV), {
+    task: archived.task(),
+    transition: 'In Review',
+    actor: DEV,
+  })
+  assert.match(archived.review()?.error ?? '', /^The step's thread "dev\.rev\.coordination" is archived: /)
+  assert.deepEqual(archived.chats.archiveCalls, [], 'never unarchived: it is not the task manager’s to bring back')
+
+  const others = givenSetup()
+  others.chats.existing.set(GIVEN, { agentNodeId: 'agent_dev', chatSlug: 'dev' })
+  await startWorkflow(others.env, others.changeAs(PERSON), { task: others.task(), actor: PERSON })
+  await finishStep(others.env, others.changeAs(DEV), { task: others.task(), transition: 'In Review', actor: DEV })
+  assert.match(others.review()?.error ?? '', /^The step's thread "dev\.rev\.coordination" is another agent's thread: /)
+  assert.equal(others.review()?.state, 'waiting')
+})
+
+test("a given thread is never the agent's thread on the task: the agent's other step opens its own", async () => {
+  // Rev works both steps: Development in the given thread, Review in its own thread on the task.
+  const { env, chats, task, changeAs, review } = givenSetup({ worker: { kind: 'agent', agentNodeId: 'agent_rev' } })
+  env.db
+    .prepare(
+      `UPDATE workflow_step SET worker_kind = 'agent', worker_agent_id = 'agent_rev', worker_thread = ?
+       WHERE name = 'Development'`,
+    )
+    .run(GIVEN)
+  await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
+  await finishStep(env, changeAs(REV), { task: task(), transition: 'In Review', summary: 'done', actor: REV })
+  const opened = chats.sent.at(-1)
+  assert.deepEqual(
+    [opened?.kind, opened?.agentNodeId, opened?.title, opened?.folder],
+    ['start', 'agent_rev', 'TASK-1', 'Review queue'],
+  )
+  assert.deepEqual([review()?.threadRef, review()?.threadGiven], ['dev.agent.t1', false])
+})
+
+test('a step that stops naming its thread opens its own thread on the next entry, not the one it was given', async () => {
+  const { env, chats, task, changeAs, wf, review } = givenSetup()
+  await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
+  await finishStep(env, changeAs(DEV), { task: task(), transition: 'In Review', summary: 'done', actor: DEV })
+  env.db.prepare('UPDATE workflow_step SET worker_thread = NULL WHERE id = ?').run(wf.steps[1]?.id ?? '')
+  await finishStep(env, changeAs(REV), { task: task(), transition: 'In Progress', summary: 'again', actor: REV })
+  await finishStep(env, changeAs(DEV), { task: task(), transition: 'In Review', summary: 'fixed', actor: DEV })
+  const opened = chats.sent.at(-1)
+  assert.deepEqual([opened?.kind, opened?.agentNodeId, opened?.title], ['start', 'agent_rev', 'TASK-1'])
+  assert.deepEqual([review()?.threadRef, review()?.threadGiven, review()?.attempts], ['dev.agent.t2', false, 2])
+})
+
+test("a given thread's usage is never read, open, ended or settling, while the task's own thread is", async () => {
+  const { env, chats, task, changeAs } = givenSetup()
+  let clock = at('10:00')
+  env.now = () => clock
+  // The host would answer for Rev's thread: a turn ends inside Review's round, and one is running.
+  chats.threads.set(GIVEN, {
+    turns: [turn('10:05', 300)],
+    busy: true,
+    context: { usedTokens: 90_000, contextLimit: 1_000_000 },
+  })
+  chats.threads.set('dev.agent.t1', { turns: [turn('10:01', 100)], busy: false })
+  const usage = chats.usage
+  assert.ok(usage)
+  const asked: string[] = []
+  chats.usage = (thread, options) => {
+    asked.push(thread)
+    return usage(thread, options)
+  }
+
+  await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
+  clock = at('10:02')
+  await finishStep(env, changeAs(DEV), { task: task(), transition: 'In Review', summary: 'done', actor: DEV })
+  clock = at('10:06')
+  const open = activeRunForTask(env.db, 'TASK', 1)
+  assert.ok(open)
+  const live = await withLiveUsage(env.db, chats, open)
+  clock = at('10:10')
+  await finishStep(env, changeAs(REV), { task: task(), transition: 'Done', summary: 'ok', actor: REV })
+  await settlePendingUsage(env.db, chats, [open.id])
+
+  assert.deepEqual(asked, ['dev.agent.t1'], "only Development's own thread is asked")
+  assert.deepEqual([live.steps[1]?.rounds[0]?.usage, live.steps[1]?.rounds[0]?.contextTokens], [null, null])
+  const run = getRun(env.db, 'TASK', open.id)
+  assert.deepEqual(
+    run?.steps.map((s) => [s.name, s.rounds.map((r) => [r.usage?.state ?? null, r.usage?.tokens.total ?? null])]),
+    [
+      ['Development', [['settled', 100]]],
+      ['Review', [[null, null]]],
+    ],
+  )
+  assert.equal(run?.spent.usage?.tokens.total, 100)
+})
+
+test('a given-thread step sends its thread no session options and never compacts it, even with options stored', async () => {
+  // Saving refuses a step with both a thread and options; this workflow is stored without that check.
+  const { env, chats, task, changeAs, review } = givenSetup({ sessionOptions: { effort: 'high', compactAbove: 1 } })
+  holding(chats, GIVEN, 500_000)
+  await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
+  await finishStep(env, changeAs(DEV), { task: task(), transition: 'In Review', summary: 'done', actor: DEV })
+  const delivered = chats.sent.at(-1)
+  assert.deepEqual([delivered?.kind, delivered?.target, delivered?.sessionOptions], ['send', GIVEN, undefined])
+  assert.ok(!chats.sent.some((s) => s.kind === 'compact'))
+  assert.deepEqual([review()?.rounds[0]?.sessionOptions, review()?.rounds[0]?.compaction], [null, null])
 })

@@ -4,6 +4,7 @@
 
 import {
   Download,
+  Flag,
   FolderKanban,
   GitPullRequest,
   ListChecks,
@@ -17,6 +18,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { SettingsLayout, SettingsSection } from '@/components/ui/settings/settings-layout'
 import { TaskForgeConnection } from '@/components/ui/tasks/task-forge-connection'
 import { TaskLabelsManager } from '@/components/ui/tasks/task-labels-manager'
+import { type TaskMilestoneInput, TaskMilestonesManager } from '@/components/ui/tasks/task-milestones-manager'
 import {
   type OpenProjectImportMapping,
   type OpenProjectImportPreview,
@@ -41,6 +43,7 @@ import type { WorkflowDef } from '../../shared/workflows'
 import { useProject } from '../app/project'
 import { errorMessage } from '../lib/api'
 import { useTasksLive } from '../lib/live'
+import { toTaskMilestone } from '../lib/milestones'
 import { hrefFor } from '../lib/router'
 import { toTaskVersion } from '../lib/versions'
 import { workflowsApi } from '../workflows/api'
@@ -53,6 +56,7 @@ const SECTIONS = [
   { id: 'project', label: 'Project', icon: FolderKanban },
   { id: 'statuses', label: 'Statuses', icon: ListChecks },
   { id: 'labels', label: 'Labels', icon: Tag },
+  { id: 'milestones', label: 'Milestones', icon: Flag },
   { id: 'versions', label: 'Versions', icon: Milestone },
   { id: 'workflows', label: 'Workflows', icon: Workflow },
   { id: 'chat', label: 'Chat', icon: MessagesSquare },
@@ -116,6 +120,37 @@ function LabelsSection() {
         onColorChange={(name, color) => api.label_color({ label: name, color }).then(() => undefined, plain)}
         onMerge={(from, into) => api.label_merge({ label: from, into }).then(() => undefined, plain)}
         onDelete={(name) => api.label_delete({ label: name }).then(() => undefined, plain)}
+      />
+    </SettingsSection>
+  )
+}
+
+function MilestonesSection() {
+  const { api, milestones, labelsLoaded } = useProject()
+  const kitMilestones = useMemo(() => milestones.map(toTaskMilestone), [milestones])
+  const input = (next: TaskMilestoneInput) => ({
+    name: next.name,
+    startDate: next.startDate,
+    targetDate: next.targetDate,
+    description: next.description ?? '',
+  })
+  return (
+    <SettingsSection
+      title='Milestones'
+      description='The stages and goals tasks are planned into, each with an optional start and target date. A task put in one gets dates inside it; changing its dates, archiving it or deleting it moves no task. Not the same as a version, the release a task ships in.'
+    >
+      <TaskMilestonesManager
+        milestones={kitMilestones}
+        loading={!labelsLoaded}
+        onCreate={(next) => api.milestone_create(input(next)).then(() => undefined, plain)}
+        onUpdate={(id, next) =>
+          api.milestone_update({ milestone: Number(id), ...input(next) }).then(() => undefined, plain)
+        }
+        onArchive={(id) =>
+          api.milestone_update({ milestone: Number(id), state: 'archived' }).then(() => undefined, plain)
+        }
+        onRestore={(id) => api.milestone_update({ milestone: Number(id), state: 'open' }).then(() => undefined, plain)}
+        onDelete={(id) => api.milestone_delete({ milestone: Number(id) }).then(() => undefined, plain)}
       />
     </SettingsSection>
   )
@@ -405,6 +440,7 @@ export function SettingsPage({ section }: { section?: string }) {
         </SettingsSection>
       ) : null}
       {active === 'labels' ? <LabelsSection /> : null}
+      {active === 'milestones' ? <MilestonesSection /> : null}
       {active === 'versions' ? <VersionsSection /> : null}
       {active === 'workflows' ? <WorkflowsSection /> : null}
       {active === 'chat' ? (

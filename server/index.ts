@@ -25,6 +25,7 @@ import { dependencyActions } from './dependencies/index.ts'
 import { forgeActions, forgeHooks } from './forge/index.ts'
 import { inboxActions } from './inbox/index.ts'
 import { mentionActions } from './mentions/index.ts'
+import { milestoneActions } from './milestones/index.ts'
 import { myWorkActions } from './my-work/index.ts'
 import { openProjectActions, openProjectHooks } from './openproject/index.ts'
 import { referenceActions, withProjectScope } from './projects/index.ts'
@@ -37,7 +38,7 @@ import { recoverWorkflowsOnLoad, workflowActions } from './workflows/index.ts'
  * Every action of the `tasks` App: the task manager's, the workflows',
  * the inbox's, the dependencies', the saved views', the boards', My work's, the
  * attachments', the mentions', the project settings', the versions', the
- * OpenProject import's, then the forge links', each checking its parameters first. Those that take `detail` answer in compact rows unless
+ * milestones', the OpenProject import's, then the forge links', each checking its parameters first. Those that take `detail` answer in compact rows unless
  * asked for the full shape. `task_list` and `my_work` take `scope`, to answer across projects.
  */
 const allActions: Record<string, AppActionHandler> = withParamChecks(
@@ -54,6 +55,7 @@ const allActions: Record<string, AppActionHandler> = withParamChecks(
       ...mentionActions,
       ...settingsActions,
       ...versionActions,
+      ...milestoneActions,
       ...openProjectActions,
       ...forgeActions,
     }),

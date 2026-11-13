@@ -24,6 +24,7 @@ import type {
   SessionOptionsOutcome,
   StepApprover,
   StepKind,
+  StepRejectingAgent,
   StepSessionOptions,
   StepWorker,
   TransitionGate,
@@ -57,6 +58,7 @@ interface StepRow {
   trigger_status_id: number
   worker_kind: 'assignee' | 'agent'
   worker_agent_id: string | null
+  worker_thread: string | null
   instructions: string
   folder: string
   session_options: string
@@ -69,6 +71,12 @@ interface ApproverRow {
   person_id: string
   name: string
   required: number
+}
+
+interface RejectingAgentRow {
+  step_id: string
+  agent_node_id: string
+  name: string
 }
 
 interface TransitionRow {
@@ -97,6 +105,9 @@ function stepsOf(db: Db, workflowIds: string[]): Map<string, WorkflowStepDef[]> 
   const approvers = db
     .prepare(`SELECT * FROM workflow_step_approver WHERE workflow_id IN (${marks}) ORDER BY step_id, position`)
     .all(...workflowIds) as unknown as ApproverRow[]
+  const rejectingAgents = db
+    .prepare(`SELECT * FROM workflow_step_rejecting_agent WHERE workflow_id IN (${marks}) ORDER BY step_id, position`)
+    .all(...workflowIds) as unknown as RejectingAgentRow[]
   const byStep = new Map<string, WorkflowTransition[]>()
   for (const t of transitions) {
     byStep.set(t.step_id, [
@@ -108,14 +119,29 @@ function stepsOf(db: Db, workflowIds: string[]): Map<string, WorkflowStepDef[]> 
     approvers
       .filter((a) => a.step_id === stepId)
       .map((a) => ({ personId: a.person_id, name: a.name, required: a.required === 1 }))
+  const rejectingAgentsOf = (stepId: string): StepRejectingAgent[] =>
+    rejectingAgents.filter((a) => a.step_id === stepId).map((a) => ({ agentNodeId: a.agent_node_id, name: a.name }))
   for (const s of steps) {
     const worker: StepWorker =
-      s.worker_kind === 'agent' ? { kind: 'agent', agentNodeId: s.worker_agent_id ?? '' } : { kind: 'assignee' }
+      s.worker_kind === 'agent'
+        ? {
+            kind: 'agent',
+            agentNodeId: s.worker_agent_id ?? '',
+            ...(s.worker_thread ? { thread: s.worker_thread } : {}),
+          }
+        : { kind: 'assignee' }
     out.get(s.workflow_id)?.push({
       id: s.id,
       name: s.name,
       kind: s.kind,
-      approval: s.kind === 'approval' ? { approvers: approversOf(s.id), needed: s.approvals_needed ?? 1 } : null,
+      approval:
+        s.kind === 'approval'
+          ? {
+              approvers: approversOf(s.id),
+              needed: s.approvals_needed ?? 1,
+              rejectingAgents: rejectingAgentsOf(s.id),
+            }
+          : null,
       triggerStatus: s.trigger_status_id,
       worker,
       instructions: s.instructions,
@@ -212,14 +238,15 @@ export function saveWorkflow(db: Db, wf: NormalizedWorkflow, now: string): Workf
     }
     db.prepare('DELETE FROM workflow_transition WHERE workflow_id = ?').run(wf.id)
     db.prepare('DELETE FROM workflow_step_approver WHERE workflow_id = ?').run(wf.id)
+    db.prepare('DELETE FROM workflow_step_rejecting_agent WHERE workflow_id = ?').run(wf.id)
     const upsert = db.prepare(
       `INSERT INTO workflow_step
-         (id, workflow_id, position, name, trigger_status_id, worker_kind, worker_agent_id, instructions, folder, session_options,
-          kind, approvals_needed)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (id, workflow_id, position, name, trigger_status_id, worker_kind, worker_agent_id, worker_thread, instructions, folder,
+          session_options, kind, approvals_needed)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO UPDATE SET
          position = excluded.position, name = excluded.name, trigger_status_id = excluded.trigger_status_id,
-         worker_kind = excluded.worker_kind, worker_agent_id = excluded.worker_agent_id,
+         worker_kind = excluded.worker_kind, worker_agent_id = excluded.worker_agent_id, worker_thread = excluded.worker_thread,
          instructions = excluded.instructions, folder = excluded.folder, session_options = excluded.session_options,
          kind = excluded.kind, approvals_needed = excluded.approvals_needed`,
     )
@@ -230,6 +257,9 @@ export function saveWorkflow(db: Db, wf: NormalizedWorkflow, now: string): Workf
     const addApprover = db.prepare(
       'INSERT INTO workflow_step_approver (workflow_id, step_id, position, person_id, name, required) VALUES (?, ?, ?, ?, ?, ?)',
     )
+    const addRejectingAgent = db.prepare(
+      'INSERT INTO workflow_step_rejecting_agent (workflow_id, step_id, position, agent_node_id, name) VALUES (?, ?, ?, ?, ?)',
+    )
     wf.steps.forEach((step, position) => {
       upsert.run(
         step.id,
@@ -239,6 +269,7 @@ export function saveWorkflow(db: Db, wf: NormalizedWorkflow, now: string): Workf
         step.triggerStatus,
         step.worker.kind,
         step.worker.kind === 'agent' ? step.worker.agentNodeId : null,
+        (step.worker.kind === 'agent' && step.worker.thread) || null,
         step.instructions,
         step.folder,
         JSON.stringify(step.sessionOptions),
@@ -250,6 +281,9 @@ export function saveWorkflow(db: Db, wf: NormalizedWorkflow, now: string): Workf
       })
       step.approval?.approvers.forEach((a, i) => {
         addApprover.run(wf.id, step.id, i, a.personId, a.name, a.required ? 1 : 0)
+      })
+      step.approval?.rejectingAgents.forEach((a, i) => {
+        addRejectingAgent.run(wf.id, step.id, i, a.agentNodeId, a.name)
       })
     })
   })
@@ -313,6 +347,7 @@ interface RunStepRow {
   chat_slug: string | null
   thread_ref: string | null
   thread_id: string | null
+  thread_given: number
   started_at: string | null
   ended_at: string | null
   outcome: string | null
@@ -347,6 +382,8 @@ interface VoteRow {
   round_no: number
   person_id: string
   person_name: string
+  agent_node_id: string | null
+  agent_name: string | null
   verdict: ApprovalVerdict
   transition_id: string
   transition_label: string
@@ -357,6 +394,7 @@ interface VoteRow {
 function toDecision(v: VoteRow): ApprovalDecision {
   return {
     approver: { personId: v.person_id, name: v.person_name },
+    agent: v.agent_node_id ? { agentNodeId: v.agent_node_id, name: v.agent_name ?? v.agent_node_id } : null,
     verdict: v.verdict,
     transitionId: v.transition_id,
     transition: v.transition_label,
@@ -398,6 +436,7 @@ function toRunStep(r: RunStepRow, rounds: RunRound[]): RunStep {
     chatSlug: r.chat_slug,
     threadRef: r.thread_ref,
     threadId: r.thread_id,
+    threadGiven: r.thread_given === 1,
     startedAt: r.started_at,
     endedAt: r.ended_at,
     outcome: r.outcome,
@@ -549,6 +588,7 @@ export type RunStepPatch = Partial<{
   chatSlug: string | null
   threadRef: string | null
   threadId: string | null
+  threadGiven: boolean
   startedAt: string | null
   endedAt: string | null
   outcome: string | null
@@ -567,6 +607,7 @@ const PATCH_COLUMNS: Record<keyof RunStepPatch, string> = {
   chatSlug: 'chat_slug',
   threadRef: 'thread_ref',
   threadId: 'thread_id',
+  threadGiven: 'thread_given',
   startedAt: 'started_at',
   endedAt: 'ended_at',
   outcome: 'outcome',
@@ -582,8 +623,9 @@ export function updateRunStep(db: Db, runId: string, stepId: string, patch: RunS
     return
   }
   const sets = keys.map((k) => `${PATCH_COLUMNS[k]} = ?`).join(', ')
+  const column = (value: RunStepPatch[keyof RunStepPatch]) => (typeof value === 'boolean' ? Number(value) : value)
   db.prepare(`UPDATE workflow_run_step SET ${sets} WHERE run_id = ? AND step_id = ?`).run(
-    ...keys.map((k) => patch[k] as string | number | null),
+    ...keys.map((k) => column(patch[k]) as string | number | null),
     runId,
     stepId,
   )
@@ -759,8 +801,9 @@ export function endRound(
 }
 
 /**
- * An approver's decision in the open round of an approval step. A second
- * decision by the same approver in that round replaces the first.
+ * An approver's decision in the open round of an approval step, made by them
+ * or by an agent for them. A second decision for the same approver in that
+ * round replaces the first.
  */
 export function recordDecision(
   db: Db,
@@ -768,6 +811,7 @@ export function recordDecision(
   stepId: string,
   vote: {
     approver: { personId: string; name: string }
+    agent: { agentNodeId: string; name: string } | null
     verdict: ApprovalVerdict
     transition: WorkflowTransition
     comment: string | null
@@ -785,14 +829,17 @@ export function recordDecision(
   // REPLACE re-inserts a changed decision, so rowid order is the order decisions were last made in.
   db.prepare(
     `INSERT OR REPLACE INTO workflow_run_vote
-       (run_id, step_id, round_no, person_id, person_name, verdict, transition_id, transition_label, comment, at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (run_id, step_id, round_no, person_id, person_name, agent_node_id, agent_name, verdict, transition_id,
+        transition_label, comment, at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     runId,
     stepId,
     open.round_no,
     vote.approver.personId,
     vote.approver.name,
+    vote.agent?.agentNodeId ?? null,
+    vote.agent?.name ?? null,
     vote.verdict,
     vote.transition.id,
     vote.transition.label,
@@ -830,6 +877,13 @@ export function setPendingMove(db: Db, runId: string, move: PendingMove | null):
 
 /** Read and clear a run's pending move. */
 export function takePendingMove(db: Db, runId: string): PendingMove | null {
+  const move = pendingMove(db, runId)
+  setPendingMove(db, runId, null)
+  return move
+}
+
+/** A run's pending move, left in place. */
+export function pendingMove(db: Db, runId: string): PendingMove | null {
   const row = db
     .prepare('SELECT pending_status_id, pending_transition_id, pending_step_id FROM workflow_run WHERE id = ?')
     .get(runId) as
@@ -838,7 +892,6 @@ export function takePendingMove(db: Db, runId: string): PendingMove | null {
   if (!row || row.pending_status_id === null) {
     return null
   }
-  setPendingMove(db, runId, null)
   if (row.pending_transition_id !== null) {
     return { status: row.pending_status_id, transition: row.pending_transition_id }
   }

@@ -1,3 +1,6 @@
+import { useState } from 'react'
+
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 import { ItemContextMenu, type ItemMenuEntries } from './item-menu'
@@ -22,6 +25,8 @@ export interface TaskActivityProps {
    * the row as one line of plain text (for "Copy").
    */
   rowMenu?: (entry: TaskActivityItem, line: string) => ItemMenuEntries
+  /** Show every description edit's before and after texts expanded (each row still toggles). */
+  textChangesOpen?: boolean
   className?: string
 }
 
@@ -39,6 +44,40 @@ const FIELD_NAMES: Record<string, string> = {
 
 function Value({ children, className }: { children: string; className?: string }) {
   return <span className={cn('rounded-md bg-muted px-1.5 font-medium text-foreground', className)}>{children}</span>
+}
+
+/** A description entry that carries its texts; entries stored without them say only that it was edited. */
+function hasTexts(entry: TaskActivityItem): boolean {
+  return entry.kind === 'field' && entry.field === 'description' && (entry.from !== null || entry.to !== null)
+}
+
+function TextSide({ label, text }: { label: string; text: string | null }) {
+  return (
+    <div className="min-w-0 flex-1">
+      <div className="text-xs font-medium text-muted-foreground">{label}</div>
+      <div className="mt-1 max-h-48 overflow-y-auto rounded-md bg-muted px-2 py-1.5 text-xs whitespace-pre-wrap break-words text-foreground">
+        {text ? text : <span className="text-muted-foreground italic">empty</span>}
+      </div>
+    </div>
+  )
+}
+
+/** The before and after texts of a description edit, behind a toggle so the row stays one line. */
+function TextChange({ entry, defaultOpen = false }: { entry: TaskActivityItem; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <>
+      <Button variant="link" size="xs" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {open ? 'Hide changes' : 'Show changes'}
+      </Button>
+      {open && (
+        <div data-slot="task-activity-text-change" className="mt-1.5 flex flex-col gap-2 sm:flex-row">
+          <TextSide label="Before" text={entry.from} />
+          <TextSide label="After" text={entry.to} />
+        </div>
+      )}
+    </>
+  )
 }
 
 function describe(entry: TaskActivityItem) {
@@ -147,7 +186,13 @@ function when(iso: string): string {
 }
 
 /** A task's history: who changed what, from what to what, and when. */
-export function TaskActivity({ entries, order = 'newest', rowMenu, className }: TaskActivityProps) {
+export function TaskActivity({
+  entries,
+  order = 'newest',
+  rowMenu,
+  textChangesOpen = false,
+  className,
+}: TaskActivityProps) {
   const sorted = order === 'newest' ? [...entries].reverse() : entries
   if (sorted.length === 0) {
     return <p className={cn('text-sm text-muted-foreground', className)}>No activity yet.</p>
@@ -165,6 +210,7 @@ export function TaskActivity({ entries, order = 'newest', rowMenu, className }: 
           <div className="min-w-0 flex-1 leading-6 text-muted-foreground">
             <span className="font-medium text-foreground">{entry.actor.name}</span> {describe(entry)}
             <span className="ml-2 text-xs whitespace-nowrap">{when(entry.at)}</span>
+            {hasTexts(entry) && <TextChange entry={entry} defaultOpen={textChangesOpen} />}
           </div>
         </ItemContextMenu>
       ))}

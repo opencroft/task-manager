@@ -14,6 +14,7 @@ export interface ActionInputs {
     priority?: string[] | Record<string, unknown>
     label?: string[] | Record<string, unknown>
     version?: string[] | Record<string, unknown>
+    milestone?: string[] | Record<string, unknown>
     parent?: string | string[] | Record<string, unknown>
     scheduled?: boolean
     hasOpenPr?: boolean
@@ -33,6 +34,10 @@ export interface ActionInputs {
     before?: string
     limit?: number
   }
+  task_activity_texts: {
+    key: string
+    id?: number
+  }
   task_create: {
     detail?: 'compact' | 'full'
     summary: string
@@ -44,6 +49,7 @@ export interface ActionInputs {
     parent?: string | null
     labels?: string[]
     version?: string | number | null
+    milestone?: string | number | null
     startDate?: string | null
     endDate?: string | null
     before?: string
@@ -60,6 +66,8 @@ export interface ActionInputs {
     assignee?: string | Record<string, unknown> | null
     labels?: string[]
     version?: string | number | null
+    milestone?: string | number | null
+    withSubtasks?: boolean
     startDate?: string | null
     endDate?: string | null
   }
@@ -122,6 +130,9 @@ export interface ActionInputs {
   }
   space_chat: Record<string, never>
   space_chat_grant: Record<string, never>
+  space_chat_threads: {
+    agent: string
+  }
   workflow_validate: {
     workflow: Record<string, unknown>
   }
@@ -164,6 +175,7 @@ export interface ActionInputs {
     verdict: 'approve' | 'reject'
     transition?: string
     comment?: string
+    approver?: string
   }
   workflow_step_restart: {
     detail?: 'compact' | 'full'
@@ -314,6 +326,29 @@ export interface ActionInputs {
     version: string | number
     date?: string
     moveOpenTo?: string | number
+  }
+  milestone_list: {
+    detail?: 'compact' | 'full'
+    state?: string[]
+  }
+  milestone_create: {
+    detail?: 'compact' | 'full'
+    name: string
+    startDate?: string | null
+    targetDate?: string | null
+    description?: string
+  }
+  milestone_update: {
+    detail?: 'compact' | 'full'
+    milestone: string | number
+    name?: string
+    startDate?: string | null
+    targetDate?: string | null
+    description?: string
+    state?: 'open' | 'archived'
+  }
+  milestone_delete: {
+    milestone: string | number
   }
   import_openproject: {
     url?: string

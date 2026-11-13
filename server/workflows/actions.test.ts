@@ -228,11 +228,16 @@ test('workflow_stats takes the workflow by name, defaults to 30 days, and names 
 /**
  * One task, TASK-1 in In Review, and a workflow whose only step is a Sign-off
  * decided by Alice (required) and Bob, one approval needed. `caller` is who
- * calls: a signed-in person, or null for an agent. Status changes run the
+ * calls: a signed-in person, or null for the agent named `agent` (Dev by
+ * default). The host's agents are Dev and Lead. Status changes run the
  * engine's hooks as the task model does.
  */
 function approvalWorld() {
-  const world = { caller: null as { id: string; name: string } | null, db: null as unknown as DatabaseSync }
+  const world = {
+    caller: null as { id: string; name: string } | null,
+    agent: 'Dev',
+    db: null as unknown as DatabaseSync,
+  }
   const statuses = () =>
     world.db.prepare('SELECT id, name, category, color, position FROM status').all() as unknown as Status[]
   const getTask = (): TaskSummary => {
@@ -253,6 +258,7 @@ function approvalWorld() {
       childDoneCount: 0,
       labels: [],
       version: null,
+      milestone: null,
       startDate: null,
       endDate: null,
       rank: 'a',
@@ -263,7 +269,7 @@ function approvalWorld() {
     }
   }
   const actor = (): Actor =>
-    world.caller ? { kind: 'person', name: world.caller.name } : { kind: 'agent', name: 'Dev' }
+    world.caller ? { kind: 'person', name: world.caller.name } : { kind: 'agent', name: world.agent }
   const env = (): EngineEnv => ({
     db: world.db,
     projectKey: 'TASK',
@@ -289,14 +295,19 @@ function approvalWorld() {
     person: () => world.caller,
     tasks,
     appAddress: async () => 'dev.tasks',
+    agents: async () => [
+      { id: 'agent_dev', name: 'Dev' },
+      { id: 'agent_lead', name: 'Lead' },
+    ],
   })
   world.db = db
   db.prepare(
     `INSERT INTO task (number, summary, description, status_id, reporter_kind, reporter_name, rank, created_at, updated_at)
      VALUES (1, 'Fix login', '', 3, 'person', 'Alice', 'a', ?, ?)`,
   ).run(NOW, NOW)
-  const as = (caller: { id: string; name: string } | null) => {
+  const as = (caller: { id: string; name: string } | null, agent = 'Dev') => {
     world.caller = caller
+    world.agent = agent
     return call
   }
   return { as, getTask }
@@ -339,6 +350,7 @@ test('workflow_step_decide records an approver’s decision; workflow_run_get sh
         required: false,
         decision: {
           approver: { personId: BOB.id, name: 'Bob' },
+          agent: null,
           verdict: 'approve',
           transitionId: done?.id,
           transition: 'Finish: Done',
@@ -348,6 +360,7 @@ test('workflow_step_decide records an approver’s decision; workflow_run_get sh
       },
     ],
     transitions: { approve: ['Finish: Done'], reject: ['Rework'] },
+    rejectingAgents: [],
     canDecide: true,
     viewerId: BOB.id,
   })
@@ -363,15 +376,74 @@ test('workflow_step_decide records an approver’s decision; workflow_run_get sh
     name: 'TaskError',
     message:
       '"verdict" must be one of "approve" or "reject", not "maybe". ' +
-      'Parameters of workflow_step_decide: detail, task (required), verdict (required), transition, comment.',
+      'Parameters of workflow_step_decide: detail, task (required), verdict (required), transition, comment, approver.',
   })
   await assert.rejects(
     as(null)('workflow_step_decide', { task: 'TASK-1', verdict: 'approve' }),
-    /Only a person can approve or reject/,
+    /Dev may not decide "Sign-off": its approvers decide it, and it lets no agent reject for them/,
   )
   await as(ALICE)('workflow_step_decide', { task: 'TASK-1', verdict: 'reject' })
   assert.equal(getTask().status.name, 'In Progress')
   assert.equal(await view(ALICE), undefined, 'the run ended with the step')
+})
+
+test('an agent the step lists, found by the name the host bound to the call, rejects for an approver; workflow_run_get names it', async () => {
+  const { as, getTask } = approvalWorld()
+  await as(ALICE)('workflow_save', {
+    workflow: {
+      name: 'Sign-off',
+      steps: [
+        {
+          name: 'Sign-off',
+          kind: 'approval',
+          triggerStatus: 'In Review',
+          approval: { approvers: [{ name: 'alice', required: true }], rejectingAgents: [{ name: 'lead' }] },
+          transitions: ['Done', { label: 'Rework', status: 'In Progress', gate: 'fail' }],
+        },
+      ],
+    },
+  })
+  await as(ALICE)('workflow_start', { task: 'TASK-1' })
+  type View = { openStep: { approval?: OpenApproval } | null }
+  const view = (await as(null, 'Lead')('workflow_run_get', { task: 'TASK-1' })) as unknown as View
+  assert.deepEqual(view.openStep?.approval?.rejectingAgents, [{ agentNodeId: 'agent_lead', name: 'Lead' }])
+  await assert.rejects(
+    as(null, 'Lead')('workflow_step_decide', { task: 'TASK-1', verdict: 'approve', approver: 'Alice', comment: 'ok' }),
+    /Only people approve "Sign-off"/,
+  )
+  await assert.rejects(
+    as(null, 'Dev')('workflow_step_decide', { task: 'TASK-1', verdict: 'reject', approver: 'Alice', comment: 'no' }),
+    /Dev may not decide "Sign-off": its approvers decide it, and only Lead may reject it for them/,
+  )
+  assert.equal(getTask().status.name, 'In Review')
+  await as(null, 'Lead')('workflow_step_decide', {
+    task: 'TASK-1',
+    verdict: 'reject',
+    approver: 'Alice',
+    comment: 'Alice: "not yet"',
+  })
+  assert.equal(getTask().status.name, 'In Progress')
+})
+
+test("an approval step's agents that may reject are checked against the host's agents", async () => {
+  const { call } = setup(null, null, { agents: async () => [{ id: 'agent_lead', name: 'Lead' }] })
+  await assert.rejects(
+    call('workflow_save', {
+      workflow: {
+        name: 'Sign-off',
+        steps: [
+          {
+            name: 'Sign-off',
+            kind: 'approval',
+            triggerStatus: 'In Review',
+            approval: { approvers: [{ name: 'Alice' }], rejectingAgents: [{ name: 'Bob' }] },
+            transitions: ['Done', 'To Do'],
+          },
+        ],
+      },
+    }),
+    /steps\.0\.approval\.rejectingAgents\.0: "Bob" is not an agent of this instance/,
+  )
 })
 
 test("an approval step's approvers are checked against the host's people", async () => {
@@ -437,4 +509,207 @@ test('runs matched past the list limit keep their total, so a caller can say it 
     /"Standard" has no step "Deploy"/,
   )
   await assert.rejects(call('workflow_runs_list', { match: { step: 'Development' } }), /"match" needs "workflow"/)
+})
+
+// ── A step's thread ─────────────────────────────────────────────────────────
+
+/**
+ * The space's chat (`dev`) with Dev and Rev, and threads the host knows by
+ * ref: Rev's live and archived ones, Dev's, and Rev's in another chat.
+ * `activity` pages one thread at a time and, like the host, lists only live
+ * threads. `lookups` records each thread the host was asked about.
+ */
+function threadWorld() {
+  const members = [
+    { nodeId: 'agent_dev', name: 'Dev' },
+    { nodeId: 'agent_rev', name: 'Rev' },
+  ]
+  const threads = [
+    { ref: 'dev.rev.coordination', agent: 'agent_rev', chat: 'dev', archived: false, title: 'Coordination' },
+    { ref: 'dev.rev.old', agent: 'agent_rev', chat: 'dev', archived: true, title: 'Old' },
+    { ref: 'dev.dev.notes', agent: 'agent_dev', chat: 'dev', archived: false, title: 'Notes' },
+    { ref: 'dev.rev.later', agent: 'agent_rev', chat: 'dev', archived: false, title: null },
+    { ref: 'ops.rev.elsewhere', agent: 'agent_rev', chat: 'ops', archived: false, title: 'Elsewhere' },
+  ]
+  const lookups: string[] = []
+  const describe = (t: (typeof threads)[number]) => ({
+    ref: t.ref,
+    threadId: `id-${t.ref}`,
+    title: t.title,
+    archived: t.archived,
+    folder: null,
+    agent: { nodeId: t.agent },
+    chat: { ref: `id-${t.chat}`, slug: t.chat },
+  })
+  const chats = {
+    list: async () => [{ ref: 'id-dev', slug: 'dev', name: 'DEV', agents: members }],
+    thread: async (ref: string) => {
+      lookups.push(ref)
+      const found = threads.find((t) => t.ref === ref)
+      if (!found) {
+        throw new Error('Not available')
+      }
+      return describe(found)
+    },
+    activity: async (options: { chat?: string; cursor?: string }) => {
+      const live = threads.filter((t) => t.chat === options.chat && !t.archived)
+      const at = Number(options.cursor ?? 0)
+      return { threads: live.slice(at, at + 1).map(describe), nextCursor: at + 1 < live.length ? String(at + 1) : null }
+    },
+  } as unknown as ChatsPort
+  return { chats, threads, lookups }
+}
+
+const withThread = (thread: string, agentNodeId = 'agent_rev') => ({
+  ...standard,
+  steps: [standard.steps[0], { ...standard.steps[1], worker: { kind: 'agent', agentNodeId, thread } }],
+})
+
+test("a step's thread is saved and read back; a worker passed without one clears it", async () => {
+  const { chats } = threadWorld()
+  const { call } = setup(null, chats)
+  const saved = await call('workflow_save', { workflow: withThread(' dev.rev.coordination ') })
+  assert.deepEqual(saved.steps[1]?.worker, { kind: 'agent', agentNodeId: 'agent_rev', thread: 'dev.rev.coordination' })
+  assert.deepEqual((await call('workflow_get', { workflow: 'Standard' })).steps[1]?.worker, saved.steps[1]?.worker)
+  const cleared = await call('workflow_step_update', {
+    workflow: 'Standard',
+    step: 'Review',
+    worker: { kind: 'agent', agentNodeId: 'agent_rev' },
+  })
+  assert.deepEqual(cleared.steps[1]?.worker, { kind: 'agent', agentNodeId: 'agent_rev' })
+})
+
+test('a thread that is gone, archived, in another chat or not the agent’s is refused, on the step’s thread field', async () => {
+  const { chats } = threadWorld()
+  const { call } = setup(null, chats)
+  const issues = async (thread: string, agentNodeId?: string) =>
+    (
+      (await call('workflow_validate', { workflow: withThread(thread, agentNodeId) })) as unknown as {
+        issues: Array<{ path: string; message: string }>
+      }
+    ).issues
+  assert.deepEqual(await issues('dev.rev.coordination'), [])
+  assert.deepEqual(await issues('dev.rev.nothing'), [
+    {
+      path: 'steps.1.worker.thread',
+      message: `The thread "dev.rev.nothing" is gone, or the task manager can't reach it`,
+    },
+  ])
+  assert.deepEqual(
+    [
+      ...(await issues('dev.rev.old')),
+      ...(await issues('ops.rev.elsewhere')),
+      ...(await issues('dev.rev.coordination', 'agent_dev')),
+    ].map((i) => i.message),
+    [
+      'The thread "dev.rev.old" is archived',
+      `The thread "ops.rev.elsewhere" isn't in this space's chat`,
+      `The thread "dev.rev.coordination" is another agent's thread`,
+    ],
+  )
+  await assert.rejects(
+    call('workflow_save', { workflow: withThread('dev.rev.old') }),
+    /The workflow was not saved:\n- steps\.1\.worker\.thread: The thread "dev\.rev\.old" is archived/,
+  )
+})
+
+test("editing another step doesn't look a step's saved thread up again, so one archived since still saves", async () => {
+  const { chats, threads, lookups } = threadWorld()
+  const { call } = setup(null, chats)
+  await call('workflow_save', { workflow: withThread('dev.rev.coordination') })
+  assert.deepEqual(lookups, ['dev.rev.coordination'])
+  const coordination = threads.find((t) => t.ref === 'dev.rev.coordination')
+  assert.ok(coordination)
+  coordination.archived = true
+  const renamed = await call('workflow_step_update', { workflow: 'Standard', step: 'Development', name: 'Build' })
+  assert.equal(renamed.steps[1]?.worker.kind === 'agent' && renamed.steps[1].worker.thread, 'dev.rev.coordination')
+  assert.deepEqual(lookups, ['dev.rev.coordination'], 'not looked up again')
+  await assert.rejects(
+    call('workflow_step_update', {
+      workflow: 'Standard',
+      step: 'Review',
+      worker: { kind: 'agent', agentNodeId: 'agent_dev', thread: 'dev.rev.coordination' },
+    }),
+    /steps\.1\.worker\.thread: The thread "dev\.rev\.coordination" is another agent's thread/,
+    'a changed agent looks it up again',
+  )
+})
+
+test('a step with both a thread and session options is refused, naming both, by validate, save and step_update either way', async () => {
+  const { chats } = threadWorld()
+  const { call } = setup(null, chats)
+  const refused =
+    /steps\.1\.worker\.thread: A step with a worker\.thread has no sessionOptions \(it sets effort\): clear one or the other/
+  const given = withThread('dev.rev.coordination')
+  const both = {
+    ...given,
+    steps: [given.steps[0], { ...given.steps[1], sessionOptions: { effort: 'high', compactAbove: 0 } }],
+  }
+  assert.deepEqual(((await call('workflow_validate', { workflow: both })) as unknown as { issues: unknown[] }).issues, [
+    {
+      path: 'steps.1.worker.thread',
+      message:
+        'A step with a worker.thread has no sessionOptions (it sets effort, compactAbove): clear one or the other',
+    },
+  ])
+  await assert.rejects(
+    call('workflow_save', { workflow: both }),
+    /The workflow was not saved:\n- steps\.1\.worker\.thread: /,
+  )
+
+  await call('workflow_save', { workflow: given })
+  await assert.rejects(
+    call('workflow_step_update', { workflow: 'Standard', step: 'Review', sessionOptions: { effort: 'high' } }),
+    refused,
+    'options added to a step with a thread',
+  )
+
+  await call('workflow_step_update', {
+    workflow: 'Standard',
+    step: 'Review',
+    worker: { kind: 'agent', agentNodeId: 'agent_rev' },
+    sessionOptions: { effort: 'high' },
+  })
+  const thread = { kind: 'agent', agentNodeId: 'agent_rev', thread: 'dev.rev.coordination' }
+  await assert.rejects(
+    call('workflow_step_update', { workflow: 'Standard', step: 'Review', worker: thread }),
+    refused,
+    'a thread added to a step with options',
+  )
+  const moved = await call('workflow_step_update', {
+    workflow: 'Standard',
+    step: 'Review',
+    worker: thread,
+    sessionOptions: {},
+  })
+  assert.deepEqual([moved.steps[1]?.worker, moved.steps[1]?.sessionOptions], [thread, {}])
+})
+
+test("space_chat_threads lists one agent's live threads in the space's chat, by node id or name, across pages", async () => {
+  const { chats } = threadWorld()
+  const { call } = setup(null, chats)
+  const listed = (await call('space_chat_threads', { agent: 'rev' })) as unknown as {
+    agent: { nodeId: string; name: string }
+    threads: Array<{ ref: string; title: string | null }>
+    cut?: true
+  }
+  assert.deepEqual(listed.agent, { nodeId: 'agent_rev', name: 'Rev' })
+  assert.deepEqual(
+    listed.threads.map((t) => [t.ref, t.title]),
+    [
+      ['dev.rev.coordination', 'Coordination'],
+      ['dev.rev.later', null],
+    ],
+  )
+  assert.equal(listed.cut, undefined)
+  assert.deepEqual(
+    (
+      (await call('space_chat_threads', { agent: 'agent_dev' })) as unknown as { threads: Array<{ ref: string }> }
+    ).threads.map((t) => t.ref),
+    ['dev.dev.notes'],
+  )
+  await assert.rejects(
+    call('space_chat_threads', { agent: 'Far' }),
+    /No agent "Far" in this space's chat\. Its agents: Dev, Rev/,
+  )
 })

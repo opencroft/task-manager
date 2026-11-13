@@ -17,6 +17,7 @@ import type { TaskSummary } from '../../shared/types'
 import { useProject } from '../app/project'
 import { errorMessage } from '../lib/api'
 import { assigneeInput } from '../lib/assignees'
+import { toTaskMilestone } from '../lib/milestones'
 import { toTaskVersion } from '../lib/versions'
 
 /** Calls in flight at once: enough to be quick, few enough not to crowd the server. */
@@ -36,8 +37,9 @@ export function useBulkActions(
   selection: string[],
   setSelection: (keys: string[]) => void,
 ): TaskBulkBarProps {
-  const { api, statuses, assignees, labels, versions } = useProject()
+  const { api, statuses, assignees, labels, versions, milestones } = useProject()
   const kitVersions = useMemo(() => versions.map(toTaskVersion), [versions])
+  const kitMilestones = useMemo(() => milestones.map(toTaskMilestone), [milestones])
   const [busy, setBusy] = useState<TaskBulkBarAction | null>(null)
   const [result, setResult] = useState<TaskBulkBarResult | null>(null)
   const last = useRef<LastRun | null>(null)
@@ -132,6 +134,17 @@ export function useBulkActions(
         'version',
         picked.filter((task) => (task.version?.name ?? null) !== name),
         (task) => api.task_update({ key: task.key, version: id === null ? null : Number(id) }),
+      )
+    },
+    milestones: kitMilestones,
+    // Only the tasks not already in that milestone are touched. Each write takes along the subtasks that were
+    // where its task was and dates what enters, so a picked subtask its parent already moved is left as it is.
+    onSetMilestone: (id: string | null) => {
+      const name = id === null ? null : (kitMilestones.find((milestone) => milestone.id === id)?.name ?? null)
+      void run(
+        'milestone',
+        picked.filter((task) => (task.milestone?.name ?? null) !== name),
+        (task) => api.task_update({ key: task.key, milestone: id === null ? null : Number(id) }),
       )
     },
     parents,

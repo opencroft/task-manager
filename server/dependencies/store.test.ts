@@ -5,7 +5,16 @@ import { test } from 'node:test'
 import type { TasksEvent } from '../../shared/types.ts'
 import { parseParams } from '../action-params.ts'
 import { allMigrations, migrate } from '../db.ts'
-import { changeStatus, createTask, deleteTask, getTask, listTasks, moveTask, type Scope } from '../service.ts'
+import {
+  changeStatus,
+  createTask,
+  deleteTask,
+  getTask,
+  HISTORY_MERGE_WINDOW_MS,
+  listTasks,
+  moveTask,
+  type Scope,
+} from '../service.ts'
 import { linkTasks, unlinkTasks } from './store.ts'
 
 interface TestScope extends Scope {
@@ -115,15 +124,37 @@ test('a link that would close a loop is refused, naming the loop', async () => {
   )
 })
 
-test('unlinking removes the link and records it; a missing link is refused', async () => {
+test('unlinking removes the link and records it; a missing link is refused', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-03-02T09:00:00.000Z') })
   const scope = makeScope()
   const [a, b] = await tasks(scope, 2)
   linkTasks(scope, { from: a, to: b })
+  t.mock.timers.tick(HISTORY_MERGE_WINDOW_MS)
   unlinkTasks(scope, { from: a, to: b })
   assert.deepEqual(getTask(scope, b).blockers, [])
   const last = getTask(scope, b).activity.at(-1)
   assert.deepEqual([last?.field, last?.from, last?.to], ['blocked by', a, null])
   assert.throws(() => unlinkTasks(scope, { from: a, to: b }), /TASK-1 blocks TASK-2 is not recorded/)
+})
+
+test('within the history window, two links keep two entries and a link undone leaves none', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-03-02T09:00:00.000Z') })
+  const scope = makeScope()
+  const [a, b, c] = await tasks(scope, 3)
+  linkTasks(scope, { from: a, to: c })
+  linkTasks(scope, { from: b, to: c })
+  const linked = (key: string) =>
+    getTask(scope, key)
+      .activity.filter((entry) => entry.kind === 'field')
+      .map((entry) => [entry.field, entry.from, entry.to])
+  assert.deepEqual(linked(c), [
+    ['blocked by', null, a],
+    ['blocked by', null, b],
+  ])
+  t.mock.timers.tick(60_000)
+  unlinkTasks(scope, { from: b, to: c })
+  assert.deepEqual(linked(c), [['blocked by', null, a]])
+  assert.deepEqual(linked(b), [])
 })
 
 test('each relation type shows on both tasks under its own name, and only blocks holds a task back', async () => {

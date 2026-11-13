@@ -33,7 +33,16 @@ export type FieldFilterInput<T> = FieldFilterList<T> | T
 export type FieldFilterList<T> = FieldFilter<T> | T[]
 
 /** The fields of a saved view's filter that are a `FieldFilter`. */
-export const VIEW_FIELD_FILTER_KEYS = ['status', 'assignee', 'type', 'priority', 'label', 'version', 'parent'] as const
+export const VIEW_FIELD_FILTER_KEYS = [
+  'status',
+  'assignee',
+  'type',
+  'priority',
+  'label',
+  'version',
+  'milestone',
+  'parent',
+] as const
 
 /** Whether `value` is the object form, rather than a plain list or a single value. */
 export function isFieldFilter(value: unknown): value is FieldFilter<unknown> {

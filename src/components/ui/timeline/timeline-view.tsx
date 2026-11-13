@@ -1,4 +1,15 @@
-import { type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  type KeyboardEvent,
+  memo,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 
 import { ScrollArea } from '@/components/ui/layout/scroll-area'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '../resizable'
@@ -14,11 +25,12 @@ import { changesForDrop, type DragSource, type DropTarget, type TimelineChange }
 import { TimelineGrid } from './timeline-grid'
 import { TimelineHeader } from './timeline-header'
 import { TimelineLinks } from './timeline-links'
-import { moveAfterBlockers, type TimelineLink } from './timeline-links-model'
+import { latestBlockerEnds, moveAfterBlockers, type TimelineLink } from './timeline-links-model'
+import { type TimelineMilestone, TimelineMilestoneBar, TimelineMilestoneCell } from './timeline-milestone-row'
 import {
-  backlogTasks,
   CREATE_ROW_HEIGHT,
   childSpans,
+  type DropZone,
   dropZone,
   isScheduled,
   rowHeights,
@@ -39,6 +51,7 @@ import {
   scaleRange,
   today,
   toDay,
+  widenRange,
   zoomLabel,
 } from './timeline-scale'
 import { scaleMenuEntries, TimelineToolbar } from './timeline-toolbar'
@@ -46,7 +59,7 @@ import { TimelineTrack } from './timeline-track'
 import { type TimelineVersionMarker, TimelineVersionMarkers } from './timeline-version-markers'
 import { type DragSession, useTimelineDrag } from './use-timeline-drag'
 import { useTimelineLinking } from './use-timeline-linking'
-import { useTimelineZoom } from './use-timeline-zoom'
+import { isSidewaysWheel, useTimelineZoom } from './use-timeline-zoom'
 
 const TREE_WIDTH = 380
 const HEADER_HEIGHT = 48
@@ -55,32 +68,63 @@ const EMPTY_SCALE_ROOM = 64
 const ZOOM_STEP = 1.5
 
 export interface TimelineViewProps {
+  /**
+   * The tree's tasks, drawn as rows beside their lanes on the scale. The rows
+   * are memoised on each task object, so pass an unchanged task as the same
+   * object across updates; a fresh copy re-renders its row.
+   */
   tasks: TimelineTask[]
   /**
-   * A task typed into a create row: top-level (`parent: null`) or a subtask.
-   * It starts unscheduled. A rejection keeps the typed text.
+   * The backlog's tasks, in backlog order: the tasks that are not on the
+   * timeline. No task is in both lists. Keep unchanged tasks the same objects,
+   * as for `tasks`.
    */
-  onCreate: (input: { summary: string; parent: string | null }) => Promise<unknown> | unknown
-  /** A schedule, unschedule or move made by dragging, drawing, resizing or a menu. */
+  backlog: TimelineTask[]
+  /**
+   * The milestone the tree holds, when the timeline shows one: the first row,
+   * with its span as a bar, and its name labels the backlog's drop hint and the
+   * menus' Add to and Remove from. It leaves the scale's range and zoom alone.
+   */
+  milestone?: TimelineMilestone
+  /**
+   * A task typed into a create row: in the tree (top-level with `parent: null`,
+   * or a subtask) or in the backlog. A rejection keeps the typed text.
+   */
+  onCreate: (input: { summary: string; parent: string | null; list: 'tree' | 'backlog' }) => Promise<unknown> | unknown
+  /**
+   * A schedule, unschedule or move made by dragging, drawing, resizing or a
+   * menu, and a task joining the tree from the backlog or leaving it.
+   */
   onChange: (change: TimelineChange) => void
   onOpen: (key: string) => void
   /** Delete was asked for (Delete key or menu); confirming is the caller's. */
   onDelete: (key: string) => void
   /**
-   * A task's context menu. The timeline sets Add subtask, Schedule, Move and
-   * Unschedule itself, and routes Delete through `onDelete`.
+   * A task's context menu, called when it opens. The timeline sets Add subtask,
+   * Schedule, Move and Unschedule itself, and routes Delete through `onDelete`.
    */
   menuFor: (task: TimelineTask) => TaskMenuProps
   /** Remembers the zoom level in this browser under this key. */
   storageKey?: string
-  /** Shown over the scale while no task has dates, e.g. a hint to drag one in. It lets drags and drawing through. */
-  emptyScale?: ReactNode
   /** Shown in the backlog while it holds no task. */
   emptyBacklog?: ReactNode
+  /**
+   * Shown in place of the tree and the scale, e.g. while there is no milestone
+   * to plan into. The backlog stays.
+   */
+  placeholder?: ReactNode
+  /**
+   * The page's own controls (e.g. a milestone picker), at the start of the
+   * row the zoom controls end; on a compact view, above the pane switch.
+   */
+  controls?: ReactNode
   /** The selected task, for a host that moves the selection itself (e.g. from a shortcut). Leave it out and the view keeps its own. */
   selectedKey?: string | null
   onSelectedKeyChange?: (key: string | null) => void
-  /** Dependencies between the tasks (`from` blocks `to`), drawn as arrows between scheduled bars. */
+  /**
+   * Dependencies between the tasks (`from` blocks `to`), drawn as arrows between
+   * scheduled bars. Like `tasks`, keep it the same array until it changes.
+   */
   links?: TimelineLink[]
   /**
    * A dependency drawn from a bar's end handle onto a task, or picked after the
@@ -124,26 +168,156 @@ interface DragView {
   shiftDays: number
 }
 
+const NO_LINKS: TimelineLink[] = []
+
+/**
+ * What the rows and the backlog report, by task key. The view makes one set
+ * whose functions never change identity and always call its latest code, so a
+ * memoised row re-renders only when what it draws changes.
+ */
+interface RowHandlers {
+  /** A task's menu; called when the menu opens. */
+  menu: (task: TimelineTask) => TaskMenuProps
+  dragStart: (key: string, source: DragSource, event: PointerEvent<HTMLElement>) => void
+  linkStart: (key: string, event: PointerEvent<HTMLElement>) => void
+  toggle: (key: string) => void
+  /** A press on a tree row or a backlog item: selects, or opens on a compact view. */
+  press: (key: string) => void
+  /** A press on a lane: always selects. */
+  select: (key: string) => void
+  open: (key: string) => void
+  schedule: (key: string, start: CalendarDate, end: CalendarDate) => void
+}
+
+interface TaskRowProps {
+  task: TimelineTask
+  depth: number
+  hasChildren: boolean
+  expanded: boolean
+  selected: boolean
+  dropZone: DropZone | null
+  dragging: boolean
+  barShiftDays: number | undefined
+  barDetached: boolean
+  /** The rolled-up span of the task's subtasks, as two dates so an unchanged span compares equal. */
+  spanStart: CalendarDate | undefined
+  spanEnd: CalendarDate | undefined
+  showTree: boolean
+  showScale: boolean
+  origin: number
+  pxPerDay: number
+  scaleWidth: number
+  compact: boolean
+  canLink: boolean
+  handlers: RowHandlers
+}
+
+/**
+ * One task's row: its cell in the tree and its lane on the scale. Memoised, so a
+ * change of selection, drop target or drag re-renders only the rows it touches,
+ * and its menu is built when it opens.
+ */
+const TaskRow = memo(function TaskRow({
+  task,
+  depth,
+  hasChildren,
+  expanded,
+  selected,
+  dropZone,
+  dragging,
+  barShiftDays,
+  barDetached,
+  spanStart,
+  spanEnd,
+  showTree,
+  showScale,
+  origin,
+  pxPerDay,
+  scaleWidth,
+  compact,
+  canLink,
+  handlers,
+}: TaskRowProps) {
+  const { key } = task
+  const menu = () => handlers.menu(task)
+  return (
+    <div data-task-key={key} className='relative flex border-b border-border/50' style={{ height: TASK_ROW_HEIGHT }}>
+      {showTree ? (
+        <div className={treeCellClass(showScale)} style={treeCellStyle(showScale)}>
+          <TaskTreeRow
+            task={task}
+            depth={depth}
+            hasChildren={hasChildren}
+            expanded={expanded}
+            selected={selected}
+            dropZone={dropZone}
+            dragging={dragging}
+            menu={menu}
+            onDragStart={(event) => handlers.dragStart(key, 'row', event)}
+            onToggle={() => handlers.toggle(key)}
+            onSelect={() => handlers.press(key)}
+            onOpen={() => handlers.open(key)}
+          />
+        </div>
+      ) : null}
+      {showScale ? (
+        <TimelineTrack
+          task={task}
+          origin={origin}
+          pxPerDay={pxPerDay}
+          width={scaleWidth}
+          selected={selected}
+          childSpan={spanStart && spanEnd ? { start: spanStart, end: spanEnd } : undefined}
+          barShiftDays={barShiftDays}
+          barDetached={barDetached}
+          menu={menu}
+          onBarDragStart={(event) => handlers.dragStart(key, 'bar', event)}
+          onBarLinkStart={canLink ? (event) => handlers.linkStart(key, event) : undefined}
+          compact={compact}
+          onSchedule={(start, end) => handlers.schedule(key, start, end)}
+          onSelect={() => handlers.select(key)}
+          onOpen={() => handlers.open(key)}
+        />
+      ) : null}
+    </div>
+  )
+})
+
+/** The tree column: pinned beside the scale when both show, the full width when it shows alone. */
+function treeCellClass(showScale: boolean): string {
+  return cn('shrink-0 bg-background', showScale && 'sticky left-0 z-10 border-r')
+}
+
+function treeCellStyle(showScale: boolean) {
+  return { width: showScale ? TREE_WIDTH : '100%' }
+}
+
 /**
  * The timeline page's whole surface: the task tree on the left, each task's
  * lane on a zoomable time scale on the right with the dependencies between
- * tasks drawn as arrows, and the backlog below, in a resizable split. Data in,
- * changes out — it holds only view state (zoom, scroll, expanded rows,
- * selection, the pane shown, the drag or link in progress).
+ * tasks drawn as arrows and the milestone shown as the first row, and the
+ * backlog below, in a resizable split. A task dragged (or sent by its menu) from the
+ * backlog onto the tree or the scale joins the tree's list, and one dragged
+ * from the tree to the backlog leaves it. Data in, changes out — it holds only
+ * view state (zoom, scroll, expanded rows, selection, the pane shown, the drag
+ * or link in progress).
  */
 export function TimelineView({
   tasks,
+  backlog,
+  milestone,
   onCreate,
   onChange,
   onOpen,
   onDelete,
   menuFor,
   storageKey,
-  emptyScale,
   emptyBacklog,
+  placeholder,
+  controls,
   selectedKey,
   onSelectedKeyChange,
-  links = [],
+  links = NO_LINKS,
   onLink,
   onLinkClick,
   linkMenu,
@@ -170,10 +344,16 @@ export function TimelineView({
   const treeWidth = showTree && showScale ? TREE_WIDTH : 0
 
   const now = today()
-  const range = useMemo(
-    () => scaleRange(tasks.flatMap((t) => (isScheduled(t) ? [t.startDate, t.endDate] : [])), now),
-    [tasks, now],
-  )
+  // The scale spans the dated tasks of both lists and only ever widens, so
+  // another list (another milestone's tasks, say) never narrows or moves it.
+  // Writing the ref while rendering is safe: the union only grows, so a render
+  // React discards leaves at most a wider scale that a later one would keep.
+  const widest = useRef<{ from: number; to: number } | null>(null)
+  const range = useMemo(() => {
+    const dates = [...tasks, ...backlog].flatMap((t) => (isScheduled(t) ? [t.startDate, t.endDate] : []))
+    widest.current = widenRange(widest.current, scaleRange(dates, now))
+    return widest.current
+  }, [tasks, backlog, now])
   const zoom = useTimelineZoom({ scrollerRef, gutter: treeWidth, origin: range.from, storageKey: storageKey && `${storageKey}:zoom` })
   const { pxPerDay } = zoom
   const scaleWidth = showScale ? (range.to - range.from) * pxPerDay : 0
@@ -181,12 +361,14 @@ export function TimelineView({
   const expanded = useMemo(() => new Set(tasks.map((t) => t.key).filter((k) => !collapsed.has(k))), [tasks, collapsed])
   const rows = useMemo(() => visibleRows(tasks, expanded, addingUnder), [tasks, expanded, addingUnder])
   const spans = useMemo(() => childSpans(tasks), [tasks])
-  const backlog = useMemo(() => backlogTasks(tasks), [tasks])
+  const inBacklog = useMemo(() => new Set(backlog.map((task) => task.key)), [backlog])
 
   // Only the rows in view are rendered; spacers of the same height stand in for the rest.
   const heights = useMemo(() => rowHeights(rows), [rows])
   const tops = useMemo(() => rowTops(rows), [rows])
   const rowsHeight = useMemo(() => heights.reduce((sum, height) => sum + height, 0), [heights])
+  // The task rows start below the header and, when a milestone is shown, its row.
+  const rowsTop = HEADER_HEIGHT + (milestone ? TASK_ROW_HEIGHT : 0)
   const topSpacer = useRef<HTMLDivElement | null>(null)
   const windowed = useWindowedRows({ count: rows.length, rowHeight: heights, listRef: topSpacer, scrollerRef, stickyTop: HEADER_HEIGHT })
   const scrollToIndex = useRef(windowed.scrollToIndex)
@@ -230,6 +412,23 @@ export function TimelineView({
     }
   }, [zoom, now, showScale])
 
+  // A sideways wheel, trackpad swipe or Shift + wheel over the tree is not a
+  // scroll of the scale: only the scale area scrolls the scale sideways, and the tree stays put.
+  useEffect(() => {
+    const scroller = scrollerRef.current
+    if (!scroller || treeWidth === 0) {
+      return
+    }
+    const onWheel = (event: WheelEvent) => {
+      const overTree = event.clientX - scroller.getBoundingClientRect().left < treeWidth
+      if (overTree && isSidewaysWheel(event)) {
+        event.preventDefault()
+      }
+    }
+    scroller.addEventListener('wheel', onWheel, { passive: false })
+    return () => scroller.removeEventListener('wheel', onWheel)
+  }, [treeWidth])
+
   const linkLayerRef = useRef<HTMLDivElement | null>(null)
   const { linking, startDrag: startLink, startPick } = useTimelineLinking({ layerRef: linkLayerRef, onLink })
 
@@ -245,12 +444,17 @@ export function TimelineView({
     }
   }
 
+  const blockerEnds = useMemo(() => latestBlockerEnds(tasks, links), [tasks, links])
   const menuOf = (task: TimelineTask): TaskMenuProps => {
-    const after = moveAfterBlockers(task, tasks, links)
+    const after = moveAfterBlockers(task, blockerEnds)
     const reschedule = (start: number, end: number) => onChange({ type: 'schedule', key: task.key, start: fromDay(start), end: fromDay(end) })
+    // A backlog item has no row in the tree for a subtask's create row to open under.
+    const listed = inBacklog.has(task.key) ? 'backlog' : 'tree'
     return {
       ...menuFor(task),
-      onAddSubtask: () => addSubtask(task.key),
+      addTo: milestone && listed === 'backlog' ? { name: milestone.name, onSelect: () => onChange({ type: 'join', key: task.key }) } : undefined,
+      removeFrom: milestone && listed === 'tree' ? { name: milestone.name, onSelect: () => onChange({ type: 'leave', key: task.key }) } : undefined,
+      onAddSubtask: listed === 'tree' ? () => addSubtask(task.key) : undefined,
       onSchedule: isScheduled(task) ? undefined : () => reschedule(now, now + DEFAULT_SPAN_DAYS - 1),
       onMoveBy: isScheduled(task) ? (days) => reschedule(toDay(task.startDate) + days, toDay(task.endDate) + days) : undefined,
       onUnschedule: isScheduled(task) ? () => onChange({ type: 'unschedule', key: task.key }) : undefined,
@@ -352,9 +556,13 @@ export function TimelineView({
       case 'backlog':
         return { kind: 'backlog' }
       case 'scale': {
-        const x = pointer.x - box.left - treeWidth
-        if (!showScale || x < 0 || pointer.y < box.top + HEADER_HEIGHT) {
+        if (pointer.y < box.top + HEADER_HEIGHT) {
           return null
+        }
+        // Past the rows, the tree column is the place to join the tree at its end; the rest is the scale.
+        const x = pointer.x - box.left - treeWidth
+        if (!showScale || x < 0) {
+          return showTree ? { kind: 'tree-end' } : null
         }
         return { kind: 'scale', day: range.from + Math.floor((element.scrollLeft + x) / pxPerDay) }
       }
@@ -375,16 +583,46 @@ export function TimelineView({
     onDrop: (dropped) => {
       const { target, shiftDays } = viewOf(dropped)
       setDragView({ target: null, shiftDays: 0 })
-      for (const change of changesForDrop({ tasks, key: dropped.key, source: dropped.source, target, shiftDays })) {
+      for (const change of changesForDrop({ tasks, backlog, key: dropped.key, source: dropped.source, target, shiftDays })) {
         onChange(change)
       }
     },
   })
-  const dragStarter = (key: string, source: DragSource) => (event: PointerEvent<HTMLElement>) => {
-    setSelected(key)
-    startDrag(key, source, event)
-  }
   const drag = session ? { key: session.key, source: session.source, ...dragView } : null
+
+  // The rows' handlers call this render's code through a ref, so the set handed to the rows never changes.
+  const current: RowHandlers = {
+    menu: menuOf,
+    dragStart: (key, source, event) => {
+      setSelected(key)
+      startDrag(key, source, event)
+    },
+    linkStart: startLink,
+    toggle,
+    press,
+    select,
+    open: onOpen,
+    schedule: (key, start, end) => onChange({ type: 'schedule', key, start, end }),
+  }
+  const live = useRef(current)
+  live.current = current
+  const handlers = useMemo<RowHandlers>(
+    () => ({
+      menu: (task) => live.current.menu(task),
+      dragStart: (key, source, event) => live.current.dragStart(key, source, event),
+      linkStart: (key, event) => live.current.linkStart(key, event),
+      toggle: (key) => live.current.toggle(key),
+      press: (key) => live.current.press(key),
+      select: (key) => live.current.select(key),
+      open: (key) => live.current.open(key),
+      schedule: (key, start, end) => live.current.schedule(key, start, end),
+    }),
+    [],
+  )
+  const onBacklogDragStart = useCallback(
+    (key: string, event: PointerEvent<HTMLElement>) => handlers.dragStart(key, 'backlog', event),
+    [handlers],
+  )
 
   // The draft runs to the task under the pointer when that task has a bar in view, else to the pointer.
   const draftTarget =
@@ -393,22 +631,25 @@ export function TimelineView({
       : (linking?.point ?? null)
   const draft = linking && draftTarget ? { from: linking.from, to: draftTarget } : null
 
-  const dragged = drag ? tasks.find((t) => t.key === drag.key) : undefined
+  const dragged = drag ? (drag.source === 'backlog' ? backlog : tasks).find((t) => t.key === drag.key) : undefined
   const barOffScale = drag?.source === 'bar' && drag.target !== null && drag.target.kind !== 'scale'
   const backlogTarget: BacklogDropTarget | null =
     drag?.target?.kind === 'backlog-item' ? { key: drag.target.key, zone: drag.target.zone } : null
+  const overBacklog = drag?.target?.kind === 'backlog' || drag?.target?.kind === 'backlog-item'
+  // Where the dragged task would start: a schedule within the tree, or the dates it joins with from the backlog.
   const scaleMarker =
     drag && dragged && drag.source !== 'bar' && drag.target?.kind === 'scale'
-      ? changesForDrop({ tasks, key: drag.key, source: drag.source, target: drag.target }).find((c) => c.type === 'schedule')
+      ? changesForDrop({ tasks, backlog, key: drag.key, source: drag.source, target: drag.target }).flatMap((c) =>
+          (c.type === 'schedule' || c.type === 'join') && c.start && c.end ? [{ start: c.start, end: c.end }] : [],
+        )[0]
       : undefined
 
   // The header and grid draw only the visible days, plus a margin for smooth scrolling.
   const firstDay = range.from + Math.floor(zoom.viewport.left / pxPerDay) - 14
   const lastDay = range.from + Math.ceil((zoom.viewport.left + zoom.viewport.width) / pxPerDay) + 14
 
-  // The tree column: pinned beside the scale when both show, the full width when it shows alone.
-  const treeCell = cn('shrink-0 bg-background', showScale && 'sticky left-0 z-10 border-r')
-  const treeStyle = { width: showScale ? TREE_WIDTH : '100%' }
+  const treeCell = treeCellClass(showScale)
+  const treeStyle = treeCellStyle(showScale)
 
   // The scroller itself is the tree: it takes the focus, the arrow keys and the Menu key.
   const scrollerProps = {
@@ -422,16 +663,15 @@ export function TimelineView({
 
   const scaleArea = (
     <>
-      {showScale && emptyScale && !tasks.some(isScheduled) ? (
-        // Over the scale, not in it: it stays put while the scale scrolls, and lets pointers through.
-        <div className='pointer-events-none absolute inset-y-0 right-0 z-40 flex items-center justify-center' style={{ left: treeWidth, top: HEADER_HEIGHT }}>
-          {emptyScale}
-        </div>
-      ) : null}
       <ScrollArea
         ref={scrollerRef}
         scrollbars='both'
-        className='h-full'
+        className={cn(
+          'h-full',
+          // Beside the tree, the sideways scrollbar runs under the scale only (TREE_WIDTH in), as that is all it moves;
+          // `!` outranks the inline inset the scrollbar is drawn with.
+          treeWidth > 0 && '[&>[data-slot=scroll-area-scrollbar][data-orientation=horizontal]]:start-[380px]!',
+        )}
         innerClassName='min-h-full'
         viewportProps={scrollerProps}
         viewportClassName={cn(
@@ -484,7 +724,7 @@ export function TimelineView({
               {/* The empty scale below the rows: its menu creates a task starting on the day pressed. */}
               <ItemContextMenu
                 entries={scaleMenu(true)}
-                render={<div data-empty-scale='' style={{ top: HEADER_HEIGHT + rowsHeight, left: treeWidth, width: scaleWidth }} />}
+                render={<div data-empty-scale='' style={{ top: rowsTop + rowsHeight, left: treeWidth, width: scaleWidth }} />}
                 className='absolute bottom-0'
               >
                 {null}
@@ -505,7 +745,7 @@ export function TimelineView({
               <div
                 ref={linkLayerRef}
                 className='pointer-events-none absolute z-[5]'
-                style={{ top: HEADER_HEIGHT, left: treeWidth, width: scaleWidth, height: rowsHeight }}
+                style={{ top: rowsTop, left: treeWidth, width: scaleWidth, height: rowsHeight }}
               >
                 <TimelineLinks
                   links={links}
@@ -523,50 +763,44 @@ export function TimelineView({
               </div>
             </>
           ) : null}
+          {milestone ? (
+            // The milestone's own row, above its tasks: its name beside the tree, its span as a bar on the scale.
+            <div data-milestone-row='' className='relative flex border-b border-border/50' style={{ height: TASK_ROW_HEIGHT }}>
+              {showTree ? (
+                <div className={treeCell} style={treeStyle}>
+                  <TimelineMilestoneCell milestone={milestone} />
+                </div>
+              ) : null}
+              {showScale ? <TimelineMilestoneBar milestone={milestone} origin={range.from} pxPerDay={pxPerDay} width={scaleWidth} standalone={!showTree} /> : null}
+            </div>
+          ) : null}
           <div ref={topSpacer} aria-hidden className='flex shrink-0' style={{ height: windowed.padTop }}>
             {treeWidth ? <div className={treeCell} style={treeStyle} /> : null}
           </div>
           {rows.slice(windowed.start, windowed.end).map((row) =>
             row.kind === 'task' ? (
-              <div key={row.task.key} data-task-key={row.task.key} className='relative flex border-b border-border/50' style={{ height: TASK_ROW_HEIGHT }}>
-                {showTree ? (
-                  <div className={treeCell} style={treeStyle}>
-                    <TaskTreeRow
-                      task={row.task}
-                      depth={row.depth}
-                      hasChildren={row.hasChildren}
-                      expanded={row.expanded}
-                      selected={row.task.key === selected}
-                      dropZone={drag?.target?.kind === 'row' && drag.target.key === row.task.key ? drag.target.zone : null}
-                      dragging={drag?.source === 'row' && drag.key === row.task.key}
-                      menu={menuOf(row.task)}
-                      onDragStart={dragStarter(row.task.key, 'row')}
-                      onToggle={() => toggle(row.task.key)}
-                      onSelect={() => press(row.task.key)}
-                      onOpen={() => onOpen(row.task.key)}
-                    />
-                  </div>
-                ) : null}
-                {showScale ? (
-                  <TimelineTrack
-                    task={row.task}
-                    origin={range.from}
-                    pxPerDay={pxPerDay}
-                    width={scaleWidth}
-                    selected={row.task.key === selected}
-                    childSpan={spans[row.task.key]}
-                    barShiftDays={drag?.source === 'bar' && drag.key === row.task.key ? drag.shiftDays : undefined}
-                    barDetached={barOffScale && drag?.key === row.task.key}
-                    menu={menuOf(row.task)}
-                    onBarDragStart={dragStarter(row.task.key, 'bar')}
-                    onBarLinkStart={onLink ? (event) => startLink(row.task.key, event) : undefined}
-                    compact={compact}
-                    onSchedule={(start: CalendarDate, end: CalendarDate) => onChange({ type: 'schedule', key: row.task.key, start, end })}
-                    onSelect={() => setSelected(row.task.key)}
-                    onOpen={() => onOpen(row.task.key)}
-                  />
-                ) : null}
-              </div>
+              <TaskRow
+                key={row.task.key}
+                task={row.task}
+                depth={row.depth}
+                hasChildren={row.hasChildren}
+                expanded={row.expanded}
+                selected={row.task.key === selected}
+                dropZone={drag?.target?.kind === 'row' && drag.target.key === row.task.key ? drag.target.zone : null}
+                dragging={drag?.source === 'row' && drag.key === row.task.key}
+                barShiftDays={drag?.source === 'bar' && drag.key === row.task.key ? drag.shiftDays : undefined}
+                barDetached={barOffScale && drag?.key === row.task.key}
+                spanStart={spans[row.task.key]?.start}
+                spanEnd={spans[row.task.key]?.end}
+                showTree={showTree}
+                showScale={showScale}
+                origin={range.from}
+                pxPerDay={pxPerDay}
+                scaleWidth={scaleWidth}
+                compact={compact}
+                canLink={onLink !== undefined}
+                handlers={handlers}
+              />
             ) : showTree ? (
               // Keyed on whether it was asked for, so "Add subtask" remounts the row already there open.
               <div
@@ -578,7 +812,7 @@ export function TimelineView({
                   <TaskInlineCreate
                     label={row.parentKey ? 'Add subtask' : 'Create task'}
                     defaultOpen={row.parentKey !== null && row.parentKey === addingUnder}
-                    onCreate={(summary) => onCreate({ summary, parent: row.parentKey })}
+                    onCreate={(summary) => onCreate({ summary, parent: row.parentKey, list: 'tree' })}
                     onClose={row.parentKey === addingUnder ? () => setAddingUnder(null) : undefined}
                     className={cn('h-8', row.parentKey && 'opacity-70 focus-within:opacity-100 hover:opacity-100')}
                   />
@@ -602,17 +836,29 @@ export function TimelineView({
   const backlogArea = (
     <BacklogList
       tasks={backlog}
+      description={milestone ? 'not in a milestone' : undefined}
       selectedKey={selected}
       draggingKey={drag?.source === 'backlog' ? drag.key : null}
-      receiving={drag !== null && drag.source !== 'backlog' && drag.target?.kind === 'backlog'}
+      receiving={drag !== null && drag.source !== 'backlog' && overBacklog}
+      dropText={milestone ? `Drop to take out of ${milestone.name}` : undefined}
       dropTarget={backlogTarget}
-      menuFor={menuOf}
-      onDragStart={(key, event) => dragStarter(key, 'backlog')(event)}
-      onSelect={press}
-      onOpen={onOpen}
-      onCreate={(summary) => onCreate({ summary, parent: null })}
+      menuFor={handlers.menu}
+      onDragStart={onBacklogDragStart}
+      onSelect={handlers.press}
+      onOpen={handlers.open}
+      onCreate={(summary) => onCreate({ summary, parent: null, list: 'backlog' })}
       empty={emptyBacklog}
     />
+  )
+  // With nothing to plan into, the placeholder stands where the tree and the
+  // scale would. The scale stays mounted under it (and under the backlog pane
+  // on a compact view): the zoom and the rows listen to its scroller, and that
+  // element must stay the same one for as long as the view lives.
+  const planArea = (
+    <>
+      <div className={cn('h-full', placeholder && 'hidden')}>{scaleArea}</div>
+      {placeholder ? <div className='flex h-full min-h-0 items-center justify-center overflow-auto'>{placeholder}</div> : null}
+    </>
   )
 
   const tools = (
@@ -625,7 +871,9 @@ export function TimelineView({
       onZoomOut={() => zoom.zoomBy(1 / ZOOM_STEP)}
       onFit={fit}
       onToday={() => zoom.scrollToDay(now)}
-    />
+    >
+      {compact ? null : controls}
+    </TimelineToolbar>
   )
   // Handed to the host, it leaves this layout (the App toolbar renders it); drawn here, it is the bar above the scale.
   const toolbar = renderToolbar ? renderToolbar(tools) : tools
@@ -635,16 +883,20 @@ export function TimelineView({
       <div className={cn('flex h-full min-h-0 flex-col', className)}>
         {compact ? (
           <>
+            {controls ? <div className='mx-2 mt-2 flex min-w-0 items-center'>{controls}</div> : null}
             <TimelinePaneSwitch value={pane} onValueChange={setPane} backlogCount={backlog.length} className='m-2 mb-1' />
-            {showScale ? toolbar : null}
-            <div className='relative min-h-0 flex-1'>{pane === 'backlog' ? backlogArea : scaleArea}</div>
+            {showScale && !placeholder ? toolbar : null}
+            <div className='relative min-h-0 flex-1'>
+              <div className={cn('h-full', pane === 'backlog' && 'hidden')}>{planArea}</div>
+              {pane === 'backlog' ? backlogArea : null}
+            </div>
           </>
         ) : (
           <>
             {toolbar}
             <ResizablePanelGroup orientation='vertical' className='min-h-0 flex-1'>
               <ResizablePanel defaultSize='68%' minSize='20%' className='relative'>
-                {scaleArea}
+                {planArea}
               </ResizablePanel>
               <ResizableHandle withHandle />
               <ResizablePanel defaultSize='32%' minSize='12%'>

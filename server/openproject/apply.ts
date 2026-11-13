@@ -395,8 +395,11 @@ function writeImport(scope: Scope, input: ImportInput): OpenProjectImportResult 
           before.id,
         )
         for (const field of changed) {
+          // The history keeps a description's whole text; `describe` clips it for conflict reports.
           const shown =
-            field === 'description' ? [null, null] : [describe(field, here, noKeys), describe(field, next, noKeys)]
+            field === 'description'
+              ? [here.description, next.description]
+              : [describe(field, here, noKeys), describe(field, next, noKeys)]
           record(scope, before.id, 'field', field, shown[0] ?? null, shown[1] ?? null)
         }
         changedIds.add(before.id)

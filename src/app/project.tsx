@@ -1,5 +1,5 @@
 // What every page of one project shares: the typed API, the project's
-// statuses, assignees, labels with their colours and versions (kept fresh by live events), a toast for
+// statuses, assignees, labels with their colours, versions and milestones (kept fresh by live events), a toast for
 // failures, a confirm dialog, and the task menu every task surface offers.
 
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react'
@@ -18,6 +18,7 @@ import {
 import { TaskAvatarsProvider } from '@/components/ui/tasks/task-assignee'
 import { TaskLabelColorsProvider } from '@/components/ui/tasks/task-label-chip'
 import type { TaskMenuProps } from '@/components/ui/tasks/task-menu'
+import type { Milestone } from '../../shared/milestones'
 import type { LabelColor, ProjectLabel } from '../../shared/settings'
 import type { AssigneeOption, PersonAvatar, Priority, Status, TaskSummary } from '../../shared/types'
 import type { Version } from '../../shared/versions'
@@ -49,6 +50,8 @@ export interface ProjectContextValue {
   labelsLoaded: boolean
   /** Every version of the project, archived ones too, with their task counts. */
   versions: Version[]
+  /** Every milestone of the project in the listing order (open ones by target date, then archived), with their task counts. */
+  milestones: Milestone[]
   /** Report a failed action to the person. */
   fail: (error: unknown) => void
   confirm: (request: ConfirmRequest) => void
@@ -57,7 +60,7 @@ export interface ProjectContextValue {
 }
 
 /** What the task menu needs to know about a task. */
-export type MenuTask = Pick<TaskSummary, 'key' | 'priority' | 'assignee' | 'childCount' | 'parentKey'> & {
+export type MenuTask = Pick<TaskSummary, 'key' | 'type' | 'priority' | 'assignee' | 'childCount' | 'parentKey'> & {
   status: Pick<Status, 'id'>
 }
 
@@ -101,6 +104,7 @@ export function ProjectProvider({
   const [projectLabels, setProjectLabels] = useState<ProjectLabel[]>([])
   const [labelsLoaded, setLabelsLoaded] = useState(false)
   const [versions, setVersions] = useState<Version[]>([])
+  const [milestones, setMilestones] = useState<Milestone[]>([])
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmRequest | null>(null)
   const [confirming, setConfirming] = useState(false)
 
@@ -110,11 +114,12 @@ export function ProjectProvider({
 
   const loadMeta = useCallback(async () => {
     try {
-      const [nextStatuses, nextAssignees, nextLabels, nextVersions] = await Promise.all([
+      const [nextStatuses, nextAssignees, nextLabels, nextVersions, nextMilestones] = await Promise.all([
         api.status_list({}),
         api.assignee_list({}),
         api.label_overview({}),
         api.version_list({}),
+        api.milestone_list({}),
       ])
       // An unchanged list keeps its identity, so `menuFor` and every memoised row and card built on it stay put.
       setStatuses(unlessUnchanged(nextStatuses))
@@ -122,6 +127,7 @@ export function ProjectProvider({
       setProjectLabels(unlessUnchanged(nextLabels.labels))
       setLabelsLoaded(true)
       setVersions(unlessUnchanged(nextVersions.versions))
+      setMilestones(unlessUnchanged(nextMilestones.milestones))
     } catch (error) {
       fail(error)
     }
@@ -145,6 +151,7 @@ export function ProjectProvider({
   const menuFor = useCallback(
     (task: MenuTask, extra: Partial<TaskMenuProps> = {}): TaskMenuProps => ({
       statusId: task.status.id,
+      type: task.type,
       priority: task.priority,
       assigneeName: task.assignee?.name ?? null,
       statuses,
@@ -157,6 +164,7 @@ export function ProjectProvider({
       onCopyKey: () => void copyText(task.key, task.key),
       onCopyLink: () => void copyText(absoluteLink(taskHref(task.key)), `link to ${task.key}`),
       onStatusChange: (statusId) => void api.task_change_status({ key: task.key, status: statusId }).catch(fail),
+      onTypeChange: (type) => void api.task_update({ key: task.key, type }).catch(fail),
       onPriorityChange: (priority: Priority) => void api.task_update({ key: task.key, priority }).catch(fail),
       onAssigneeChange: (assignee) =>
         void api.task_update({ key: task.key, assignee: assigneeInput(assignee) }).catch(fail),
@@ -205,6 +213,7 @@ export function ProjectProvider({
       projectLabels,
       labelsLoaded,
       versions,
+      milestones,
       fail,
       confirm,
       menuFor,
@@ -219,6 +228,7 @@ export function ProjectProvider({
       projectLabels,
       labelsLoaded,
       versions,
+      milestones,
       fail,
       confirm,
       menuFor,

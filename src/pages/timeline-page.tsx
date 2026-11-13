@@ -1,21 +1,24 @@
-// The Timeline page: the project's tasks as a tree beside a zoomable time
-// scale, with the backlog of unscheduled tasks below. The surface is the kit's
-// TimelineView; this page feeds it tasks, turns what it reports into task
-// actions, and refreshes on every change — this tab's, another tab's or an
-// agent's.
+// The Timeline page: one milestone at a time, its tasks as a tree beside a
+// zoomable time scale, and the backlog of tasks in no milestone below. The
+// surface is the kit's TimelineView; this page picks the milestone, feeds the
+// view the two lists, and turns what it reports into task actions. Dragging a
+// task from the backlog onto the timeline puts it into the milestone shown;
+// dragging one back takes it out with its dates kept.
 
-import { AppToolbar } from '@opencroft/client/app'
 import { ExternalLink, Unlink } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 
-import { TaskManagerToolbar } from '@/components/ui/navigation/task-manager-toolbar'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { TaskManagerEmpty } from '@/components/ui/states/task-manager-empty'
 import { TaskManagerError } from '@/components/ui/states/task-manager-error'
 import { TaskManagerSkeleton } from '@/components/ui/states/task-manager-skeleton'
 import type { ItemMenuEntries } from '@/components/ui/tasks/item-menu'
+import { TaskMilestoneEditor, type TaskMilestoneInput } from '@/components/ui/tasks/task-milestones-manager'
 import type { TimelineChange } from '@/components/ui/timeline/timeline-drop'
 import type { TimelineLink } from '@/components/ui/timeline/timeline-links-model'
-import type { TimelineTask } from '@/components/ui/timeline/timeline-model'
+import { TimelineMilestonePicker } from '@/components/ui/timeline/timeline-milestone-picker'
+import type { TimelineMilestone } from '@/components/ui/timeline/timeline-milestone-row'
+import type { TaskPlacement, TimelineTask } from '@/components/ui/timeline/timeline-model'
 import type { TimelineVersionMarker } from '@/components/ui/timeline/timeline-version-markers'
 import { TimelineView } from '@/components/ui/timeline/timeline-view'
 import type { TaskSummary } from '../../shared/types'
@@ -23,16 +26,18 @@ import { useProject } from '../app/project'
 import { usePageShortcuts } from '../app/shortcuts'
 import { openTask } from '../app/task-opener'
 import { errorMessage } from '../lib/api'
-import { useTasksLive } from '../lib/live'
+import { toTaskMilestone } from '../lib/milestones'
 import { usePhoneWidth } from '../lib/phone-width'
 import { currentLocation, hrefFor, navigate } from '../lib/router'
-import { listAllTasks } from '../lib/task-list'
+import { useTimelineLists } from './timeline-lists'
+import { useTimelineMilestone } from './timeline-milestone'
 
 /** A task as the timeline draws it. */
 function toTimelineTask(task: TaskSummary): TimelineTask {
   return {
     key: task.key,
     summary: task.summary,
+    type: task.type,
     parentKey: task.parentKey,
     rank: task.rank,
     startDate: task.startDate,
@@ -54,7 +59,7 @@ function withChange(task: TaskSummary, change: TimelineChange): TaskSummary {
 }
 
 export function TimelinePage() {
-  const { api, instanceId, projectKey, versions, fail, menuFor, confirm } = useProject()
+  const { api, projectKey, versions, milestones, fail, menuFor, confirm } = useProject()
   // A marker for each planned version at its target date and each released one at its release date; archived ones are not drawn.
   const versionMarkers = useMemo<TimelineVersionMarker[]>(
     () =>
@@ -67,89 +72,130 @@ export function TimelinePage() {
       }),
     [versions],
   )
-  const [tasks, setTasks] = useState<TaskSummary[] | null>(null)
-  const [loadError, setLoadError] = useState<string | null>(null)
+  const shown = useTimelineMilestone()
+  const { lists, loadError, reload, patch } = useTimelineLists(shown.milestone, shown.ready)
+  // The milestone the lists on screen belong to, as it is now (a rename or new dates show at once).
+  const listed = lists?.milestoneId == null ? null : (milestones.find((m) => m.id === lists.milestoneId) ?? null)
   const [changeError, setChangeError] = useState<string | null>(null)
-  const requestId = useRef(0)
-  const loaded = useRef(false)
+  const [creatingMilestone, setCreatingMilestone] = useState(false)
   const { selectedKey, select } = usePageShortcuts()
   const rootRef = useRef<HTMLDivElement>(null)
   // At phone width the timeline shows one pane at a time and a tap opens a task.
   const compact = usePhoneWidth(rootRef)
 
-  const load = useCallback(async () => {
-    const id = ++requestId.current
-    try {
-      const result = await listAllTasks(api)
-      if (id === requestId.current) {
-        loaded.current = true
-        setTasks(result)
-        setLoadError(null)
+  const byKey = useMemo(
+    () => new Map([...(lists?.tree ?? []), ...(lists?.backlog ?? [])].map((task) => [task.key, task])),
+    [lists],
+  )
+  // One timeline task per task object: a task a refresh kept (`keepUnchanged`)
+  // or a change left alone keeps its timeline object too, so its row skips its render.
+  const timelineOf = useRef(new WeakMap<TaskSummary, TimelineTask>())
+  const toTimeline = useCallback((list: TaskSummary[]) => {
+    return list.map((task) => {
+      const known = timelineOf.current.get(task)
+      if (known) {
+        return known
       }
-    } catch (error) {
-      if (id !== requestId.current) {
-        return
-      }
-      // Before the first load the page has nothing to show but the error;
-      // after it, a failed refresh keeps what is on screen.
-      if (loaded.current) {
-        fail(error)
-      } else {
-        setLoadError(errorMessage(error))
-      }
-    }
-  }, [api, fail])
+      const made = toTimelineTask(task)
+      timelineOf.current.set(task, made)
+      return made
+    })
+  }, [])
+  const treeTasks = useMemo(() => toTimeline(lists?.tree ?? []), [lists?.tree, toTimeline])
+  const backlogTasks = useMemo(() => toTimeline(lists?.backlog ?? []), [lists?.backlog, toTimeline])
 
-  useEffect(() => {
-    void load()
-  }, [load])
-  useTasksLive(instanceId, () => void load())
-
-  const byKey = useMemo(() => new Map((tasks ?? []).map((task) => [task.key, task])), [tasks])
-  const timelineTasks = useMemo(() => (tasks ?? []).map(toTimelineTask), [tasks])
+  const listedName = listed?.name
+  const listedStart = listed?.startDate
+  const listedTarget = listed?.targetDate
+  const timelineMilestone = useMemo<TimelineMilestone | undefined>(
+    () =>
+      listedName === undefined ? undefined : { name: listedName, startDate: listedStart, targetDate: listedTarget },
+    [listedName, listedStart, listedTarget],
+  )
+  const kitMilestones = useMemo(() => milestones.map(toTaskMilestone), [milestones])
+  const openKitMilestones = useMemo(() => kitMilestones.filter((m) => m.state === 'open'), [kitMilestones])
+  const menuMilestones = useMemo(() => openKitMilestones.map(({ id, name }) => ({ id, name })), [openKitMilestones])
 
   // A refused change is shown above the timeline, and the page reloads, which
   // puts back whatever the server holds.
   const recover = useCallback(
     (error: unknown) => {
       setChangeError(errorMessage(error))
-      void load()
+      reload()
     },
-    [load],
+    [reload],
+  )
+
+  // Into a milestone (an id) or out of every one (null): one write, which takes the subtasks along and dates
+  // the tasks entering; then the place in the list it was dropped on, when it was dropped on one.
+  const moveToMilestone = useCallback(
+    async (
+      key: string,
+      milestone: number | null,
+      rest: { startDate?: string; endDate?: string; placement?: TaskPlacement } = {},
+    ) => {
+      const { placement, ...dates } = rest
+      await api.task_update({ key, milestone, ...dates })
+      if (placement) {
+        await api.task_move({ key, ...placement })
+      }
+    },
+    [api],
   )
 
   const onChange = useCallback(
     (change: TimelineChange) => {
-      // Dates show at once; the live refresh then confirms them. A move waits
-      // for the server, since only the server computes rank.
-      setTasks(
-        (current) => current?.map((task) => (task.key === change.key ? withChange(task, change) : task)) ?? current,
-      )
+      // Dates show at once; the live refresh then confirms them. A move, or a
+      // task joining or leaving the milestone, waits for the server, since only
+      // the server computes rank and the dates of a task entering a milestone.
+      if (change.type === 'schedule' || change.type === 'unschedule') {
+        patch(change.key, (task) => withChange(task, change))
+      }
       const request =
         change.type === 'schedule'
           ? api.task_update({ key: change.key, startDate: change.start, endDate: change.end })
           : change.type === 'unschedule'
             ? api.task_update({ key: change.key, startDate: null, endDate: null })
-            : api.task_move({ key: change.key, ...change.placement })
+            : change.type === 'move'
+              ? api.task_move({ key: change.key, ...change.placement })
+              : change.type === 'join'
+                ? lists?.milestoneId == null
+                  ? Promise.resolve()
+                  : moveToMilestone(change.key, lists.milestoneId, {
+                      startDate: change.start,
+                      endDate: change.end,
+                      placement: change.placement,
+                    })
+                : moveToMilestone(change.key, null, { placement: change.placement })
       request.catch(recover)
     },
-    [api, recover],
+    [api, lists?.milestoneId, moveToMilestone, patch, recover],
   )
 
-  // A refusal rejects: the create row shows why and keeps what was typed.
+  // A refusal rejects: the create row shows why and keeps what was typed. A
+  // task made in the tree goes into the milestone shown, which dates it.
   const onCreate = useCallback(
-    async ({ summary, parent }: { summary: string; parent: string | null }) => {
-      await api.task_create({ summary, parent })
+    async ({ summary, parent, list }: { summary: string; parent: string | null; list: 'tree' | 'backlog' }) => {
+      const milestone = list === 'tree' ? lists?.milestoneId : undefined
+      await api.task_create({ summary, parent, ...(milestone == null ? {} : { milestone }) })
     },
-    [api],
+    [api, lists?.milestoneId],
   )
 
   const menuForTask = useCallback(
     (task: TimelineTask) => {
       const summary = byKey.get(task.key)
-      return summary ? menuFor(summary) : {}
+      if (!summary) {
+        return {}
+      }
+      const current = summary.milestone ? milestones.find((m) => m.name === summary.milestone?.name) : undefined
+      return menuFor(summary, {
+        milestones: menuMilestones,
+        milestoneId: current ? String(current.id) : null,
+        onMilestoneChange: (id) => void moveToMilestone(task.key, id === null ? null : Number(id)).catch(recover),
+      })
     },
-    [byKey, menuFor],
+    [byKey, menuFor, menuMilestones, milestones, moveToMilestone, recover],
   )
 
   const onDelete = useCallback(
@@ -162,10 +208,10 @@ export function TimelinePage() {
     [byKey, menuFor],
   )
 
-  // Every blocker of every task, as the arrows the timeline draws.
+  // Every blocker of every task in the tree, as the arrows the timeline draws between their bars.
   const links = useMemo<TimelineLink[]>(
-    () => (tasks ?? []).flatMap((task) => task.blockers.map((blocker) => ({ from: blocker.key, to: task.key }))),
-    [tasks],
+    () => (lists?.tree ?? []).flatMap((task) => task.blockers.map((blocker) => ({ from: blocker.key, to: task.key }))),
+    [lists?.tree],
   )
 
   const onLink = useCallback(
@@ -210,11 +256,12 @@ export function TimelinePage() {
     [onLinkClick],
   )
 
-  // A task made from the empty scale opens with its summary ready to type over.
+  // A task made from the empty scale goes into the milestone shown on the dates drawn, and opens with its summary ready to type over.
   const onCreateOn = useCallback(
     (startDate: string, endDate: string) => {
+      const milestone = lists?.milestoneId
       api
-        .task_create({ summary: 'New task', startDate, endDate })
+        .task_create({ summary: 'New task', startDate, endDate, ...(milestone == null ? {} : { milestone }) })
         .then(({ result }) => {
           openTask(result.key)
           const here = currentLocation()
@@ -224,22 +271,44 @@ export function TimelinePage() {
         })
         .catch(fail)
     },
-    [api, fail],
+    [api, fail, lists?.milestoneId],
+  )
+
+  const { showCreated } = shown
+  const createMilestone = useCallback(
+    async (input: TaskMilestoneInput) => {
+      try {
+        const { result } = await api.milestone_create({ ...input, description: input.description ?? '' })
+        showCreated(result.name)
+      } catch (error) {
+        // The form shows the server's own words.
+        throw new Error(errorMessage(error))
+      }
+    },
+    [api, showCreated],
+  )
+  const openCreateMilestone = useCallback(() => setCreatingMilestone(true), [])
+
+  const controls = (
+    <TimelineMilestonePicker
+      milestones={openKitMilestones}
+      activeId={listed ? String(listed.id) : null}
+      onSelect={(id) => {
+        const picked = openKitMilestones.find((m) => m.id === id)
+        if (picked) {
+          shown.select(picked.name)
+        }
+      }}
+      onCreate={openCreateMilestone}
+    />
   )
 
   // The root is there from the first render, so its width is measured before the tasks arrive.
   return (
     <div ref={rootRef} className='flex min-h-0 flex-1 flex-col'>
-      {tasks === null ? (
+      {lists === null ? (
         loadError ? (
-          <TaskManagerError
-            title="Couldn't load the timeline"
-            message={loadError}
-            onRetry={() => {
-              setLoadError(null)
-              void load()
-            }}
-          />
+          <TaskManagerError title="Couldn't load the timeline" message={loadError} onRetry={reload} />
         ) : (
           <TaskManagerSkeleton page='timeline' />
         )
@@ -256,7 +325,13 @@ export function TimelinePage() {
           ) : null}
           <TimelineView
             className='min-h-0 flex-1'
-            tasks={timelineTasks}
+            tasks={treeTasks}
+            backlog={backlogTasks}
+            milestone={timelineMilestone}
+            controls={controls}
+            placeholder={
+              listed ? undefined : <TaskManagerEmpty kind='no-milestone' onCreateMilestone={openCreateMilestone} />
+            }
             onCreate={onCreate}
             onChange={onChange}
             onOpen={openTask}
@@ -272,17 +347,22 @@ export function TimelinePage() {
             onCreateOn={onCreateOn}
             compact={compact}
             storageKey={`tasks:${projectKey}:timeline`}
-            emptyScale={<TaskManagerEmpty kind='timeline-unscheduled' />}
             emptyBacklog={<TaskManagerEmpty kind='backlog' />}
-            // The zoom controls sit in the host's toolbar, not over the scale.
-            renderToolbar={(tools) => (
-              <AppToolbar>
-                <TaskManagerToolbar label='Timeline controls'>{tools}</TaskManagerToolbar>
-              </AppToolbar>
-            )}
           />
         </>
       )}
+      <Dialog open={creatingMilestone} onOpenChange={setCreatingMilestone}>
+        <DialogContent className='sm:max-w-md'>
+          {creatingMilestone ? (
+            <TaskMilestoneEditor
+              milestone={null}
+              milestones={kitMilestones}
+              onSubmit={createMilestone}
+              onClose={() => setCreatingMilestone(false)}
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

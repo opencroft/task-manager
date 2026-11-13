@@ -4,6 +4,7 @@ import type { PointerEvent } from 'react'
 import { TaskAssignee } from '@/components/ui/tasks/task-assignee'
 import { TaskContextMenu, type TaskMenuProps } from '@/components/ui/tasks/task-menu'
 import { TaskStatusBadge } from '@/components/ui/tasks/task-status-badge'
+import { TaskTypeIcon } from '@/components/ui/tasks/task-type-icon'
 import { cn } from '@/lib/utils'
 
 import { type DropZone, isScheduled, type TimelineTask } from './timeline-model'
@@ -21,7 +22,8 @@ export interface TaskTreeRowProps {
   dropZone?: DropZone | null
   /** True while this row is the one being dragged. */
   dragging?: boolean
-  menu: TaskMenuProps
+  /** Builds the task's menu; called when the menu opens, not on render. */
+  menu: () => TaskMenuProps
   /** Starts a drag of this row; the surrounding timeline runs it. */
   onDragStart?: (event: PointerEvent<HTMLElement>) => void
   onToggle: () => void
@@ -30,7 +32,7 @@ export interface TaskTreeRowProps {
 }
 
 /**
- * One task in the tree: expand toggle, key, summary, status and assignee. Its
+ * One task in the tree: expand toggle, type, key, summary, status and assignee. Its
  * accessible name also carries the task's dates, since the bars on the scale
  * are hidden from assistive tech.
  * Drag it onto another row to reorder (top or bottom edge) or to nest it
@@ -53,7 +55,7 @@ export function TaskTreeRow({
 }: TaskTreeRowProps) {
   return (
     <TaskContextMenu
-      {...menu}
+      build={menu}
       render={
         <div
           data-drop='row'
@@ -93,6 +95,7 @@ export function TaskTreeRow({
       >
         <ChevronRight className={cn('size-3.5 transition-transform', expanded && 'rotate-90')} />
       </button>
+      <TaskTypeIcon type={task.type} />
       <span className='shrink-0 font-mono text-xs text-muted-foreground'>{task.key}</span>
       <span className='min-w-0 flex-1 truncate'>{task.summary}</span>
       <span className='sr-only'>{isScheduled(task) ? `, ${formatRange(task.startDate, task.endDate)},` : ', unscheduled,'}</span>

@@ -49,6 +49,33 @@ changes (debounced), the palette and the Tasks page only while a search is
 typed. A task of another project opens in its own App through the host's
 `useOpenApp`.
 
+## Which thread a workflow step is worked in
+
+Every agent step is worked in a thread of the space's chat (the group chat at
+the space's own address), chosen when the step is entered
+(`enterStep` in `server/workflows/engine.ts`):
+
+- **The step names a thread** (`worker: { kind: "agent", agentNodeId,
+  thread }`, a fixed agent only): the step's message is sent into that
+  existing thread of the agent, queued behind any running turn, every time
+  the step is entered, rework included. The thread must still exist, be live,
+  be in the space's chat and be the step's agent's; otherwise the step waits
+  with an error naming the thread, and `workflow_step_restart` sends it once
+  that is fixed. Such a thread is checked again when the workflow is saved
+  with it, and is never taken for the agent's thread on the task. Its
+  session is the agent's own and carries work outside the task, so the task
+  manager leaves it as it is: such a step has no session options (saving a
+  step with both `worker.thread` and `sessionOptions` is refused), the
+  thread is never compacted or archived, and its usage is never read
+  (`readsUsage` in `server/workflows/usage.ts`), so its rounds have no
+  usage figures. `space_chat_threads` lists an agent's threads to choose
+  from.
+- **Otherwise**, the agent's own thread on the task (`server/task-threads.ts`):
+  the thread the step had before (rework), else the agent's most recently
+  used thread on the task from any step or mention, unarchived if the task
+  had closed, else a new thread titled with the task key and filed in the
+  step's folder.
+
 ## Bounded answers for agents
 
 An agent's answer is compact by default (`shared/compact.ts`), and a compact
@@ -58,6 +85,12 @@ answer is also bounded where a list grows without end:
   of key, summary and status, and empty fields are left out.
 - `task_comments` pages through all of a task's comments, newest first, with
   a `(created_at, id)` cursor that stays right while comments come and go.
+- A task's history keeps each description edit's whole previous and new
+  text, but every task read (`task_get` in either detail, and the task a
+  write returns) shows such an entry with `from` and `to` null and
+  `textsAvailable: true` (`activityEntryOf` in `server/service.ts`).
+  `task_activity_texts` returns the texts, for one entry by `id` or for all
+  of the task's; the History tab fetches them while it is open.
 - `my_work` returns the first 10 assigned tasks with `assignedTotal`
   (`assignedLimit` raises it to 200); across projects the cap is on the
   merged list.

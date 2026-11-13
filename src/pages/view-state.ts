@@ -59,6 +59,7 @@ export function viewOfQuery(query: URLSearchParams, page: ViewPage, base: ViewSt
   filter.priority = fieldInput<Priority>(field('priority'))
   filter.label = fieldInput(field('label'))
   filter.version = fieldInput(field('version'))
+  filter.milestone = fieldInput(field('milestone'))
   filter.parent = fieldInput(field('parent'))
   filter.sort = sortOfParam(textOfQuery(query, 'sort', sortParam(base.filter.sort)))
   const group = page === 'board' && query.get('group') === 'assignee' ? 'assignee' : null

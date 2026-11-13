@@ -39,8 +39,8 @@ export interface BoardDisplayMenuProps {
 }
 
 /**
- * The Board's display settings behind one Display button, for the App
- * toolbar. The button names the choice while it is not the default, so a
+ * The Board's display settings behind one Display button, for the Board's
+ * controls row. The button names the choice while it is not the default, so a
  * changed layout is visible without opening the menu.
  */
 export function BoardDisplayMenu({ swimlanes, onSwimlanesChange, options = BOARD_SWIMLANE_OPTIONS, className }: BoardDisplayMenuProps) {

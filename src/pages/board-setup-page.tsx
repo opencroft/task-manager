@@ -53,7 +53,7 @@ export interface BoardSetupPageProps {
 }
 
 export function BoardSetupPage({ board, onSaved }: BoardSetupPageProps) {
-  const { api, instanceId, statuses, assignees, labels, versions, fail, confirm } = useProject()
+  const { api, instanceId, statuses, assignees, labels, versions, milestones, fail, confirm } = useProject()
   const [name, setName] = useState(board?.name ?? '')
   const [columns, setColumns] = useState(() => editableColumns(board))
   const [filter, setFilter] = useState<BoardFilter>(board?.filter ?? {})
@@ -80,8 +80,8 @@ export function BoardSetupPage({ board, onSaved }: BoardSetupPageProps) {
     [columns, workflows, statuses],
   )
   const filters = useMemo(
-    () => taskFilterDefs(FILTER_IDS, { statuses, assignees, labels, versions }),
-    [statuses, assignees, labels, versions],
+    () => taskFilterDefs(FILTER_IDS, { statuses, assignees, labels, versions, milestones }),
+    [statuses, assignees, labels, versions, milestones],
   )
   const values = Object.fromEntries(
     FILTER_IDS.map((id) => [id, filter[id] as FieldFilter<string> | undefined]),

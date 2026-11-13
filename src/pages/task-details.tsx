@@ -24,6 +24,7 @@ import { TaskFieldPicker } from '@/components/ui/tasks/task-field-picker'
 import { TaskInlineCreate } from '@/components/ui/tasks/task-inline-create'
 import { TaskLabelsEditor } from '@/components/ui/tasks/task-labels-editor'
 import { TaskActionsMenu, TaskContextMenu, taskFieldEntries } from '@/components/ui/tasks/task-menu'
+import { taskMilestoneOptions } from '@/components/ui/tasks/task-milestone-chip'
 import { TASK_PRIORITIES, TASK_PRIORITY_LABELS, TaskPriorityIcon } from '@/components/ui/tasks/task-priority-icon'
 import { TaskPullRequests } from '@/components/ui/tasks/task-pull-requests'
 import { TaskStatusBadge } from '@/components/ui/tasks/task-status-badge'
@@ -38,10 +39,12 @@ import { CommentBody } from '../attachments/comment-body'
 import { useTaskAttachments } from '../attachments/use-task-attachments'
 import { errorMessage } from '../lib/api'
 import { assigneeInput, assigneeKey } from '../lib/assignees'
+import { toTaskMilestone } from '../lib/milestones'
 import { absoluteLink, hrefFor, navigate, useQueryParam } from '../lib/router'
 import { toTaskVersion } from '../lib/versions'
 import { MentionSessions } from '../mentions/mention-sessions'
 import { WorkflowPanel } from '../workflows/task-panel'
+import { useActivityTexts } from './use-activity-texts'
 import type { TaskDetailsState } from './use-task-details'
 
 function formatStamp(iso: string): string {
@@ -195,10 +198,15 @@ export interface TaskDetailsProps extends Pick<TaskDetailsState, 'load' | 'updat
 }
 
 export function TaskDetails({ task, load, update, candidates, inPeek = false }: TaskDetailsProps) {
-  const { api, instanceId, projectKey, statuses, assignees, labels, versions, menuFor, confirm } = useProject()
+  const { api, instanceId, projectKey, statuses, assignees, labels, versions, milestones, menuFor, confirm, fail } =
+    useProject()
   const kitVersions = useMemo(() => versions.map(toTaskVersion), [versions])
   // The task names its version; the picker keys versions by id.
   const versionId = task.version ? (kitVersions.find((version) => version.name === task.version?.name)?.id ?? '') : ''
+  const kitMilestones = useMemo(() => milestones.map(toTaskMilestone), [milestones])
+  const milestoneId = task.milestone
+    ? (kitMilestones.find((milestone) => milestone.name === task.milestone?.name)?.id ?? '')
+    : ''
   const linkTo = useTaskLink()
   const [add, setAdd] = useQueryParam('add')
   const [edit, setEdit] = useQueryParam('edit')
@@ -210,6 +218,7 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
   const commentsRef = useRef<HTMLElement>(null)
   const subtaskRef = useRef<HTMLDivElement>(null)
   const attachments = useTaskAttachments(api, instanceId, task.key)
+  const activity = useActivityTexts(api, task.key, task.activity, tab === 'activity', fail)
 
   useEffect(() => {
     if (add === 'subtask') {
@@ -456,6 +465,15 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
               onChange={(id) => void update({ version: id ? Number(id) : null }).catch(() => {})}
             />
           </TaskDetailsField>
+          <TaskDetailsField label='Milestone'>
+            <TaskFieldPicker
+              label='Milestone'
+              value={milestoneId}
+              options={taskMilestoneOptions(kitMilestones, milestoneId)}
+              placeholder='No milestone'
+              onChange={(id) => void update({ milestone: id ? Number(id) : null }).catch(() => {})}
+            />
+          </TaskDetailsField>
           <TaskDetailsField label='Parent'>
             {task.parentKey ? (
               <ItemContextMenu
@@ -620,7 +638,7 @@ export function TaskDetails({ task, load, update, candidates, inPeek = false }: 
           />
         ) : (
           <TaskActivity
-            entries={task.activity}
+            entries={activity}
             rowMenu={(_entry, line) => [
               { id: 'copy', label: 'Copy', icon: Copy, group: 'open', onSelect: () => void copyText(line, 'the line') },
               {

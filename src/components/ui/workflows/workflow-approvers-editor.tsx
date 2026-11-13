@@ -1,4 +1,4 @@
-import { Minus, Plus, UserPlus, X } from "lucide-react"
+import { Bot, Minus, Plus, UserPlus, X } from "lucide-react"
 
 import { Button } from "../button"
 import { Checkbox } from "../checkbox"
@@ -27,10 +27,24 @@ export interface WorkflowApproverValue {
   required: boolean
 }
 
+/** An agent that may reject the step for one of its approvers, on that approver's word. */
+export interface WorkflowRejectingAgentValue {
+  agentNodeId: string
+  name: string
+}
+
+/** An agent that can be listed, from the host's agents. */
+export interface WorkflowRejectingAgentOption {
+  id: string
+  name: string
+}
+
 export interface WorkflowApprovalValue {
   approvers: WorkflowApproverValue[]
   /** Approvals that pass the step, required ones included. */
   needed: number
+  /** Agents that may reject the step for an approver; they never approve. Omitted: none. */
+  rejectingAgents?: WorkflowRejectingAgentValue[]
 }
 
 export interface WorkflowApproversEditorProps {
@@ -38,7 +52,9 @@ export interface WorkflowApproversEditorProps {
   onChange: (value: WorkflowApprovalValue) => void
   /** The people who can be added: the host's directory. */
   people: WorkflowApproverPerson[]
-  /** Validation messages by field: `approvers`, `approvers.<index>`, `needed`. */
+  /** The agents that can be let reject for an approver: the host's agents. */
+  agents?: WorkflowRejectingAgentOption[]
+  /** Validation messages by field: `approvers`, `approvers.<index>`, `needed`, `rejectingAgents.<index>`. */
   issues?: Partial<Record<string, string[]>>
   className?: string
 }
@@ -66,14 +82,18 @@ function leastNeeded(approvers: WorkflowApproverValue[]): number {
  * approver required raises the number needed to cover them; removing an
  * approver lowers it to what is left. The step passes once every required
  * approver approved and the approvals reach the number; one Reject sends it back.
+ * Agents listed under "May reject for them" can press Reject for an approver,
+ * on that approver's word; approving stays with the approvers.
  */
-export function WorkflowApproversEditor({ value, onChange, people, issues = {}, className }: WorkflowApproversEditorProps) {
-  const { approvers, needed } = value
+export function WorkflowApproversEditor({ value, onChange, people, agents = [], issues = {}, className }: WorkflowApproversEditorProps) {
+  const { approvers, needed, rejectingAgents = [] } = value
   const least = leastNeeded(approvers)
   const most = Math.max(least, approvers.length)
   const available = people.filter((p) => !approvers.some((a) => a.personId === p.id))
+  const availableAgents = agents.filter((a) => !rejectingAgents.some((r) => r.agentNodeId === a.id))
   const set = (next: WorkflowApproverValue[], nextNeeded = needed) =>
-    onChange({ approvers: next, needed: Math.min(Math.max(nextNeeded, leastNeeded(next)), Math.max(1, next.length)) })
+    onChange({ ...value, approvers: next, needed: Math.min(Math.max(nextNeeded, leastNeeded(next)), Math.max(1, next.length)) })
+  const setAgents = (next: WorkflowRejectingAgentValue[]) => onChange({ ...value, rejectingAgents: next })
 
   return (
     <div data-slot="workflow-approvers-editor" className={cn("flex min-w-0 flex-col gap-3", className)}>
@@ -144,6 +164,53 @@ export function WorkflowApproversEditor({ value, onChange, people, issues = {}, 
         </div>
       </div>
       <Issues messages={issues.needed} />
+
+      <div className="flex min-w-0 flex-col gap-2">
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-sm font-medium">May reject for them</span>
+          <span className="text-xs text-muted-foreground">
+            Agents that can press Reject for an approver, on that approver’s word: they name the approver and quote them. Approving stays with the approvers.
+          </span>
+        </div>
+        {rejectingAgents.length > 0 ? (
+          <ul className="flex min-w-0 flex-col divide-y rounded-md border" aria-label="Agents that may reject">
+            {rejectingAgents.map((agent, index) => (
+              <li key={agent.agentNodeId || index} className="flex min-w-0 flex-col gap-1 px-3 py-2">
+                <div className="flex min-w-0 items-center gap-3">
+                  <TaskAssignee assignee={{ kind: "agent", id: agent.agentNodeId, name: agent.name }} withName size="sm" className="min-w-0 flex-1" />
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={`Remove ${agent.name}`}
+                    onClick={() => setAgents(rejectingAgents.filter((_, i) => i !== index))}
+                  >
+                    <X />
+                  </Button>
+                </div>
+                <Issues messages={issues[`rejectingAgents.${index}`]} />
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button variant="outline" size="sm" className="self-start" disabled={availableAgents.length === 0} />}>
+            <Bot />
+            Add agent
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className={cn("min-w-52 max-h-72", MENU_SCROLL_POPUP)}>
+            <MenuScrollArea>
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Agents</DropdownMenuLabel>
+                {availableAgents.map((agent) => (
+                  <DropdownMenuItem key={agent.id} onClick={() => setAgents([...rejectingAgents, { agentNodeId: agent.id, name: agent.name }])}>
+                    <TaskAssignee assignee={{ kind: "agent", id: agent.id, name: agent.name }} withName size="sm" />
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuGroup>
+            </MenuScrollArea>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </div>
   )
 }

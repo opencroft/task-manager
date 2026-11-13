@@ -32,13 +32,36 @@ function fakeApi(count: { value: number }) {
 }
 
 describe('listAllTasks', () => {
-  it('asks for one page first, then for every page the last answer said there are, all in one round', async () => {
-    const count = { value: 2 * TASK_LIST_MAX_LIMIT + 5 }
+  it('loads two full pages of a new query in one round trip', async () => {
+    const count = { value: 2 * TASK_LIST_MAX_LIMIT }
+    const { api, rounds } = fakeApi(count)
+
+    const all = await listAllTasks(api)
+    assert.equal(new Set(all.map((task) => task.key)).size, count.value)
+    assert.deepEqual(rounds, [[0, TASK_LIST_MAX_LIMIT]])
+  })
+
+  it('loads a small project from its first page, the second answering empty', async () => {
+    const count = { value: 3 }
+    const { api, rounds } = fakeApi(count)
+
+    assert.deepEqual(
+      (await listAllTasks(api)).map((task) => task.key),
+      ['T-1', 'T-2', 'T-3'],
+    )
+    assert.deepEqual(rounds, [[0, TASK_LIST_MAX_LIMIT]])
+  })
+
+  it('asks for two pages first, then for every page the answer said there are past them, all in one round', async () => {
+    const count = { value: 3 * TASK_LIST_MAX_LIMIT + 5 }
     const { api, rounds } = fakeApi(count)
 
     const first = await listAllTasks(api, { status: [1] })
     assert.equal(first.length, count.value)
-    assert.deepEqual(rounds, [[0], [TASK_LIST_MAX_LIMIT, 2 * TASK_LIST_MAX_LIMIT]])
+    assert.deepEqual(rounds, [
+      [0, TASK_LIST_MAX_LIMIT],
+      [2 * TASK_LIST_MAX_LIMIT, 3 * TASK_LIST_MAX_LIMIT],
+    ])
 
     rounds.length = 0
     const again = await listAllTasks(api, { status: [1] })
@@ -46,7 +69,11 @@ describe('listAllTasks', () => {
       again.map((task) => task.key),
       first.map((task) => task.key),
     )
-    assert.deepEqual(rounds, [[0, TASK_LIST_MAX_LIMIT, 2 * TASK_LIST_MAX_LIMIT]], 'a known total is one round trip')
+    assert.deepEqual(
+      rounds,
+      [[0, TASK_LIST_MAX_LIMIT, 2 * TASK_LIST_MAX_LIMIT, 3 * TASK_LIST_MAX_LIMIT]],
+      'a known total is one round trip',
+    )
   })
 
   it('fetches only the pages past the known ones when the project grew, and every task exactly once', async () => {
@@ -73,11 +100,11 @@ describe('listAllTasks', () => {
   })
 
   it('keeps each query’s total apart: a filtered list does not size the unfiltered one', async () => {
-    const count = { value: 2 * TASK_LIST_MAX_LIMIT }
+    const count = { value: 4 * TASK_LIST_MAX_LIMIT }
     const { api, rounds } = fakeApi(count)
     await listAllTasks(api)
     rounds.length = 0
     await listAllTasks(api, { query: 'never seen' })
-    assert.deepEqual(rounds[0], [0], 'an unknown query starts with one page')
+    assert.deepEqual(rounds[0], [0, TASK_LIST_MAX_LIMIT], 'an unknown query starts with the first two pages')
   })
 })

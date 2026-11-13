@@ -1,4 +1,4 @@
-import { ArrowRightFromLine, CalendarClock, CalendarMinus, CalendarPlus, Check, Copy, ExternalLink, Link2, ListPlus, MoreHorizontal, Trash2 } from 'lucide-react'
+import { ArrowRightFromLine, CalendarClock, CalendarMinus, CalendarPlus, Check, Copy, ExternalLink, Flag, FlagOff, Link2, ListPlus, MoreHorizontal, Trash2 } from 'lucide-react'
 import type { ComponentType, ReactElement, ReactNode } from 'react'
 
 import { Button } from '../button'
@@ -28,6 +28,7 @@ import { type ItemMenuEntries, MENU_SCROLL_POPUP, MenuScrollArea } from './item-
 import { TaskAssignee } from './task-assignee'
 import { TASK_PRIORITIES, TASK_PRIORITY_LABELS, type TaskPriority, TaskPriorityIcon } from './task-priority-icon'
 import { TaskStatusBadge, type TaskStatusCategory } from './task-status-badge'
+import { TASK_TYPES, type TaskType, TaskTypeIcon } from './task-type-icon'
 
 export interface TaskMenuStatus {
   id: number
@@ -43,6 +44,17 @@ export interface TaskMenuAssignee {
   id?: string
 }
 
+export interface TaskMenuMilestone {
+  id: string
+  name: string
+}
+
+/** An entry naming a milestone: "Add to Beta", "Remove from Beta". */
+export interface TaskMenuMilestoneAction {
+  name: string
+  onSelect: () => void
+}
+
 /**
  * What a task's menu offers. Every entry is optional: an entry appears only
  * when its callback is given, so each surface offers exactly what it supports.
@@ -50,6 +62,7 @@ export interface TaskMenuAssignee {
 export interface TaskMenuProps {
   /** Current values, marked with a check in their submenus. */
   statusId?: number
+  type?: TaskType
   priority?: TaskPriority
   assigneeName?: string | null
   statuses?: TaskMenuStatus[]
@@ -58,8 +71,19 @@ export interface TaskMenuProps {
   onCopyKey?: () => void
   onCopyLink?: () => void
   onStatusChange?: (statusId: number) => void
+  onTypeChange?: (type: TaskType) => void
   onPriorityChange?: (priority: TaskPriority) => void
   onAssigneeChange?: (assignee: TaskMenuAssignee | null) => void
+  /** The milestones a task can be put in, for a Milestone submenu that starts with None. */
+  milestones?: TaskMenuMilestone[]
+  /** The task's milestone, checked in that submenu; null for none. */
+  milestoneId?: string | null
+  /** A milestone picked in the submenu; null for None. */
+  onMilestoneChange?: (id: string | null) => void
+  /** Puts the task into the milestone on show: "Add to <name>". */
+  addTo?: TaskMenuMilestoneAction
+  /** Takes the task out of the milestone on show: "Remove from <name>". */
+  removeFrom?: TaskMenuMilestoneAction
   onAddSubtask?: () => void
   /** Give the task dates (on a surface that plans them, like a timeline). */
   onSchedule?: () => void
@@ -198,6 +222,59 @@ function TaskMenuItems({ parts: P, ...menu }: TaskMenuProps & { parts: Parts }) 
       </P.Sub>,
     )
   }
+  if (menu.onTypeChange) {
+    const onTypeChange = menu.onTypeChange
+    groups[1].push(
+      <P.Sub key="type">
+        <P.SubTrigger>Type</P.SubTrigger>
+        <P.SubContent className="min-w-40">
+          {TASK_TYPES.map((type) => (
+            <P.Item key={type} onClick={() => onTypeChange(type)}>
+              <TaskTypeIcon type={type} withLabel />
+              <Mark on={type === menu.type} />
+            </P.Item>
+          ))}
+        </P.SubContent>
+      </P.Sub>,
+    )
+  }
+  if (menu.onMilestoneChange && menu.milestones) {
+    const onMilestoneChange = menu.onMilestoneChange
+    groups[1].push(
+      <P.Sub key="milestone">
+        <P.SubTrigger>Milestone</P.SubTrigger>
+        <P.SubContent className="max-h-72 min-w-44">
+          <P.Item onClick={() => onMilestoneChange(null)}>
+            <span className="text-muted-foreground">None</span>
+            <Mark on={!menu.milestoneId} />
+          </P.Item>
+          {menu.milestones.map((milestone) => (
+            <P.Item key={milestone.id} onClick={() => onMilestoneChange(milestone.id)}>
+              <Flag />
+              <span className="min-w-0 truncate">{milestone.name}</span>
+              <Mark on={milestone.id === menu.milestoneId} />
+            </P.Item>
+          ))}
+        </P.SubContent>
+      </P.Sub>,
+    )
+  }
+  if (menu.addTo) {
+    groups[2].push(
+      <P.Item key="add-to" onClick={menu.addTo.onSelect}>
+        <Flag />
+        <span className="min-w-0 truncate">Add to {menu.addTo.name}</span>
+      </P.Item>,
+    )
+  }
+  if (menu.removeFrom) {
+    groups[2].push(
+      <P.Item key="remove-from" onClick={menu.removeFrom.onSelect}>
+        <FlagOff />
+        <span className="min-w-0 truncate">Remove from {menu.removeFrom.name}</span>
+      </P.Item>,
+    )
+  }
   if (menu.onAddSubtask) {
     groups[2].push(
       <P.Item key="subtask" onClick={menu.onAddSubtask}>
@@ -321,10 +398,21 @@ export function taskFieldEntries(menu: TaskMenuProps, field: 'status' | 'assigne
 }
 
 export interface TaskContextMenuProps extends TaskMenuProps {
+  /**
+   * Builds the entries when the menu opens, in place of the entry props. For a
+   * long list, whose rows would otherwise build a menu on every render that is
+   * almost never opened.
+   */
+  build?: () => TaskMenuProps
   /** The element the menu opens on (a table row, a card); defaults to a div. */
   render?: ReactElement
   children: ReactNode
   className?: string
+}
+
+/** The entries of `build`, called here: the popup renders its content only while it is open. */
+function BuiltTaskMenuItems({ build, parts }: { build: () => TaskMenuProps; parts: Parts }) {
+  return <TaskMenuItems parts={parts} {...build()} />
 }
 
 /**
@@ -332,7 +420,7 @@ export interface TaskContextMenuProps extends TaskMenuProps {
  * represents the task. The same entries as the task's "…" button, so every
  * action reachable by right-click is reachable without one too.
  */
-export function TaskContextMenu({ render, children, className, ...menu }: TaskContextMenuProps) {
+export function TaskContextMenu({ build, render, children, className, ...menu }: TaskContextMenuProps) {
   return (
     <ContextMenu>
       <ContextMenuTrigger render={render} className={className}>
@@ -340,7 +428,7 @@ export function TaskContextMenu({ render, children, className, ...menu }: TaskCo
       </ContextMenuTrigger>
       <ContextMenuContent className={cn('min-w-48', MENU_SCROLL_POPUP)}>
         <MenuScrollArea>
-          <TaskMenuItems parts={CONTEXT} {...menu} />
+          {build ? <BuiltTaskMenuItems build={build} parts={CONTEXT} /> : <TaskMenuItems parts={CONTEXT} {...menu} />}
         </MenuScrollArea>
       </ContextMenuContent>
     </ContextMenu>

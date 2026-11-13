@@ -1,11 +1,11 @@
-// The `tasks` App: the project's key and controls in the host's title bar, its
+// The `tasks` App: its controls in the host's title bar (which names the App), its
 // pages in the host's sidebar (with the page's own section under them, on
 // Workflows its workflow list), and the page the path names. `/task/KEY-N` opens a task's
 // details, `/settings/<section>` the project's settings; anything unknown
 // falls back to the default page. `?peek=KEY-N` on a page opens that task in
 // the peek beside it.
 
-import { AppActions, type AppComponentProps, AppSidebar, AppTitle } from '@opencroft/client/app'
+import { AppActions, type AppComponentProps, AppSidebar } from '@opencroft/client/app'
 import { cn } from 'cn'
 import { Settings2 } from 'lucide-react'
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react'
@@ -83,7 +83,6 @@ export function TasksApp({ instanceId, params }: AppComponentProps) {
       <ShortcutsProvider>
         {/* The project's agent chat around the whole App, so every page sits in its dock. */}
         <ProjectChat instanceId={instanceId} projectKey={projectKey} place={place}>
-          <AppTitle>{projectKey}</AppTitle>
           <AppActions>
             <ProjectInbox instanceId={instanceId} />
             <Button

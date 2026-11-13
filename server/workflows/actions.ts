@@ -25,8 +25,10 @@ import {
   type RunStep,
   type RunsMatch,
   type SpaceChatState,
+  type SpaceChatThread,
   STATS_RANGES,
   type StatsRange,
+  type ValidationIssue,
   verdictTransitions,
   type WorkflowDef,
   type WorkflowDraft,
@@ -35,11 +37,12 @@ import {
 } from '../../shared/workflows.ts'
 import { type TypedHandlers, typedActions } from '../action-params.ts'
 import type { Db } from '../db.ts'
-import { findSpaceChat, type SpaceChatListing } from '../space-chat.ts'
-import { normalizeDraft, validateWorkflow } from './definition.ts'
+import { findSpaceChat, NO_GROUP_CHATS, notInSpaceChat, type SpaceChatListing } from '../space-chat.ts'
+import { type NormalizedWorkflow, normalizeDraft, validateWorkflow } from './definition.ts'
 import {
   type ChatsPort,
   cancelRun,
+  checkGivenThread,
   decideStep,
   type EngineEnv,
   finishStep,
@@ -91,7 +94,18 @@ export interface WorkflowHost {
 }
 
 /** The actions of this module, as the generated parameter types name them. */
-type WorkflowActionId = Extract<ActionId, 'workflows_list' | 'space_chat' | 'space_chat_grant' | `workflow_${string}`>
+type WorkflowActionId = Extract<
+  ActionId,
+  'workflows_list' | 'space_chat' | 'space_chat_grant' | 'space_chat_threads' | `workflow_${string}`
+>
+
+/**
+ * Pages of a chat's threads `space_chat_threads` reads, at the host's 500 a
+ * page: a bound on the time one call takes, not on the chat. Threads are read
+ * most recently active first, so a chat larger than that loses its least
+ * active threads from the list, and the answer says it was cut.
+ */
+const THREAD_PAGES = 10
 
 /** `value` trimmed, refused when blank: the boundary proves it is a string, not that it says anything. */
 function filled(value: string, name: string, hint: string): string {
@@ -198,6 +212,7 @@ function openApproval(
       decision: decisions.find((d) => d.approver.personId === a.personId) ?? null,
     })),
     transitions: { approve: byVerdict.approve.map((t) => t.label), reject: byVerdict.reject.map((t) => t.label) },
+    rejectingAgents: step.approval?.rejectingAgents ?? [],
     canDecide: caller !== null && approvers.some((a) => a.personId === caller.id),
     viewerId: caller?.id ?? null,
   }
@@ -247,6 +262,46 @@ export function makeWorkflowActions(host: WorkflowHost): Record<string, AppActio
     }
   }
 
+  /**
+   * The calling agent, by the name the host bound to the call, with its node
+   * id when exactly one of the host's agents has that name: two agents with
+   * one name cannot be told apart by it, so neither id is taken.
+   */
+  const callingAgent = async (ctx: AppActionContext, name: string): Promise<{ id: string | null; name: string }> => {
+    const wanted = name.trim().toLowerCase()
+    const matches = ((await host.agents?.(ctx)) ?? []).filter((a) => a.name.trim().toLowerCase() === wanted)
+    return { id: matches.length === 1 ? matches[0].id : null, name }
+  }
+
+  /**
+   * The threads the workflow's steps name that cannot take a step, as issues.
+   * A step whose agent and thread are as saved is not looked up again, so a
+   * thread archived since then does not stop an edit of another step: the
+   * step itself says so when it opens.
+   */
+  const threadIssues = async (ctx: AppActionContext, db: Db, wf: NormalizedWorkflow): Promise<ValidationIssue[]> => {
+    const saved = getWorkflow(db, wf.id)?.steps ?? []
+    const issues: ValidationIssue[] = []
+    for (const [index, step] of wf.steps.entries()) {
+      const { worker } = step
+      if (step.kind !== 'agent' || worker.kind !== 'agent' || !worker.thread || !worker.agentNodeId) {
+        continue
+      }
+      const before = saved.find((s) => s.id === step.id)?.worker
+      if (before?.kind === 'agent' && before.agentNodeId === worker.agentNodeId && before.thread === worker.thread) {
+        continue
+      }
+      const chats = host.chats()
+      const checked = chats
+        ? await checkGivenThread(chats, worker.thread, { agentNodeId: worker.agentNodeId, chatSlug: ctx.spaceSlug })
+        : { why: "can't be reached: this host offers no group chats" }
+      if ('why' in checked) {
+        issues.push({ path: `steps.${index}.worker.thread`, message: `The thread "${worker.thread}" ${checked.why}` })
+      }
+    }
+    return issues
+  }
+
   const prepare = async (ctx: AppActionContext, draft: Record<string, unknown>) => {
     const { db } = host.open(ctx)
     if (!hasSteps(draft)) {
@@ -256,11 +311,15 @@ export function makeWorkflowActions(host: WorkflowHost): Record<string, AppActio
     }
     const statuses = statusList(db)
     const people = await host.people(ctx)
-    const wf = normalizeDraft(draft, mintId, statuses, people)
+    const agents = (await host.agents?.(ctx)) ?? []
+    const wf = normalizeDraft(draft, mintId, statuses, people, agents)
     const others = listWorkflows(db)
       .filter((w) => w.id !== wf.id)
       .map((w) => w.name)
-    const issues = validateWorkflow(wf, { statuses, otherNames: others, people })
+    const issues = [
+      ...validateWorkflow(wf, { statuses, otherNames: others, people, agents }),
+      ...(await threadIssues(ctx, db, wf)),
+    ]
     return { db, wf, issues }
   }
 
@@ -307,6 +366,39 @@ export function makeWorkflowActions(host: WorkflowHost): Record<string, AppActio
       }
       await person.grantExtension(before.slug)
       return spaceChat(ctx)
+    },
+
+    space_chat_threads: async (ctx, input) => {
+      const ref = filled(input.agent, 'agent', "the agent's node id or name, from space_chat")
+      const chats = host.chats()
+      const chat = chats ? await findSpaceChat(chats, ctx.spaceSlug) : null
+      if (!chats || !chat) {
+        throw new Error(chats ? notInSpaceChat(ctx.spaceSlug) : NO_GROUP_CHATS)
+      }
+      if (!chats.activity) {
+        throw new Error("This host can't list a chat's threads to extensions")
+      }
+      const agent = chat.agents.find((a) => a.nodeId === ref || a.name.toLowerCase() === ref.toLowerCase())
+      if (!agent) {
+        throw new Error(
+          `No agent "${ref}" in this space's chat. Its agents: ${chat.agents.map((a) => a.name).join(', ') || 'none yet'}`,
+        )
+      }
+      const threads: SpaceChatThread[] = []
+      let cursor: string | null = null
+      for (let page = 0; page < THREAD_PAGES; page += 1) {
+        const result = await chats.activity({ chat: chat.slug, limit: 500, ...(cursor ? { cursor } : {}) })
+        for (const t of result.threads) {
+          if (t.agent.nodeId === agent.nodeId && !t.archived) {
+            threads.push({ ref: t.ref, threadId: t.threadId, title: t.title, folder: t.folder ?? null })
+          }
+        }
+        cursor = result.nextCursor
+        if (!cursor) {
+          break
+        }
+      }
+      return { agent, threads, ...(cursor ? { cut: true } : {}) }
     },
 
     workflow_validate: async (ctx, input) => {
@@ -410,12 +502,15 @@ export function makeWorkflowActions(host: WorkflowHost): Record<string, AppActio
 
     workflow_step_decide: async (ctx, input) => {
       const key = filled(input.task, 'task', TASK_HINT)
-      const run = await decideStep(await env(ctx), host.tasks(ctx, host.actor(ctx)), {
+      const actor = host.actor(ctx)
+      const run = await decideStep(await env(ctx), host.tasks(ctx, actor), {
         task: host.getTask(ctx, key),
         verdict: input.verdict,
         transition: trimmed(input.transition),
         comment: trimmed(input.comment),
         person: host.person(ctx),
+        agent: actor.kind === 'agent' ? await callingAgent(ctx, actor.name) : null,
+        approver: trimmed(input.approver),
       })
       host.changed(ctx, [key])
       return run

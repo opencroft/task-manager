@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronsUp, CircleDot, ListTree, Loader2, Milestone, Minus, Plus, RotateCcw, Tag, Trash2, TriangleAlert, UserRound, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronsUp, CircleDot, Flag, ListTree, Loader2, Milestone, Minus, Plus, RotateCcw, Tag, Trash2, TriangleAlert, UserRound, X } from 'lucide-react'
 import { type ComponentType, type ReactNode, useEffect, useRef, useState } from 'react'
 
 import {
@@ -31,6 +31,7 @@ import { TaskLabelDot, useTaskLabelColor } from './task-label-chip'
 import { TASK_PRIORITIES, TaskPriorityIcon, type TaskPriority } from './task-priority-icon'
 import { TaskStatusBadge, type TaskStatusCategory } from './task-status-badge'
 import { type TaskVersion, taskVersionOptions } from './task-version-chip'
+import { type TaskMilestone, taskMilestoneOptions } from './task-milestone-chip'
 
 export interface TaskBulkBarTask {
   key: string
@@ -48,7 +49,7 @@ export interface TaskBulkBarAssignee extends TaskAssigneeValue {
   id?: string
 }
 
-export type TaskBulkBarAction = 'status' | 'assignee' | 'priority' | 'labels' | 'version' | 'parent' | 'delete'
+export type TaskBulkBarAction = 'status' | 'assignee' | 'priority' | 'labels' | 'version' | 'milestone' | 'parent' | 'delete'
 
 /** How a bulk action went: how many of how many, and why the rest did not. */
 export interface TaskBulkBarResult {
@@ -78,6 +79,10 @@ export interface TaskBulkBarProps {
   versions?: TaskVersion[]
   /** Puts every picked task in a version; null takes them out of theirs. */
   onSetVersion?: (id: string | null) => void
+  /** The project's milestones, in the order to offer them; archived ones are not offered. */
+  milestones?: TaskMilestone[]
+  /** Puts every picked task in a milestone; null takes them out of theirs. */
+  onSetMilestone?: (id: string | null) => void
   /** Tasks that can become the parent. The picked ones are left out. */
   parents?: TaskBulkBarTask[]
   /** Sets the parent of every picked task; null takes them out of their parent. */
@@ -99,6 +104,7 @@ const DONE_VERB: Record<TaskBulkBarAction, string> = {
   priority: 'updated',
   labels: 'updated',
   version: 'updated',
+  milestone: 'updated',
   parent: 'moved',
   delete: 'deleted',
 }
@@ -218,6 +224,8 @@ export function TaskBulkBar({
   onRemoveLabel,
   versions,
   onSetVersion,
+  milestones,
+  onSetMilestone,
   parents,
   onSetParent,
   onDelete,
@@ -362,6 +370,26 @@ export function TaskBulkBar({
                     <DropdownMenuLabel>Put {plural(count, 'task')} in</DropdownMenuLabel>
                     {taskVersionOptions(versions).map((option) => (
                       <DropdownMenuItem key={option.value || 'none'} aria-label={option.text} onClick={() => onSetVersion(option.value || null)}>
+                        <span className='flex min-w-0 flex-1 items-center'>{option.display}</span>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuGroup>
+                </MenuScrollArea>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+
+          {onSetMilestone && milestones ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant='ghost' size='sm' disabled={waiting} aria-label='Milestone' className='shrink-0 px-2' />}>
+                <TriggerFace icon={Flag} label='Milestone' busy={busy === 'milestone'} />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align='start' className={cn('max-h-80 min-w-56', MENU_SCROLL_POPUP)}>
+                <MenuScrollArea>
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>Put {plural(count, 'task')} in</DropdownMenuLabel>
+                    {taskMilestoneOptions(milestones).map((option) => (
+                      <DropdownMenuItem key={option.value || 'none'} aria-label={option.text} onClick={() => onSetMilestone(option.value || null)}>
                         <span className='flex min-w-0 flex-1 items-center'>{option.display}</span>
                       </DropdownMenuItem>
                     ))}

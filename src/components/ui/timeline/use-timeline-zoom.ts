@@ -3,7 +3,10 @@ import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useSta
 import { anchoredScroll, clampPxPerDay, DEFAULT_PX_PER_DAY, fitPxPerDay } from './timeline-scale'
 
 export interface TimelineZoomOptions {
-  /** The element that scrolls the scale horizontally. */
+  /**
+   * The element that scrolls the scale horizontally. Its listeners attach once,
+   * so keep the same element mounted while the hook is (hide it, don't swap it).
+   */
   scrollerRef: RefObject<HTMLElement | null>
   /** Width of the fixed column left of the scale inside the scroller (the task tree). */
   gutter: number
@@ -33,6 +36,20 @@ function readStored(key: string | undefined): number | null {
   }
   const value = Number(localStorage.getItem(key))
   return Number.isFinite(value) && value > 0 ? clampPxPerDay(value) : null
+}
+
+/**
+ * A wheel event the browser turns into a horizontal scroll: a sideways swipe
+ * or tilt (mostly deltaX), or Shift + a vertical wheel, which Chromium scrolls
+ * sideways while the event still carries only deltaY. A browser or OS that
+ * swaps Shift + wheel into deltaX is caught by the first test. Ctrl or Cmd +
+ * wheel zooms instead, so it is not one.
+ */
+export function isSidewaysWheel(event: Pick<WheelEvent, 'deltaX' | 'deltaY' | 'shiftKey' | 'ctrlKey' | 'metaKey'>): boolean {
+  if (event.ctrlKey || event.metaKey) {
+    return false
+  }
+  return Math.abs(event.deltaX) > Math.abs(event.deltaY) || (event.shiftKey && event.deltaY !== 0)
 }
 
 /**
@@ -110,6 +127,18 @@ export function useTimelineZoom({ scrollerRef, gutter, origin, storageKey }: Tim
       localStorage.setItem(storageKey, String(pxPerDay))
     }
   }, [pxPerDay, scrollerRef, storageKey])
+
+  // Days added at the scale's start move everything on it right; the scroll
+  // follows, before the paint, so the days in view stay where they were.
+  const shownOrigin = useRef(origin)
+  useLayoutEffect(() => {
+    const el = scrollerRef.current
+    const added = shownOrigin.current - origin
+    shownOrigin.current = origin
+    if (el && added !== 0) {
+      el.scrollLeft += added * pxRef.current
+    }
+  }, [origin, scrollerRef])
 
   useEffect(() => {
     const el = scrollerRef.current

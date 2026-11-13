@@ -316,6 +316,7 @@ test('runs from before rounds were recorded keep one round per reached step, num
     'wf-0008-step-session-options',
     'wf-0009-transition-edges',
     'wf-0012-round-context',
+    'wf-0013-step-thread',
   ]
   const before = allMigrations().filter((m) => !later.includes(m.id))
   assert.equal(before.length, allMigrations().length - later.length, 'the rounds migrations are the ones held back')

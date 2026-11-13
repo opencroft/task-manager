@@ -1,8 +1,10 @@
+import type { TaskType } from '@/components/ui/tasks/task-type-icon'
+
 import { type CalendarDate, fromDay, toDay } from './timeline-scale'
 
 // What the timeline renders, derived from a flat task list: the visible tree
-// rows, each parent's span rolled up from its children, the backlog, and where
-// a drop on the tree lands. Pure and DOM-free.
+// rows, each parent's span rolled up from its children, and where a drop on
+// the tree lands. Pure and DOM-free.
 //
 // Lookups are plain records rather than Map: the design kit's preview runtime
 // resolves names in one shared scope where an icon named `Map` shadows the global.
@@ -13,6 +15,7 @@ export type StatusCategory = 'todo' | 'in_progress' | 'done'
 export interface TimelineTask {
   key: string
   summary: string
+  type: TaskType
   parentKey: string | null
   /** Sibling and backlog order: compared as strings, lowest first. */
   rank: string
@@ -180,11 +183,6 @@ export function childSpans(tasks: TimelineTask[]): Record<string, { start: Calen
     span(root.key)
   }
   return out
-}
-
-/** Unscheduled tasks at every depth, in backlog (rank) order. */
-export function backlogTasks(tasks: TimelineTask[]): TimelineTask[] {
-  return tasks.filter((t) => !isScheduled(t)).sort(byRank)
 }
 
 /** True when `key` is `ancestor` itself or sits anywhere below it. */

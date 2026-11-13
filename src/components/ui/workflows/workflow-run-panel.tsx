@@ -105,6 +105,8 @@ export interface WorkflowRunPanelCompaction {
 /** One approver's decision in a round of an approval step. */
 export interface WorkflowRunPanelDecision {
   approver: { name: string }
+  /** The agent that made the decision for the approver, on their word; null or omitted when the approver decided. */
+  agent?: { name: string } | null
   verdict: "approve" | "reject"
   /** The label of the transition they chose. */
   transition: string
@@ -356,8 +358,20 @@ function RoundDecisions({ decisions }: { decisions: WorkflowRunPanelDecision[] }
         <li key={`${decision.approver.name}-${decision.at}`} className="flex min-w-0 flex-col">
           <span className="flex min-w-0 flex-wrap items-center gap-x-1.5">
             <WorkflowGateIcon gate={decision.verdict === "approve" ? "pass" : "fail"} className="size-3" />
-            <span className="text-foreground">{decision.approver.name}</span>
-            <span>{decision.verdict === "approve" ? "approved" : "rejected"} by</span>
+            {decision.agent ? (
+              <>
+                <span>{decision.verdict === "approve" ? "Approved" : "Rejected"} by</span>
+                <span className="text-foreground">{decision.agent.name}</span>
+                <span>for</span>
+                <span className="text-foreground">{decision.approver.name}</span>
+                <span>by</span>
+              </>
+            ) : (
+              <>
+                <span className="text-foreground">{decision.approver.name}</span>
+                <span>{decision.verdict === "approve" ? "approved" : "rejected"} by</span>
+              </>
+            )}
             <span className="text-foreground">{decision.transition}</span>
             <span>· {formatStamp(decision.at)}</span>
           </span>

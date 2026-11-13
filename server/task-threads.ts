@@ -104,7 +104,8 @@ export async function reopenTaskThread(chats: ThreadReopener, ref: string): Prom
 /**
  * The agent's most recently used thread on the task in this chat, or null.
  * Both places a thread is recorded count: a workflow run's steps and the
- * task's mention sessions.
+ * task's mention sessions. A thread a step was given by its workflow is not
+ * the agent's thread on the task, so it never counts.
  */
 export function agentTaskThread(
   db: Db,
@@ -117,6 +118,7 @@ export function agentTaskThread(
          SELECT s.thread_ref, s.thread_id, s.chat_ref, coalesce(s.started_at, '') AS used_at
          FROM workflow_run_step s JOIN workflow_run r ON r.id = s.run_id
          WHERE r.task_id = ? AND s.agent_node_id = ? AND s.chat_slug = ? AND s.thread_ref IS NOT NULL
+           AND s.thread_given = 0
          UNION ALL
          SELECT thread_ref, thread_id, chat_ref, last_at AS used_at
          FROM mention_session

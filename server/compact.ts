@@ -22,6 +22,7 @@ import {
 } from '../shared/compact.ts'
 import { RELATION_GROUPS } from '../shared/dependencies.ts'
 import type { InboxListResult, TaskNotification } from '../shared/inbox.ts'
+import type { Milestone, MilestoneRow } from '../shared/milestones.ts'
 import type { MyWorkResult } from '../shared/my-work.ts'
 import type { ProjectRef } from '../shared/projects.ts'
 import type { Comment, MutationResult, Task, TaskListResult, TaskSummary } from '../shared/types.ts'
@@ -51,6 +52,7 @@ export function taskRow(task: TaskSummary): TaskRow {
     childCount: task.childCount || undefined,
     labels: task.labels,
     version: task.version?.name,
+    milestone: task.milestone?.name,
     startDate: task.startDate,
     endDate: task.endDate,
     blockedBy: task.blockers.filter((blocker) => blocker.open).map((blocker) => blocker.key),
@@ -121,6 +123,18 @@ export function versionRow(version: Version): VersionRow {
     open: version.openCount || undefined,
     done: version.doneCount || undefined,
   }) as VersionRow
+}
+
+export function milestoneRow(milestone: Milestone): MilestoneRow {
+  return withoutEmpty({
+    name: milestone.name,
+    state: milestone.state,
+    startDate: milestone.startDate,
+    targetDate: milestone.targetDate,
+    description: milestone.description,
+    open: milestone.openCount || undefined,
+    done: milestone.doneCount || undefined,
+  }) as MilestoneRow
 }
 
 export function notificationRow(notification: TaskNotification): NotificationRow {
@@ -204,6 +218,9 @@ const COMPACT: Record<DetailAction, (full: never, limits: Limits) => unknown> = 
       ...(released.moved.keys.length ? { moved: released.moved } : {}),
       notes: released.notes,
     })),
+  milestone_list: (full: { milestones: Milestone[] }) => ({ milestones: full.milestones.map(milestoneRow) }),
+  milestone_create: (full: MutationResult<Milestone>) => mutation(full, milestoneRow),
+  milestone_update: (full: MutationResult<Milestone>) => mutation(full, milestoneRow),
 }
 
 /** The answer's shape the call asked for; the boundary check holds `detail` to its enum. */

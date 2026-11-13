@@ -88,6 +88,8 @@ test('the workflow migrations apply after core, in order, and record themselves'
     'wf-0010-approval-steps',
     'wf-0011-attention-reasons',
     'wf-0012-round-context',
+    'wf-0013-step-thread',
+    'wf-0014-rejecting-agents',
     'inbox-0001-init',
     'inbox-0002-mute',
     'dependencies-0001-init',
@@ -109,6 +111,7 @@ test('the workflow migrations apply after core, in order, and record themselves'
     'forge-0001-init',
     'boards-0001-init',
     'boards-0002-field-filters',
+    'milestones-0001-init',
   ])
 })
 
@@ -116,7 +119,13 @@ test('status-only transitions migrate to edges into the step each status starts,
   const db = new DatabaseSync(':memory:')
   db.exec('PRAGMA foreign_keys = ON')
   // A database from before wf-0009 has none of the workflow migrations after it either.
-  const later = ['wf-0009-transition-edges', 'wf-0010-approval-steps', 'wf-0011-attention-reasons']
+  const later = [
+    'wf-0009-transition-edges',
+    'wf-0010-approval-steps',
+    'wf-0011-attention-reasons',
+    'wf-0013-step-thread',
+    'wf-0014-rejecting-agents',
+  ]
   migrate(
     db,
     allMigrations().filter((m) => !later.includes(m.id)),

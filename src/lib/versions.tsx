@@ -16,6 +16,7 @@ export function versionFilter(versions: readonly Version[]): TaskFilterDef {
   return {
     id: 'version',
     label: 'Version',
+    searchable: true,
     options: [
       { value: 'none', label: 'No version' },
       ...sortVersions(versions).map((version) => ({

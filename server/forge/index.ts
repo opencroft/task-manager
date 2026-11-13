@@ -2,17 +2,17 @@
 // the `tasks` App's actions (`task_prs`, and the connection's status, connect
 // and disconnect), and starts and stops the poller with each instance.
 //
-// The token is looked up in the Secrets Store by the key name saved with the
-// connection, sent to the forge and dropped; it is never stored, logged or
-// returned.
+// The token is looked up by the key name saved with the connection, in the
+// Secrets Stores of the instance's own space, sent to the forge and dropped; it
+// is never stored, logged or returned.
 
 import { type AppActionContext, type AppInstanceContext, apps } from '@opencroft/server/apps'
-import { secrets } from '@opencroft/server/secrets'
 
 import type { ForgeActionId } from '../../shared/forge.ts'
 import { type TypedHandlers, typedActions } from '../action-params.ts'
 import { projectKeyOf, scopeFor } from '../actions.ts'
 import { instanceDb } from '../db.ts'
+import { resolveInstanceSecret } from '../instance-space.ts'
 import { broadcastTasksChanged } from '../live.ts'
 import { requireRow, TaskError } from '../service.ts'
 import { forgeClient } from './api.ts'
@@ -32,9 +32,12 @@ async function tick(target: PollTarget): Promise<void> {
   if (!connection) {
     return
   }
-  const token = await secrets.resolve(connection.secretKey)
+  const token = await resolveInstanceSecret(target.instanceId, connection.secretKey)
   if (!token) {
-    recordSync(db, { at: new Date().toISOString(), error: `The Secrets Store has no key "${connection.secretKey}"` })
+    recordSync(db, {
+      at: new Date().toISOString(),
+      error: `No Secrets Store in this space has the key "${connection.secretKey}"`,
+    })
     return
   }
   const projectKey = projectKeyOf(target.params)
@@ -82,9 +85,9 @@ const handlers: TypedHandlers<ForgeActionId, AppActionContext> = {
   forge_connect: async (ctx, input) => {
     const scope = scopeFor(ctx)
     const connection = checkConnection(input, byPerson(ctx))
-    if (!(await secrets.resolve(connection.secretKey))) {
+    if (!(await resolveInstanceSecret(ctx.instanceId, connection.secretKey))) {
       throw new TaskError(
-        `The Secrets Store has no key "${connection.secretKey}": store the forge token under it first`,
+        `No Secrets Store in this space has the key "${connection.secretKey}": store the forge token under it first`,
       )
     }
     saveConnection(scope.db, connection)

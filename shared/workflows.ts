@@ -9,8 +9,9 @@
  * that opens next (or to the end of the run) that also sets the task's
  * status. A person moving the task to a status opens the first step started
  * by that status. A run binds one workflow to one task; each agent step of a
- * run gets its own agent session (a thread in the space's group chat), reused
- * if the task comes back to that step. An approval step has no session: its
+ * run is worked in its agent's thread on the task in the space's group chat,
+ * or in the existing thread the step names, and the task comes back to that
+ * same thread for rework. An approval step has no session: its
  * approvers, people, decide which transition it leaves by.
  */
 
@@ -105,8 +106,13 @@ export interface SessionOptionsOutcome {
   skipped: Array<{ option: keyof StepSessionOptions; reason: string }>
 }
 
-/** Who works a step: whoever the task is assigned to, or one fixed agent node. */
-export type StepWorker = { kind: 'assignee' } | { kind: 'agent'; agentNodeId: string }
+/**
+ * Who works a step: whoever the task is assigned to, or one fixed agent node.
+ * A fixed agent's step may name `thread`, a reference to an existing thread of
+ * that agent in the space's chat: the step is then worked there, rework
+ * included, instead of in the agent's own thread on the task.
+ */
+export type StepWorker = { kind: 'assignee' } | { kind: 'agent'; agentNodeId: string; thread?: string }
 
 /**
  * A transition's gate result: `pass` lets the task move on, `fail` sends it
@@ -131,11 +137,23 @@ export interface StepApprover {
   required: boolean
 }
 
+/**
+ * An agent that may reject an approval step on behalf of one of its approvers,
+ * on that approver's word: it names the approver and quotes them. It cannot approve.
+ */
+export interface StepRejectingAgent {
+  agentNodeId: string
+  /** The agent's name when the step was saved; the id is what identifies it. */
+  name: string
+}
+
 /** Who decides an approval step and how many approvals pass it. */
 export interface StepApproval {
   approvers: StepApprover[]
   /** Approvals that pass the step, required ones included: at least the required count, at most every approver. */
   needed: number
+  /** Agents that may reject the step for an approver; empty: only the approvers decide. */
+  rejectingAgents: StepRejectingAgent[]
 }
 
 export const APPROVAL_VERDICTS = ['approve', 'reject'] as const
@@ -147,6 +165,8 @@ export const VERDICT_GATE: Record<ApprovalVerdict, TransitionGate> = { approve: 
 /** One approver's decision in a round of an approval step. */
 export interface ApprovalDecision {
   approver: { personId: string; name: string }
+  /** The agent that made the decision for the approver, on their word (a reject only); null when the approver decided. */
+  agent: { agentNodeId: string; name: string } | null
   verdict: ApprovalVerdict
   /** The id of the transition the approver chose: what a settling decision moves the task by. */
   transitionId: string
@@ -185,6 +205,8 @@ export interface OpenApproval {
   approvers: Array<StepApprover & { decision: ApprovalDecision | null }>
   /** Labels of the transitions each verdict may take, in the step's order. */
   transitions: Record<ApprovalVerdict, string[]>
+  /** Agents that may reject the step for an approver. */
+  rejectingAgents: StepRejectingAgent[]
   /** Whether the caller is one of the approvers. */
   canDecide: boolean
   /** The caller's person id, to find their own decision; null for anyone but a signed-in person. */
@@ -253,6 +275,16 @@ export interface SpaceChatState {
   youAreIn: boolean | null
 }
 
+/** A live thread of an agent in the space's chat, as `space_chat_threads` lists it: what a step can name as its thread. */
+export interface SpaceChatThread {
+  /** What a step's `worker.thread` takes. */
+  ref: string
+  threadId: string
+  title: string | null
+  /** Its folder in the chat's thread list; null at the top level. */
+  folder: string | null
+}
+
 export interface WorkflowDef {
   id: string
   name: string
@@ -306,6 +338,8 @@ export interface StepApprovalDraft {
   approvers: Array<{ personId?: string; name?: string; required?: boolean }>
   /** Omitted: the required approvers' count, at least 1. */
   needed?: number
+  /** Each an agent by node id or by name; omitted: none. */
+  rejectingAgents?: Array<{ agentNodeId?: string; name?: string }>
 }
 
 /** A transition as a caller submits it. */
@@ -471,6 +505,12 @@ export interface RunStep {
   /** The session's thread, once one was opened. A rework re-enters this same thread. */
   threadRef: string | null
   threadId: string | null
+  /**
+   * The thread is the one the step names (`StepWorker.thread`), not the
+   * agent's thread on the task: no other step or mention continues it, and
+   * closing the task leaves it unarchived.
+   */
+  threadGiven: boolean
   startedAt: string | null
   endedAt: string | null
   /** Name of the status the task moved to when the step ended — a name, so it reads the same after the status is renamed or deleted. */

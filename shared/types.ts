@@ -65,6 +65,8 @@ export interface TaskSummary {
   labels: string[]
   /** The version the task is planned into, by name and state; null for none. */
   version: { name: string; state: 'planned' | 'released' | 'archived' } | null
+  /** The milestone the task is in, by name and state; null for none (the backlog). */
+  milestone: { name: string; state: 'open' | 'archived' } | null
   startDate: CalendarDate | null
   endDate: CalendarDate | null
   /** Opaque fractional order key. Compare as strings; never compute one client-side. */
@@ -131,9 +133,29 @@ export interface ActivityEntry {
   kind: ActivityKind
   /** For `field`: which field changed (`summary`, `status`, `assignee`, …). */
   field: string | null
+  /**
+   * The value before and after. A description edit leaves both null and sets
+   * `textsAvailable` instead: its texts are as long as the description, and
+   * `task_activity_texts` reads them.
+   */
   from: string | null
   to: string | null
+  /** For a description edit whose texts the history keeps: `task_activity_texts` returns them. */
+  textsAvailable?: true
   at: string
+}
+
+/** A description edit's whole previous and new text, by its history entry's id. */
+export interface ActivityTexts {
+  id: number
+  from: string | null
+  to: string | null
+}
+
+export interface ActivityTextsResult {
+  key: TaskKey
+  /** Oldest first. */
+  entries: ActivityTexts[]
 }
 
 /** One task in full, as `task_get` returns it. */
@@ -218,6 +240,8 @@ export interface TaskListInput {
   label?: FieldFilterList<string>
   /** Version names; `'none'` matches tasks in no version. */
   version?: FieldFilterList<string>
+  /** Milestone names; `'none'` matches tasks in no milestone. */
+  milestone?: FieldFilterList<string>
   /** Direct children of these keys; `'none'` matches top-level tasks. */
   parent?: FieldFilterInput<TaskKey | 'none'>
   /** true: only tasks with dates; false: only tasks without. */
@@ -280,6 +304,8 @@ export interface TaskCreateInput extends Position {
   labels?: string[]
   /** A version's name or id; null or `"none"` for none. */
   version?: string | number | null
+  /** An open milestone's name or id; the task is dated inside it unless the dates are given. */
+  milestone?: string | number | null
   startDate?: CalendarDate | null
   endDate?: CalendarDate | null
 }
@@ -296,6 +322,14 @@ export interface TaskUpdateInput {
   labels?: string[]
   /** A version's name or id; null or `"none"` takes the task out of its version. */
   version?: string | number | null
+  /**
+   * An open milestone's name or id; null or `"none"` takes the task out of
+   * its milestone. Entering one dates the task inside it unless the dates are
+   * given too; leaving one keeps the dates.
+   */
+  milestone?: string | number | null
+  /** With `milestone`: false moves the task alone, without the subtasks that would follow it. */
+  withSubtasks?: boolean
   startDate?: CalendarDate | null
   endDate?: CalendarDate | null
 }
@@ -333,6 +367,7 @@ export interface TasksActionMap {
   task_list: { input: TaskListInput; output: TaskListResult }
   task_get: { input: ActionInputs['task_get']; output: Task }
   task_comments: { input: ActionInputs['task_comments']; output: TaskCommentsResult }
+  task_activity_texts: { input: ActionInputs['task_activity_texts']; output: ActivityTextsResult }
   task_create: { input: TaskCreateInput; output: MutationResult<Task> }
   task_update: { input: TaskUpdateInput; output: MutationResult<Task> }
   task_change_status: { input: ActionInputs['task_change_status']; output: MutationResult<Task> }
@@ -361,9 +396,9 @@ export const TASKS_EVENT = 'tasks.changed'
 
 export interface TasksEvent {
   instanceId: string
-  /** Affected task keys; empty for project-wide changes (statuses, label colours, versions). */
+  /** Affected task keys; empty for project-wide changes (statuses, label colours, versions, milestones). */
   keys: TaskKey[]
-  kind: 'task' | 'status' | 'comment' | 'workflow' | 'label' | 'version' | 'board'
+  kind: 'task' | 'status' | 'comment' | 'workflow' | 'label' | 'version' | 'milestone' | 'board'
 }
 
 // ─── Shared helpers ────────────────────────────────────────────────────────

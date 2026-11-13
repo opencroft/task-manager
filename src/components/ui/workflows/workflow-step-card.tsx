@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Bot, Check, ChevronDown, Copy, MoreHorizontal, ShieldCheck, Trash2, UserRound } from "lucide-react"
+import { ArrowDown, ArrowUp, Bot, Check, ChevronDown, Copy, MessagesSquare, MoreHorizontal, ShieldCheck, Trash2, UserRound } from "lucide-react"
 import type { ReactNode } from "react"
 
 import { Button } from "../button"
@@ -46,6 +46,16 @@ export interface WorkflowStepCardAgent {
 
 export type WorkflowStepKind = "agent" | "approval"
 
+/** A thread of the step's agent in the chat, which the step can be worked in. */
+export interface WorkflowStepCardThread {
+  /** What `worker.thread` holds. */
+  ref: string
+  /** Its title in the chat's thread list; null shows the ref. */
+  title: string | null
+  /** The folder it is filed in, by name; null or absent at the top level. */
+  folder?: string | null
+}
+
 export interface WorkflowStepCardValue {
   name: string
   /** `agent`: an agent's session works the step. `approval`: its approvers decide it, and worker, folder, session settings and instructions do not apply. */
@@ -53,7 +63,8 @@ export interface WorkflowStepCardValue {
   /** Who decides an approval step; kept while the step is an agent step, so switching back and forth loses nothing. */
   approval: WorkflowApprovalValue
   triggerStatus: number | null
-  worker: { kind: "assignee" } | { kind: "agent"; agentNodeId: string }
+  /** A fixed agent's step may name `thread`, an existing thread of that agent's in the chat, to be worked in instead of the agent's own thread on each task. */
+  worker: { kind: "assignee" } | { kind: "agent"; agentNodeId: string; thread?: string }
   instructions: string
   /** The ways the step's agent may finish it, in the order offered. */
   transitions: WorkflowTransitionValue[]
@@ -67,9 +78,25 @@ export interface WorkflowStepCardValue {
   sessionOptions: { effort?: string; presence?: PresenceValue; permissionMode?: string; compactAbove?: number }
 }
 
+/** What an editor of the host's own is given when it stands in for the instructions' text field. */
+export interface WorkflowStepInstructionsField {
+  /** The instructions as stored, placeholders as written. */
+  value: string
+  onChange: (instructions: string) => void
+  placeholder: string
+  /** The field has validation messages, which its frame shows. */
+  invalid: boolean
+}
+
 /** What the session settings offer: every level the workflow definition accepts, not what one agent happens to list. */
 const SESSION_EFFORTS = ["max", "extra", "high", "medium", "low", "default", "off"]
 const SESSION_MODES = ["auto", "plan", "manual-edits", "accept-edits", "reject-edits", "bypass"]
+
+const INSTRUCTIONS_PLACEHOLDER = "What should the agent do in this step?"
+
+/** The box around a host editor: a document editor's plain border and the invalid state. Its toolbar and text inset are the editor's own. */
+const INSTRUCTIONS_FRAME =
+  "flex min-w-0 flex-col rounded-md border data-invalid:border-destructive data-invalid:ring-3 data-invalid:ring-destructive/20 dark:data-invalid:border-destructive/50 dark:data-invalid:ring-destructive/40"
 
 export interface WorkflowStepCardProps {
   index: number
@@ -81,6 +108,11 @@ export interface WorkflowStepCardProps {
   agents: WorkflowStepCardAgent[]
   /** That chat's name, for the agent picker's heading. */
   chatName?: string
+  /**
+   * The live threads of the step's fixed agent in that chat, which the Thread picker offers; `undefined` while they load.
+   * Not used for a step worked by the task's assignee.
+   */
+  threads?: WorkflowStepCardThread[]
   /** The people who can approve an approval step: the host's directory. */
   people?: WorkflowApproverPerson[]
   /** The workflow's other steps, in order: where a transition can lead. */
@@ -88,8 +120,9 @@ export interface WorkflowStepCardProps {
   /** The gate result a transition into `toStep` has when none is set by hand. */
   derivedGate: (toStep: string | null) => WorkflowGate
   /**
-   * Validation messages by field: `name`, `kind`, `triggerStatus`, `worker`, `folder`, `instructions`, `transitions`,
-   * and an approval step's `approval.approvers`, `approval.approvers.<index>` and `approval.needed`.
+   * Validation messages by field: `name`, `kind`, `triggerStatus`, `worker`, `worker.thread`, `folder`, `instructions`, `transitions`,
+   * and an approval step's `approval.approvers`, `approval.approvers.<index>`, `approval.needed` and
+   * `approval.rejectingAgents.<index>`.
    * The session settings share one field: `sessionOptions.effort`, `sessionOptions.presence` and
    * `sessionOptions.permissionMode` are shown together under it; `sessionOptions.compactAbove` has its own.
    * A transition's are keyed `transitions.<index>.<field>`, or `transitions.<index>` for the transition as a whole.
@@ -97,6 +130,12 @@ export interface WorkflowStepCardProps {
   issues?: Partial<Record<string, string[]>>
   /** Placeholders the instructions can use, offered in the Insert menu. */
   placeholders: Array<{ token: string; label: string }>
+  /**
+   * The instructions' editor, in place of the plain text field: a markdown editor with its toolbar on top, for one.
+   * It is drawn inside a bordered box that also shows the invalid state, so it brings no border of its own; its
+   * toolbar, inset and height are its own. `undefined` keeps the plain field.
+   */
+  renderInstructions?: (field: WorkflowStepInstructionsField) => ReactNode
   /** The compaction threshold, in tokens, a step takes when it sets none: shown in the empty field. */
   defaultCompactAbove?: number
   onMove: (direction: -1 | 1) => void
@@ -119,11 +158,30 @@ function FieldIssues({ messages }: { messages?: string[] }) {
   )
 }
 
-function Field({ label, children, issues, hint }: { label: string; children: ReactNode; issues?: string[]; hint?: ReactNode }) {
+function Field({
+  label,
+  children,
+  issues,
+  hint,
+  disabled,
+}: {
+  label: string
+  children: ReactNode
+  issues?: string[]
+  hint?: ReactNode
+  /** Disables every control in `children`; the label and hint stay readable, so the hint can say why. */
+  disabled?: boolean
+}) {
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
       <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      {children}
+      {disabled ? (
+        <fieldset disabled className="min-w-0 opacity-60">
+          {children}
+        </fieldset>
+      ) : (
+        children
+      )}
       {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
       <FieldIssues messages={issues} />
     </div>
@@ -150,8 +208,10 @@ function PickerTrigger({ children, invalid }: { children: ReactNode; invalid?: b
 /**
  * One step of a workflow being edited: its name, the status that starts it,
  * and its kind. An agent step says who works it (the task's assignee, or one
- * agent of the chat its session opens in), the folder of that chat's thread
- * list its thread is filed in, and what the agent is told; an approval step
+ * agent of the chat its session opens in), for a fixed agent the thread it is
+ * worked in (the agent's own thread on each task, or one of its existing
+ * threads), the folder of that chat's thread list a thread opened for it is
+ * filed in, and what the agent is told; an approval step
  * says who approves it. Both list the transitions the step may be finished by.
  * Its menu (the "more" button, or a right-click / long press on the step's
  * header) moves, copies or removes it.
@@ -164,11 +224,13 @@ export function WorkflowStepCard({
   statuses,
   agents,
   chatName,
+  threads,
   people = [],
   steps,
   derivedGate,
   issues = {},
   placeholders,
+  renderInstructions,
   defaultCompactAbove,
   onMove,
   onDuplicate,
@@ -180,6 +242,25 @@ export function WorkflowStepCard({
   const agentId = value.worker.kind === "agent" ? value.worker.agentNodeId : null
   const agent = agentId ? agents.find((a) => a.nodeId === agentId) : undefined
   const agentName = agentId ? (agent?.name ?? agentId) : null
+  const thread = value.worker.kind === "agent" ? value.worker.thread : undefined
+  const chosenThread = thread ? threads?.find((t) => t.ref === thread) : undefined
+  const chat = chatName ?? "the chat"
+  const setThread = (ref: string | undefined) => {
+    if (agentId) {
+      // A step in a chosen thread sets nothing on that thread's session, so choosing one clears the step's settings.
+      set(
+        ref
+          ? { worker: { kind: "agent", agentNodeId: agentId, thread: ref }, sessionOptions: {} }
+          : { worker: { kind: "agent", agentNodeId: agentId } },
+      )
+    }
+  }
+  let threadHint = "Each task gets the agent’s own thread for it, opened the first time the step starts."
+  if (thread && threads && !chosenThread) {
+    threadHint = `Not among ${agentName}’s threads in ${chat}: the step waits until the thread is back, or another one is chosen.`
+  } else if (thread) {
+    threadHint = "Every task’s step is sent into this thread, after any turn running there, and comes back to it for rework. Closing a task leaves it as it is."
+  }
   const sessionIssues = [
     ...(issues["sessionOptions.effort"] ?? []),
     ...(issues["sessionOptions.presence"] ?? []),
@@ -338,7 +419,14 @@ export function WorkflowStepCard({
                     <DropdownMenuGroup>
                       <DropdownMenuLabel>{agents.length ? `Agents in ${chatName ?? "the chat"}` : `No agents in ${chatName ?? "the chat"} yet`}</DropdownMenuLabel>
                       {agents.map((option) => (
-                        <DropdownMenuItem key={option.nodeId} onClick={() => set({ worker: { kind: "agent", agentNodeId: option.nodeId } })}>
+                        <DropdownMenuItem
+                          key={option.nodeId}
+                          onClick={() => {
+                            if (option.nodeId !== agentId) {
+                              set({ worker: { kind: "agent", agentNodeId: option.nodeId } })
+                            }
+                          }}
+                        >
                           <TaskAvatarPicture who={{ kind: "agent", id: option.nodeId, name: option.name }} className="size-4" fallback={<Bot />} />
                           <span className="flex-1">{option.name}</span>
                           <Check className={cn("size-4", option.nodeId === agentId ? "opacity-100" : "opacity-0")} />
@@ -350,24 +438,73 @@ export function WorkflowStepCard({
               </DropdownMenu>
             </Field>
 
-            <Field
-              label="Chat folder"
-              issues={issues.folder}
-              hint={`The folder of ${chatName ?? "the chat"}’s thread list the step’s thread goes in, by its name there. Made if it isn’t there yet.`}
-            >
-              <Input
-                value={value.folder}
-                placeholder="None: the top level"
-                aria-label="Chat folder"
-                aria-invalid={issues.folder?.length ? true : undefined}
-                onChange={(event) => set({ folder: event.target.value })}
-              />
-            </Field>
+            {agentId ? (
+              <Field label="Thread" issues={issues["worker.thread"]} hint={threadHint}>
+                <DropdownMenu>
+                  <PickerTrigger invalid={Boolean(issues["worker.thread"]?.length)}>
+                    <MessagesSquare className="size-4 text-muted-foreground" />
+                    {thread ? (chosenThread?.title || thread) : "Its own thread on each task"}
+                  </PickerTrigger>
+                  <DropdownMenuContent className={cn("min-w-52", MENU_SCROLL_POPUP)}>
+                    <MenuScrollArea>
+                      <DropdownMenuGroup>
+                        <DropdownMenuLabel>Where the step is worked</DropdownMenuLabel>
+                        <DropdownMenuItem onClick={() => setThread(undefined)}>
+                          <span className="flex-1">Its own thread on each task</span>
+                          <Check className={cn("size-4", thread ? "opacity-0" : "opacity-100")} />
+                        </DropdownMenuItem>
+                      </DropdownMenuGroup>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuGroup>
+                        <DropdownMenuLabel>
+                          {threads === undefined
+                            ? `Loading ${agentName}’s threads…`
+                            : threads.length
+                              ? `${agentName}’s threads in ${chat}`
+                              : `${agentName} has no threads in ${chat} yet`}
+                        </DropdownMenuLabel>
+                        {(threads ?? []).map((option) => (
+                          <DropdownMenuItem key={option.ref} onClick={() => setThread(option.ref)}>
+                            <span className="flex min-w-0 flex-1 flex-col">
+                              <span className="truncate">{option.title || option.ref}</span>
+                              {option.folder ? <span className="truncate text-xs text-muted-foreground">{option.folder}</span> : null}
+                            </span>
+                            <Check className={cn("size-4", option.ref === thread ? "opacity-100" : "opacity-0")} />
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuGroup>
+                    </MenuScrollArea>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </Field>
+            ) : null}
+
+            {/* A chosen thread already has its place in the chat's list: the step files nothing. */}
+            {thread ? null : (
+              <Field
+                label="Chat folder"
+                issues={issues.folder}
+                hint={`The folder of ${chat}’s thread list the step’s thread goes in, by its name there. Made if it isn’t there yet.`}
+              >
+                <Input
+                  value={value.folder}
+                  placeholder="None: the top level"
+                  aria-label="Chat folder"
+                  aria-invalid={issues.folder?.length ? true : undefined}
+                  onChange={(event) => set({ folder: event.target.value })}
+                />
+              </Field>
+            )}
 
             <Field
               label="Session settings"
               issues={sessionIssues}
-              hint="Applied to the step’s session each time the step starts, before its message. Not set leaves the session’s own setting; a value the agent doesn’t offer is skipped. A slower presence also delays the step’s own message."
+              disabled={Boolean(thread)}
+              hint={
+                thread
+                  ? "The chosen thread’s session is its agent’s own: the step leaves its settings as they are."
+                  : "Applied to the step’s session each time the step starts, before its message. Not set leaves the session’s own setting; a value the agent doesn’t offer is skipped. A slower presence also delays the step’s own message."
+              }
             >
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className="flex items-center gap-1">
@@ -402,7 +539,12 @@ export function WorkflowStepCard({
             <Field
               label="Compact the session above"
               issues={issues["sessionOptions.compactAbove"]}
-              hint="When the step comes back to a session it already has, and that session holds more context than this many tokens, it’s compacted before the step’s message, which then gives the instructions again. Empty takes the default; 0 never compacts."
+              disabled={Boolean(thread)}
+              hint={
+                thread
+                  ? "The chosen thread is never compacted by the step."
+                  : "When the step comes back to a session it already has, and that session holds more context than this many tokens, it’s compacted before the step’s message, which then gives the instructions again. Empty takes the default; 0 never compacts."
+              }
             >
               <Input
                 type="number"
@@ -431,6 +573,7 @@ export function WorkflowStepCard({
             value={value.approval}
             onChange={(next) => set({ approval: next })}
             people={people}
+            agents={agents.map((a) => ({ id: a.nodeId, name: a.name }))}
             issues={issuesUnder("approval.")}
           />
         </Field>
@@ -441,15 +584,32 @@ export function WorkflowStepCard({
           hint="Sent as the session’s first message as written, with the fields filled in. Only how to finish the step is added after it, so name the task here."
         >
           <div className="flex flex-col gap-1.5">
-            <Textarea
-              value={value.instructions}
-              rows={4}
-              placeholder="What should the agent do in this step?"
-              aria-label="Instructions"
-              aria-invalid={issues.instructions?.length ? true : undefined}
-              onChange={(event) => set({ instructions: event.target.value })}
-              className="font-mono text-xs"
-            />
+            {renderInstructions ? (
+              <div
+                data-slot="workflow-step-instructions"
+                role="group"
+                aria-label="Instructions"
+                data-invalid={issues.instructions?.length ? "" : undefined}
+                className={INSTRUCTIONS_FRAME}
+              >
+                {renderInstructions({
+                  value: value.instructions,
+                  onChange: (instructions) => set({ instructions }),
+                  placeholder: INSTRUCTIONS_PLACEHOLDER,
+                  invalid: Boolean(issues.instructions?.length),
+                })}
+              </div>
+            ) : (
+              <Textarea
+                value={value.instructions}
+                rows={4}
+                placeholder={INSTRUCTIONS_PLACEHOLDER}
+                aria-label="Instructions"
+                aria-invalid={issues.instructions?.length ? true : undefined}
+                onChange={(event) => set({ instructions: event.target.value })}
+                className="font-mono text-xs"
+              />
+            )}
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button variant="ghost" size="xs" className="self-start text-muted-foreground" />}>
                 Insert a field

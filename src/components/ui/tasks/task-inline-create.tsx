@@ -1,5 +1,5 @@
-import { AlertTriangle, Loader2, Plus } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { AlertTriangle, Loader2, Plus, X } from 'lucide-react'
+import { type FocusEvent, useEffect, useRef, useState } from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -16,6 +16,25 @@ export interface TaskInlineCreateProps {
   className?: string
 }
 
+/**
+ * What the open field does on each way out of typing: Enter creates and stays
+ * open for the next summary, leaving the field (focus moves elsewhere) creates
+ * what was typed, and Escape or the × discards it. With nothing typed, leaving
+ * closes the field and Enter does nothing.
+ */
+export function inlineCreateAction(event: 'enter' | 'leave' | 'escape' | 'cancel', value: string): 'create' | 'close' | 'none' {
+  const typed = value.trim() !== ''
+  switch (event) {
+    case 'enter':
+      return typed ? 'create' : 'none'
+    case 'leave':
+      return typed ? 'create' : 'close'
+    case 'escape':
+    case 'cancel':
+      return 'close'
+  }
+}
+
 /** A refusal's own words, without the transport's error-class prefix. */
 function messageOf(caught: unknown): string {
   const raw = caught instanceof Error ? caught.message : String(caught)
@@ -24,8 +43,9 @@ function messageOf(caught: unknown): string {
 
 /**
  * The quick way to add a task where a list ends: a quiet "Create task" row
- * that turns into a field on press. Type the summary, press Enter, and the
- * field clears for the next one; Escape, or leaving it empty, closes it.
+ * that turns into a field on press. Type the summary and press Enter, and the
+ * field clears for the next one; click or tab away, and what was typed is
+ * created and the field closes. Escape or the × closes it without creating.
  */
 export function TaskInlineCreate({
   onCreate,
@@ -42,8 +62,11 @@ export function TaskInlineCreate({
   const [inFlight, setInFlight] = useState(0)
   // Why the last create was refused, shown in the row until the text changes.
   const [error, setError] = useState<string | null>(null)
+  // Focus has left the field: it closes once nothing is left to create or to show.
+  const [left, setLeft] = useState(false)
   const queue = useRef<Promise<unknown>>(Promise.resolve())
   const input = useRef<HTMLInputElement>(null)
+  const row = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (open) {
@@ -51,18 +74,32 @@ export function TaskInlineCreate({
     }
   }, [open])
 
+  // Set while the field closes, so a blur the browser sends as the input goes is not taken for leaving with text.
+  const closing = useRef(false)
+  useEffect(() => {
+    if (open) {
+      closing.current = false
+    }
+  }, [open])
+
   const close = () => {
+    closing.current = true
     setOpen(false)
     setValue('')
     setError(null)
+    setLeft(false)
     onClose?.()
   }
 
+  // A create sent on leaving lands before the field closes, so a refusal still has a row to show in.
+  useEffect(() => {
+    if (open && left && inFlight === 0 && value.trim() === '' && error === null) {
+      close()
+    }
+  })
+
   const submit = () => {
     const summary = value.trim()
-    if (!summary) {
-      return
-    }
     setValue('')
     setError(null)
     setInFlight((count) => count + 1)
@@ -74,6 +111,27 @@ export function TaskInlineCreate({
         setError(messageOf(caught))
       })
       .finally(() => setInFlight((count) => count - 1))
+  }
+
+  const act = (event: Parameters<typeof inlineCreateAction>[0]) => {
+    const action = inlineCreateAction(event, value)
+    if (action === 'create') {
+      submit()
+    } else if (action === 'close') {
+      close()
+    }
+  }
+
+  // Focus moving between the input and the × stays inside the field; only leaving it altogether counts.
+  const onBlur = (event: FocusEvent<HTMLElement>) => {
+    if (closing.current || (event.relatedTarget instanceof Node && row.current?.contains(event.relatedTarget))) {
+      return
+    }
+    // Closing waits for the effect above, so creates still in flight land first.
+    setLeft(true)
+    if (inlineCreateAction('leave', value) === 'create') {
+      submit()
+    }
   }
 
   if (!open) {
@@ -95,9 +153,10 @@ export function TaskInlineCreate({
 
   return (
     <div
+      ref={row}
       data-slot="task-inline-create"
       className={cn(
-        'flex h-9 w-full items-center gap-2 rounded-md border border-ring/60 bg-background px-2 ring-2 ring-ring/20',
+        'flex h-9 w-full items-center gap-2 rounded-md border border-ring/60 bg-background pr-0.5 pl-2 ring-2 ring-ring/20',
         error && 'border-destructive/60 ring-destructive/20',
         className,
       )}
@@ -114,17 +173,14 @@ export function TaskInlineCreate({
         onKeyDown={(event) => {
           if (event.key === 'Enter') {
             event.preventDefault()
-            submit()
+            act('enter')
           } else if (event.key === 'Escape') {
             event.preventDefault()
-            close()
+            act('escape')
           }
         }}
-        onBlur={() => {
-          if (!value.trim() && inFlight === 0) {
-            close()
-          }
-        }}
+        onFocus={() => setLeft(false)}
+        onBlur={onBlur}
         placeholder={placeholder}
         aria-label={placeholder}
         className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
@@ -135,9 +191,21 @@ export function TaskInlineCreate({
           <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0" />
           <span className="truncate">{error}</span>
         </span>
-      ) : (
-        <kbd className="hidden shrink-0 rounded border bg-muted px-1.5 font-mono text-[10px] text-muted-foreground sm:inline">Enter</kbd>
-      )}
+      ) : null}
+      <button
+        type="button"
+        aria-label="Cancel"
+        title="Cancel"
+        // Pressed with a pointer, the × keeps the focus in the input, so the press is not a leave that creates.
+        onPointerDown={(event) => event.preventDefault()}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => act('cancel')}
+        onFocus={() => setLeft(false)}
+        onBlur={onBlur}
+        className="flex size-7 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+      >
+        <X className="size-3.5" />
+      </button>
     </div>
   )
 }

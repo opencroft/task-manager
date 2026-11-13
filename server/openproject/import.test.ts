@@ -12,7 +12,7 @@ import { incomingDir } from '../attachments/files.ts'
 import { deleteAttachment, listAttachments, readAttachment } from '../attachments/store.ts'
 import { makeScope, PNG, type TestScope } from '../attachments/testing.ts'
 import { linkTasks, unlinkTasks } from '../dependencies/store.ts'
-import { changeStatus, getTask, listStatuses, listTasks, moveTask, updateTask } from '../service.ts'
+import { activityTexts, changeStatus, getTask, listStatuses, listTasks, moveTask, updateTask } from '../service.ts'
 import { normalizeBaseUrl } from './api.ts'
 import {
   type AttachmentFixture,
@@ -476,7 +476,7 @@ test('only an OpenProject key is read from the Secrets Store, and errors name th
 
   await assert.rejects(
     importOpenProject(scope, { ...CONNECT, secretKey: 'OPENPROJECT_MISSING' }, deps),
-    /Secrets Store has no key "OPENPROJECT_MISSING"/,
+    /No Secrets Store in this space has the key "OPENPROJECT_MISSING"/,
   )
   await assert.rejects(
     importOpenProject(scope, { ...CONNECT, secretKey: 'OPENPROJECT_WRONG' }, deps),
@@ -552,7 +552,8 @@ test('mapping input is checked: unknown statuses, types and people are refused',
 const workPackageOf = (server: ReturnType<typeof fakeOpenProject>, id: number) =>
   server.state.workPackages.find((wp) => wp.id === id) as WorkPackageFixture
 
-test('edits made here stay; OpenProject changes to other fields come through; a field changed on both sides is a conflict', async () => {
+test('edits made here stay; OpenProject changes to other fields come through; a field changed on both sides is a conflict', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-09-23T08:00:00.000Z') })
   const scope = scopeWithTeam()
   const server = fakeOpenProject()
   await run(scope, asPerson(server), CONNECT)
@@ -599,12 +600,10 @@ test('edits made here stay; OpenProject changes to other fields come through; a 
   assert.ok(forced.notes.includes('Nothing to overwrite on TASK-99: it has no conflict with OpenProject.'))
   const taken = getTask(scope, 'TASK-3')
   assert.deepEqual([taken.summary, taken.status.name], ['Login fails on Safari 17', 'Rejected'])
+  // The edit here and the overwrite are by the same actor within the history window: one entry.
   assert.deepEqual(
     taken.activity.filter((entry) => entry.field === 'status').map((entry) => [entry.actor.name, entry.from, entry.to]),
-    [
-      ['Alice', 'In testing', 'Done'],
-      ['Alice', 'Done', 'Rejected'],
-    ],
+    [['Alice', 'In testing', 'Rejected']],
   )
 })
 
@@ -899,6 +898,20 @@ test('an already-imported project gets its attachments on a plain re-run, and im
   const later = await run(scope, asAgent(server))
   assert.deepEqual([later.updated, later.conflicts], [1, []])
   assert.equal(getTask(scope, 'TASK-3').description, `Seen here: ![Safari](attachment:${shot?.id})`)
+})
+
+test('a description changed in OpenProject is recorded in the history with its whole previous and new text', async () => {
+  const scope = scopeWithTeam()
+  const server = fakeOpenProject()
+  await run(scope, asPerson(server), CONNECT)
+  const before = getTask(scope, 'TASK-3').description
+  const longer = `${'A long description line. '.repeat(20)}\nand a second line`
+  Object.assign(workPackageOf(server, 103), { description: longer, updatedAt: '2026-09-20T08:00:00.000Z' })
+  await run(scope, asAgent(server))
+  assert.deepEqual(
+    activityTexts(scope, { key: 'TASK-3' }).entries.map((entry) => [entry.from, entry.to]),
+    [[before, longer]],
+  )
 })
 
 test('a file that cannot be read is listed, and the next run tries it again', async () => {

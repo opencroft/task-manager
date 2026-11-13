@@ -15,6 +15,7 @@ import { TaskStatusBadge, type TaskStatusCategory } from './task-status-badge'
 import { type TaskType, TaskTypeIcon } from './task-type-icon'
 import { TaskPullRequestChip, type TaskPullRequestCounts } from './task-pull-requests'
 import { TaskVersionChip, type TaskVersionState } from './task-version-chip'
+import { TaskMilestoneChip, type TaskMilestoneState } from './task-milestone-chip'
 import { useWindowedRows } from './use-windowed-rows'
 
 export interface TaskTableRow {
@@ -31,6 +32,8 @@ export interface TaskTableRow {
   labels?: string[]
   /** The version the task is planned into, for the Version column. */
   version?: { name: string; state: TaskVersionState } | null
+  /** The milestone the task is in, for the Milestone column. */
+  milestone?: { name: string; state: TaskMilestoneState } | null
   /** The pull requests mentioning the task, by state: a chip after the summary. */
   prs?: TaskPullRequestCounts | null
   startDate?: string | null
@@ -51,6 +54,7 @@ export const TASK_TABLE_COLUMNS = [
   'parent',
   'labels',
   'version',
+  'milestone',
   'dates',
   'created',
   'updated',
@@ -122,6 +126,7 @@ export const TASK_TABLE_HEADS: Record<TaskTableColumn, { label: string; sort?: T
   parent: { label: 'Parent' },
   labels: { label: 'Labels' },
   version: { label: 'Version' },
+  milestone: { label: 'Milestone' },
   dates: { label: 'Dates', sort: 'startDate' },
   created: { label: 'Created', sort: 'createdAt' },
   updated: { label: 'Updated', sort: 'updatedAt' },
@@ -218,6 +223,8 @@ function Cell({ column, row, hrefFor }: { column: TaskTableColumn; row: TaskTabl
       )
     case 'version':
       return row.version ? <TaskVersionChip name={row.version.name} state={row.version.state} variant="outline" /> : null
+    case 'milestone':
+      return row.milestone ? <TaskMilestoneChip name={row.milestone.name} state={row.milestone.state} variant="outline" /> : null
     case 'dates':
       return row.startDate && row.endDate ? (
         <span className="text-xs whitespace-nowrap text-muted-foreground">
@@ -261,6 +268,8 @@ function widthOf(column: TaskTableColumn, row: TaskTableRow): string | null {
       return (row.labels ?? []).join('\u001f')
     case 'version':
       return row.version?.name ?? ''
+    case 'milestone':
+      return row.milestone?.name ?? ''
     case 'dates':
       return row.startDate && row.endDate ? `${formatDay(row.startDate)}–${formatDay(row.endDate)}` : ''
     case 'created':

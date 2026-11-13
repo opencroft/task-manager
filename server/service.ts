@@ -13,6 +13,7 @@ import { RELATION_GROUPS, type RelationGroup } from '../shared/dependencies.ts'
 import { type FieldFilterInput, fieldFilterOf, isFieldFilter } from '../shared/filters.ts'
 import {
   type ActivityEntry,
+  type ActivityTextsResult,
   type Actor,
   type Assignee,
   type AssigneeOption,
@@ -53,6 +54,16 @@ import {
   type StatusChangeEvent,
   type TaskEvent,
 } from './hooks.ts'
+import {
+  applyMoves,
+  datesOnEntry,
+  datesWarning,
+  followingSubtasks,
+  type MilestoneMove,
+  milestoneFor,
+  moveOf,
+  resolveMilestone,
+} from './milestones/store.ts'
 import { evenRanks, rankBetween } from './rank.ts'
 import { findStatus } from './status-refs.ts'
 import { resolveVersion, versionIdFor } from './versions/store.ts'
@@ -127,6 +138,9 @@ interface TaskRow {
   version_id: number | null
   version_name: string | null
   version_state: 'planned' | 'released' | 'archived' | null
+  milestone_id: number | null
+  milestone_name: string | null
+  milestone_state: 'open' | 'archived' | null
   /** The states of the pull requests mentioning the task, comma-separated; null for none. */
   pr_states: string | null
 }
@@ -147,6 +161,8 @@ const SUMMARY_SELECT = `
     (SELECT group_concat(l.label, char(31)) FROM task_label l WHERE l.task_id = t.id) AS labels,
     (SELECT v.name FROM version v WHERE v.id = t.version_id) AS version_name,
     (SELECT v.state FROM version v WHERE v.id = t.version_id) AS version_state,
+    (SELECT m.name FROM milestone m WHERE m.id = t.milestone_id) AS milestone_name,
+    (SELECT m.state FROM milestone m WHERE m.id = t.milestone_id) AS milestone_state,
     (SELECT group_concat(pr.state) FROM pull_request_mention m JOIN pull_request pr ON pr.id = m.pr_id WHERE m.number = t.number) AS pr_states
   FROM task t
   JOIN status s ON s.id = t.status_id
@@ -195,6 +211,8 @@ function toSummary(scope: Scope, row: TaskRow): TaskSummary {
     childDoneCount: row.child_done_count,
     labels: row.labels ? row.labels.split('\u001f').sort((a, b) => a.localeCompare(b)) : [],
     version: row.version_name && row.version_state ? { name: row.version_name, state: row.version_state } : null,
+    milestone:
+      row.milestone_name && row.milestone_state ? { name: row.milestone_name, state: row.milestone_state } : null,
     startDate: row.start_date,
     endDate: row.end_date,
     rank: row.rank,
@@ -344,6 +362,11 @@ function checkDates(start: string | null, end: string | null): void {
   }
 }
 
+/** A schedule as a history entry writes it, `start → end`; null when unscheduled. */
+export function describeDates(start: string | null, end: string | null): string | null {
+  return start ? `${start} → ${end}` : null
+}
+
 /** "me" names the caller, so an agent can assign itself or list its tasks without knowing how it is listed. */
 function isMe(name: string): boolean {
   return name.trim().toLowerCase() === 'me'
@@ -417,6 +440,16 @@ async function resolveAssignee(scope: Scope, input: ActionInputs['task_create'][
 
 // ─── Activity ──────────────────────────────────────────────────────────────
 
+/** How long after its last update a field's history entry takes in the same actor's next change to that field. */
+export const HISTORY_MERGE_WINDOW_MS = 5 * 60_000
+
+/**
+ * Write a history entry. A field change folds into the task's latest entry
+ * for that field when the same actor wrote it within HISTORY_MERGE_WINDOW_MS
+ * and the change continues from that entry's `to`: the entry keeps its `from`,
+ * takes the new `to` and the time of this write, and is deleted once `to` is
+ * back at `from`. Other kinds of entry are always added.
+ */
 export function record(
   scope: Scope,
   taskId: number,
@@ -425,16 +458,133 @@ export function record(
   from: string | null = null,
   to: string | null = null,
 ): void {
+  const at = now()
+  if (kind === 'field' && field !== null && mergeFieldChange(scope, taskId, field, from, to, at)) {
+    return
+  }
   scope.db
     .prepare(
       `INSERT INTO activity (task_id, actor_kind, actor_name, kind, field, from_value, to_value, at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(taskId, scope.inv.actor.kind, scope.inv.actor.name, kind, field, from, to, now())
+    .run(taskId, scope.inv.actor.kind, scope.inv.actor.name, kind, field, from, to, at)
+}
+
+/**
+ * Fold a field change into the field's latest entry; false when it starts a new one.
+ *
+ * Continuity (`from` equals the entry's `to`) keeps add/remove fields such as
+ * blockers apart: adding X then Y records two entries, adding then removing X
+ * cancels out. Description entries stored with neither text (`null → null`)
+ * never continue into a new edit, whose `from` is the text (never null), so
+ * they stay as written.
+ */
+function mergeFieldChange(
+  scope: Scope,
+  taskId: number,
+  field: string,
+  from: string | null,
+  to: string | null,
+  at: string,
+): boolean {
+  const last = scope.db
+    .prepare(
+      `SELECT id, actor_kind, actor_name, from_value, to_value, at FROM activity
+       WHERE task_id = ? AND kind = 'field' AND field = ? ORDER BY at DESC, id DESC LIMIT 1`,
+    )
+    .get(taskId, field) as
+    | {
+        id: number
+        actor_kind: string
+        actor_name: string
+        from_value: string | null
+        to_value: string | null
+        at: string
+      }
+    | undefined
+  const { actor } = scope.inv
+  if (
+    !last ||
+    last.actor_kind !== actor.kind ||
+    last.actor_name !== actor.name ||
+    Date.parse(at) - Date.parse(last.at) >= HISTORY_MERGE_WINDOW_MS ||
+    last.to_value !== from
+  ) {
+    return false
+  }
+  if (last.from_value === to) {
+    scope.db.prepare('DELETE FROM activity WHERE id = ?').run(last.id)
+  } else {
+    scope.db.prepare('UPDATE activity SET to_value = ?, at = ? WHERE id = ?').run(to, at, last.id)
+  }
+  return true
 }
 
 export function touch(scope: Scope, taskId: number): void {
   scope.db.prepare('UPDATE task SET updated_at = ? WHERE id = ?').run(now(), taskId)
+}
+
+interface ActivityRow {
+  id: number
+  actor_kind: 'agent' | 'person'
+  actor_name: string
+  kind: ActivityEntry['kind']
+  field: string | null
+  from_value: string | null
+  to_value: string | null
+  at: string
+}
+
+/** The field whose history entries keep whole texts, which a task read leaves out. */
+const TEXT_FIELD = 'description'
+
+/** Selects the description edits that kept their texts; entries stored with neither text have none to read. */
+const WITH_TEXTS = `kind = 'field' AND field = '${TEXT_FIELD}' AND (from_value IS NOT NULL OR to_value IS NOT NULL)`
+
+/**
+ * A history entry as a task read shows it. A description edit's texts are as
+ * long as the description, twice over, so the entry says only that it has them
+ * (`textsAvailable`) and `activityTexts` returns them on request.
+ */
+function activityEntryOf(row: ActivityRow): ActivityEntry {
+  const entry: ActivityEntry = {
+    id: row.id,
+    actor: { kind: row.actor_kind, name: row.actor_name },
+    kind: row.kind,
+    field: row.field,
+    from: row.from_value,
+    to: row.to_value,
+    at: row.at,
+  }
+  if (row.kind !== 'field' || row.field !== TEXT_FIELD) {
+    return entry
+  }
+  const textsAvailable = row.from_value !== null || row.to_value !== null
+  return { ...entry, from: null, to: null, ...(textsAvailable ? { textsAvailable: true } : {}) }
+}
+
+/** The previous and new texts of a task's description edits, oldest first, or of the one entry `id` names. */
+export function activityTexts(scope: Scope, input: ActionInputs['task_activity_texts']): ActivityTextsResult {
+  const row = requireRow(scope, input.key)
+  const key = keyOf(scope, row.number)
+  const one = input.id !== undefined
+  if (one && !Number.isInteger(input.id)) {
+    throw new TaskError(`"id" must be a whole number: a history entry's id from task_get's activity`)
+  }
+  const rows = scope.db
+    .prepare(
+      `SELECT id, from_value, to_value FROM activity WHERE task_id = ? AND ${WITH_TEXTS}${one ? ' AND id = ?' : ''}
+       ORDER BY at, id`,
+    )
+    .all(...(one ? [row.id, input.id as number] : [row.id])) as Array<
+    Pick<ActivityRow, 'id' | 'from_value' | 'to_value'>
+  >
+  if (one && rows.length === 0) {
+    throw new TaskError(
+      `${key} has no description edit ${input.id} with texts: pass the id of an activity entry that has textsAvailable: true`,
+    )
+  }
+  return { key, entries: rows.map((text) => ({ id: text.id, from: text.from_value, to: text.to_value })) }
 }
 
 // ─── Ranks ─────────────────────────────────────────────────────────────────
@@ -516,7 +666,16 @@ const isSortField = (value: unknown): value is TaskSortField =>
   typeof value === 'string' && Object.hasOwn(SORT_SQL, value)
 
 /** The list-valued filters, each read by `checkedFieldFilter`, which takes any value. */
-type FilterField = 'status' | 'statusCategory' | 'assignee' | 'type' | 'priority' | 'label' | 'version' | 'parent'
+type FilterField =
+  | 'status'
+  | 'statusCategory'
+  | 'assignee'
+  | 'type'
+  | 'priority'
+  | 'label'
+  | 'version'
+  | 'milestone'
+  | 'parent'
 
 /**
  * What `listTasks` reads: `task_list`'s parameters, or a board's stored
@@ -661,6 +820,14 @@ function filterClauses(
       ),
     ),
   )
+  field<string>('milestone', input.milestone, (milestones) =>
+    orNone('t.milestone_id', milestones, (refs) =>
+      inList(
+        't.milestone_id',
+        refs.map((ref) => resolveMilestone(scope, ref).id),
+      ),
+    ),
+  )
   field<TaskKey>('parent', input.parent, (parents) =>
     orNone('t.parent_id', parents, (keys) =>
       inList(
@@ -779,27 +946,8 @@ export function getTask(scope: Scope, key: unknown): Task {
     scope.db.prepare('SELECT * FROM comment WHERE task_id = ? ORDER BY created_at, id').all(row.id) as CommentRow[]
   ).map((c) => commentOf(scope, c))
   const activity = (
-    scope.db.prepare('SELECT * FROM activity WHERE task_id = ? ORDER BY at, id').all(row.id) as Array<{
-      id: number
-      actor_kind: 'agent' | 'person'
-      actor_name: string
-      kind: ActivityEntry['kind']
-      field: string | null
-      from_value: string | null
-      to_value: string | null
-      at: string
-    }>
-  ).map(
-    (a): ActivityEntry => ({
-      id: a.id,
-      actor: { kind: a.actor_kind, name: a.actor_name },
-      kind: a.kind,
-      field: a.field,
-      from: a.from_value,
-      to: a.to_value,
-      at: a.at,
-    }),
-  )
+    scope.db.prepare('SELECT * FROM activity WHERE task_id = ? ORDER BY at, id').all(row.id) as unknown as ActivityRow[]
+  ).map(activityEntryOf)
   return {
     ...summary,
     description: row.description,
@@ -913,12 +1061,15 @@ export async function createTask(scope: Scope, input: ActionInputs['task_create'
   const status =
     input.status === undefined || input.status === '' ? defaultStatus(scope) : resolveStatus(scope, input.status)
   const labels = cleanLabels(input.labels ?? [])
-  const startDate = cleanDate(input.startDate, 'startDate')
-  const endDate = cleanDate(input.endDate, 'endDate')
-  checkDates(startDate, endDate)
+  const given = { startDate: cleanDate(input.startDate, 'startDate'), endDate: cleanDate(input.endDate, 'endDate') }
+  checkDates(given.startDate, given.endDate)
   const assignee = await resolveAssignee(scope, input.assignee)
   const parent = input.parent ? requireRow(scope, input.parent) : null
   const versionId = input.version === undefined ? null : versionIdFor(scope, input.version)
+  // A task created in a milestone is dated inside it, unless the write dates it.
+  const milestone = input.milestone === undefined ? null : milestoneFor(scope, input.milestone)
+  const datesGiven = input.startDate !== undefined || input.endDate !== undefined
+  const { startDate, endDate } = milestone && !datesGiven ? datesOnEntry(given, milestone) : given
 
   const number = transaction(scope.db, () => {
     const meta = scope.db.prepare("SELECT value FROM project_meta WHERE key = 'next_number'").get() as { value: string }
@@ -930,8 +1081,8 @@ export async function createTask(scope: Scope, input: ActionInputs['task_create'
       .prepare(
         `INSERT INTO task (number, summary, description, status_id, type, priority, assignee_kind, assignee_id,
            assignee_name, reporter_kind, reporter_name, parent_id, rank, start_date, end_date, created_at, updated_at,
-           version_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           version_id, milestone_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         next,
@@ -952,6 +1103,7 @@ export async function createTask(scope: Scope, input: ActionInputs['task_create'
         stamp,
         stamp,
         versionId,
+        milestone?.id ?? null,
       )
     const id = Number(result.lastInsertRowid)
     const addLabel = scope.db.prepare('INSERT INTO task_label (task_id, label) VALUES (?, ?)')
@@ -996,7 +1148,7 @@ export async function updateTask(scope: Scope, input: ActionInputs['task_update'
     if (input.description !== row.description) {
       sets.push('description = ?')
       args.push(input.description)
-      changes.push(['description', null, null])
+      changes.push(['description', row.description, input.description])
     }
   }
   if (input.type !== undefined && input.type !== row.type) {
@@ -1039,8 +1191,7 @@ export async function updateTask(scope: Scope, input: ActionInputs['task_update'
     if (start !== row.start_date || end !== row.end_date) {
       sets.push('start_date = ?', 'end_date = ?')
       args.push(start, end)
-      const describe = (s: string | null, e: string | null) => (s ? `${s} → ${e}` : null)
-      changes.push(['dates', describe(row.start_date, row.end_date), describe(start, end)])
+      changes.push(['dates', describeDates(row.start_date, row.end_date), describeDates(start, end)])
     }
   }
   let labels: string[] | undefined
@@ -1062,9 +1213,35 @@ export async function updateTask(scope: Scope, input: ActionInputs['task_update'
       changes.push(['version', row.version_name, name])
     }
   }
+  // Entering a milestone dates the task inside it unless this write dates it; leaving one keeps the dates.
+  // The subtasks that were where the task was follow it, each in the same way.
+  let moves: MilestoneMove[] = []
+  if (input.milestone !== undefined) {
+    const milestone = milestoneFor(scope, input.milestone, row.milestone_id)
+    if ((milestone?.id ?? null) !== row.milestone_id) {
+      const own = moveOf(scope, row, milestone, input.startDate !== undefined || input.endDate !== undefined)
+      sets.push('milestone_id = ?')
+      args.push(milestone?.id ?? null)
+      changes.push(['milestone', own.from, milestone?.name ?? null])
+      if (own.newDates) {
+        sets.push('start_date = ?', 'end_date = ?')
+        args.push(own.newDates.startDate, own.newDates.endDate)
+        changes.push([
+          'dates',
+          describeDates(row.start_date, row.end_date),
+          describeDates(own.newDates.startDate, own.newDates.endDate),
+        ])
+      }
+      const followers =
+        input.withSubtasks === false ? [] : followingSubtasks(scope, row.id, row.milestone_id, milestone)
+      moves = [own, ...followers]
+    }
+  }
   const to = input.status !== undefined && input.status !== '' ? resolveStatus(scope, input.status) : null
 
   const pending = transaction(scope.db, () => {
+    // The task's own move is in `sets`; its subtasks' are written here.
+    applyMoves(scope, moves.slice(1))
     if (sets.length) {
       scope.db.prepare(`UPDATE task SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`).run(...args, now(), row.id)
     }
@@ -1083,9 +1260,12 @@ export async function updateTask(scope: Scope, input: ActionInputs['task_update'
   })
   const key = keyOf(scope, row.number)
   if (changes.length || pending) {
-    scope.notify([key], 'task')
+    scope.notify([key, ...moves.slice(1).map((move) => move.key)], 'task')
   }
-  const warnings = await finishStatusChanges(scope, [pending])
+  const warnings = [
+    ...moves.flatMap((move) => datesWarning(move) ?? []),
+    ...(await finishStatusChanges(scope, [pending])),
+  ]
   const task = getTask(scope, key)
   if (assigned) {
     await announce(scope, task, { kind: 'assigned', assignee: assigned })
