@@ -6,11 +6,13 @@
 // the peek beside it.
 
 import { AppActions, type AppComponentProps, AppSidebar } from '@opencroft/client/app'
+import { Markdown } from '@opencroft/client/markdown'
 import { cn } from 'cn'
 import { Settings2 } from 'lucide-react'
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { FieldHintMarkdownProvider } from '@/components/ui/field-hint'
 import { TaskPeekLayout } from '@/components/ui/tasks/task-peek-panel'
 import { TasksSidebar } from '@/components/ui/tasks/tasks-nav'
 import { PROJECT_KEY_PATTERN } from '../../shared/types'
@@ -27,7 +29,16 @@ import { ShortcutsProvider } from './shortcuts'
 import { SidebarSectionProvider } from './sidebar-section'
 import { peekKeyOf, useNewTabClicks } from './task-opener'
 
-export function TasksApp({ instanceId, params }: AppComponentProps) {
+export function TasksApp(props: AppComponentProps) {
+  // Field hints are markdown, drawn the way the host draws it.
+  return (
+    <FieldHintMarkdownProvider markdown={Markdown}>
+      <ProjectApp {...props} />
+    </FieldHintMarkdownProvider>
+  )
+}
+
+function ProjectApp({ instanceId, params }: AppComponentProps) {
   const projectKey = (params.id ?? '').trim()
   // First, so every page below already addresses the App's own paths.
   useAppRouter()

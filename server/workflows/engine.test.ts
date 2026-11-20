@@ -6,7 +6,7 @@ import type { Actor, Status, TaskSummary } from '../../shared/types.ts'
 import type { StepApprovalDraft, StepSessionOptions, WorkflowStepDraft } from '../../shared/workflows.ts'
 import { allMigrations, migrate } from '../db.ts'
 import type { NotificationDraft } from '../inbox/store.ts'
-import { oneThreadAtATime } from '../task-threads.ts'
+import { type ListedThread, oneThreadAtATime } from '../task-threads.ts'
 import type { CompactResult } from './compaction.ts'
 import { normalizeDraft } from './definition.ts'
 import {
@@ -75,9 +75,15 @@ function outcomeOf(options: StepSessionOptions | undefined, unoffered: ReadonlyA
  * by default it shrinks the thread's context to 20k. A thread in `gone` was
  * deleted, and the host refuses every call on it; one in `foreign` is one the
  * host does not count as the task manager's, so it refuses to archive or
- * unarchive it while still taking messages into it. `existing` holds threads
- * the task manager did not open, by ref, with the agent and chat each is in:
- * what a step can be given; the host describes them with that agent and chat.
+ * unarchive it while still taking messages into it, or to read its usage.
+ * `existing` holds threads the task manager did not open, by ref, with the
+ * agent and chat each is in: what a step can be given; the host describes
+ * them with that agent and chat. `listed` is every named thread of the
+ * space's chat as `activity` lists it: the ones the task manager opened, and
+ * those `byHand` adds for a person. While `failing.session` is set, a start
+ * keeps the thread it made and then fails with that reason, as the host does
+ * when the agent's session cannot open; the message it carried is kept in
+ * `failedStarts`.
  */
 function fakeChats(
   opts: {
@@ -95,7 +101,14 @@ function fakeChats(
   gone: Set<string>
   foreign: Set<string>
   existing: Map<string, { agentNodeId: string; chatSlug: string }>
+  listed: Map<string, ListedThread>
+  byHand: (agentNodeId: string, title: string) => string
+  failing: { session: string | null }
+  failedStarts: Array<{ title?: string; message: string }>
 } {
+  const listed = new Map<string, ListedThread>()
+  const failing: { session: string | null } = { session: null }
+  const failedStarts: Array<{ title?: string; message: string }> = []
   const sent: Sent[] = []
   const existing = new Map<string, { agentNodeId: string; chatSlug: string }>()
   const titles = new Set<string>()
@@ -112,6 +125,16 @@ function fakeChats(
     }
   }
   let n = 0
+  const list = (ref: string, agentNodeId: string, title: string | undefined, lastTurnAt: string | null = null) =>
+    listed.set(ref, {
+      ref,
+      threadId: `thread-${ref}`,
+      title: title ?? null,
+      agent: { nodeId: agentNodeId },
+      chat: { ref: 'chat-1' },
+      archived: false,
+      lastTurnAt,
+    })
   return {
     sent,
     threads,
@@ -121,6 +144,27 @@ function fakeChats(
     gone,
     foreign,
     existing,
+    listed,
+    failing,
+    failedStarts,
+    byHand: (agentNodeId, title) => {
+      const ref = `dev.hand.${title}`
+      titles.add(`chat-1 ${agentNodeId} ${title}`)
+      // A person starts a thread with a message, so its session has an event.
+      list(ref, agentNodeId, title, '2026-09-26T06:00:00.000Z')
+      foreign.add(ref)
+      return ref
+    },
+    activity: async (options) => ({
+      threads: [...listed.values()]
+        .filter((t) => !gone.has(t.ref) && (options.includeArchived || !archived.has(t.ref)))
+        .map((t) => ({
+          ...t,
+          archived: archived.has(t.ref),
+          lastTurnAt: threads.get(t.ref)?.turns.at(-1)?.endedAt ?? t.lastTurnAt ?? null,
+        })),
+      nextCursor: null,
+    }),
     thread: async (ref) => {
       reach(ref)
       const known = existing.get(ref)
@@ -150,6 +194,10 @@ function fakeChats(
       archived.delete(ref)
     },
     usage: async (thread, options) => {
+      reach(thread)
+      if (foreign.has(thread)) {
+        throw new Error('Not available')
+      }
       const usage = threads.get(thread) ?? { turns: [], busy: false }
       const since = options?.since ?? ''
       return { ...usage, turns: usage.turns.filter((t) => t.endedAt >= since) }
@@ -192,6 +240,11 @@ function fakeChats(
       }
       titles.add(named)
       n += 1
+      list(`dev.agent.t${n}`, input.agentNodeId, input.title)
+      if (failing.session) {
+        failedStarts.push({ title: input.title, message: input.message })
+        throw new Error(failing.session)
+      }
       sent.push({
         kind: 'start',
         target: input.chat,
@@ -1155,22 +1208,20 @@ test("a live thread the host does not count as the task manager's is written to 
   assert.deepEqual([chats.sent.at(-1)?.kind, chats.sent.at(-1)?.target], ['send', 'dev.agent.t1'])
 })
 
-test('an archived thread the host will not let the task manager unarchive is left: the step opens a new one beside it', async () => {
+test('an archived thread the host will not let the task manager unarchive still holds its name: the step waits, and no thread opens under another', async () => {
   const { env, chats, task, changeAs, warnings } = setup()
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
   await finishStep(env, changeAs(DEV), { task: task(), transition: 'In Review', summary: 'done', actor: DEV })
   chats.archived.add('dev.agent.t1')
   chats.foreign.add('dev.agent.t1')
+  const before = chats.sent.length
   await finishStep(env, changeAs(REV), { task: task(), transition: 'In Progress', summary: 'again', actor: REV })
-  assert.deepEqual(warnings, [])
-  const opened = chats.sent.at(-1)
-  assert.deepEqual(
-    [opened?.kind, opened?.agentNodeId, opened?.title],
-    ['start', 'agent_dev', 'TASK-1 (task manager)'],
-    'the old thread keeps its title',
-  )
+  const why =
+    'Dev already has a thread named "TASK-1" in "Dev" (the task manager did not open it): rename or delete that thread, then restart the step'
+  assert.deepEqual(warnings, [`TASK-1 Development: ${why}`])
+  assert.deepEqual(chats.sent.slice(before), [], 'nothing started or sent')
   const dev = activeRunForTask(env.db, 'TASK', 1)?.steps[0]
-  assert.deepEqual([dev?.state, dev?.threadRef], ['active', 'dev.agent.t3'])
+  assert.deepEqual([dev?.state, dev?.error], ['waiting', why])
 })
 
 test('a recorded thread the host fails to read for any other reason leaves the step waiting with that reason', async () => {
@@ -1476,42 +1527,68 @@ test('different agents get different threads, each titled with the task key', as
   )
 })
 
-test("an agent's thread already named with the task key is left alone: the step opens its own beside it, and the agent's next step continues there", async () => {
-  const { env, chats, task, changeAs } = setup({ assignee: REV_ASSIGNED })
-  // Started by hand, before the run.
-  chats.titles.add('chat-1 agent_rev TASK-1')
+test("a thread a person started under the task key is never written to: the step waits saying why, and once it is deleted the restart opens the step's thread under the task key", async () => {
+  const { env, chats, task, changeAs, warnings } = setup()
+  const byHand = chats.byHand('agent_dev', 'TASK-1')
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
-  await finishStep(env, changeAs(REV), { task: task(), transition: 'In Review', summary: 'done', actor: REV })
+  const why =
+    'Dev already has a thread named "TASK-1" in "Dev" (the task manager did not open it): rename or delete that thread, then restart the step'
+  assert.deepEqual(warnings, [`TASK-1 Development: ${why}`])
+  assert.equal(chats.sent.length, 0, 'no thread under another name, nothing sent into the taken one')
+  const waiting = activeRunForTask(env.db, 'TASK', 1)?.steps[0]
+  assert.deepEqual([waiting?.state, waiting?.error, waiting?.threadRef], ['waiting', why, null])
+
+  await assert.rejects(restartStep(env, changeAs(PERSON), { task: task(), step: 'Development', actor: PERSON }), {
+    message: `TASK-1 Development: ${why}`,
+  })
+  assert.equal(chats.sent.length, 0, 'a restart refuses the same way')
+
+  // A person deletes the thread, which frees its name.
+  chats.gone.add(byHand)
+  chats.titles.delete('chat-1 agent_dev TASK-1')
+  await restartStep(env, changeAs(PERSON), { task: task(), step: 'Development', actor: PERSON })
   assert.deepEqual(
-    chats.sent.map((s) => [s.kind, s.kind === 'start' ? s.title : s.target]),
-    [
-      ['start', 'TASK-1 (task manager)'],
-      ['send', 'dev.agent.t1'],
-    ],
+    chats.sent.map((s) => [s.kind, s.agentNodeId, s.title]),
+    [['start', 'agent_dev', 'TASK-1']],
   )
-  const steps = activeRunForTask(env.db, 'TASK', 1)?.steps ?? []
-  assert.deepEqual(
-    steps.map((s) => [s.name, s.state, s.error, s.threadRef]),
-    [
-      ['Development', 'done', null, 'dev.agent.t1'],
-      ['Review', 'active', null, 'dev.agent.t1'],
-    ],
-  )
+  const dev = activeRunForTask(env.db, 'TASK', 1)?.steps[0]
+  assert.deepEqual([dev?.state, dev?.error, dev?.threadRef], ['active', null, 'dev.agent.t1'])
 })
 
-test('a step waits with the reason only when every title for its thread is taken', async () => {
+test('a first start whose session failed to open leaves its thread: the restart goes on in that same thread, with the opening message', async () => {
   const { env, chats, task, changeAs, warnings } = setup()
-  for (const title of ['TASK-1', 'TASK-1 (task manager)', 'TASK-1 (task manager 2)', 'TASK-1 (task manager 3)']) {
-    chats.titles.add(`chat-1 agent_dev ${title}`)
-  }
+  chats.failing.session = '(SSH) Channel open failure'
   await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
-  const [development] = activeRunForTask(env.db, 'TASK', 1)?.steps ?? []
+  assert.deepEqual(warnings, ['TASK-1 Development: (SSH) Channel open failure'])
+  const failed = activeRunForTask(env.db, 'TASK', 1)?.steps[0]
+  assert.deepEqual([failed?.state, failed?.threadRef], ['waiting', null], 'the failed start recorded no thread')
+
+  chats.failing.session = null
+  await restartStep(env, changeAs(PERSON), { task: task(), step: 'Development', actor: PERSON })
   assert.deepEqual(
-    [development?.state, development?.error],
-    ['waiting', 'This agent already has a thread named "TASK-1 (task manager 3)" here'],
+    chats.sent.map((s) => [s.kind, s.target, s.message]),
+    [['send', 'dev.agent.t1', chats.failedStarts[0]?.message]],
+    'the message the failed start carried, into the thread it left; no second thread',
   )
-  assert.equal(warnings.length, 1)
-  assert.equal(chats.sent.length, 0)
+  const dev = activeRunForTask(env.db, 'TASK', 1)?.steps[0]
+  assert.deepEqual([dev?.state, dev?.error, dev?.threadRef], ['active', null, 'dev.agent.t1'])
+})
+
+test('a thread the task manager opened under the task key that has turns is not taken over: the restart refuses', async () => {
+  const { env, chats, task, changeAs } = setup()
+  chats.failing.session = '(SSH) Channel open failure'
+  await startWorkflow(env, changeAs(PERSON), { task: task(), actor: PERSON })
+  chats.failing.session = null
+  // Someone wrote to the agent in it since.
+  chats.threads.set('dev.agent.t1', { turns: [turn('06:05', 10)], busy: false })
+  const why =
+    'Dev already has a thread named "TASK-1" in "Dev" (it is already in use): rename or delete that thread, then restart the step'
+  await assert.rejects(restartStep(env, changeAs(PERSON), { task: task(), step: 'Development', actor: PERSON }), {
+    message: `TASK-1 Development: ${why}`,
+  })
+  assert.deepEqual(chats.sent, [])
+  const dev = activeRunForTask(env.db, 'TASK', 1)?.steps[0]
+  assert.deepEqual([dev?.state, dev?.error], ['waiting', why])
 })
 
 test('steps sharing a thread each count only their own turns; the finishing turn goes to the step it finished', async () => {

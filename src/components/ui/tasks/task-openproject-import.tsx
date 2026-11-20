@@ -3,10 +3,11 @@ import { type FormEvent, type ReactNode, useId, useState } from 'react'
 
 import { Button } from '../button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../dialog'
+import { FieldHint } from '../field-hint'
 import { Input } from '../input'
 import { Skeleton } from '../skeleton'
 import { TaskManagerError } from '../states/task-manager-error'
-import { cn } from '@/lib/utils'
+import { cn } from 'cn'
 
 /** Where the project comes from. `secretKey` names a Secrets Store key; the token itself never reaches the page. */
 export interface OpenProjectConnectionValue {
@@ -654,12 +655,17 @@ function Schedule({ sync, choices, onChange }: ScheduleProps) {
   return (
     <div className='flex min-w-0 flex-col gap-1.5 text-sm'>
       <div className='flex min-w-0 flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3'>
-        <label htmlFor={`${id}-sync`} className='font-medium sm:flex-1'>
-          Keep in step with OpenProject
-        </label>
+        <FieldHint
+          about='Keep in step with OpenProject'
+          text="Imports again on its own with the last import's mapping. Changes made here are kept; where OpenProject changed the same field, the last import lists it."
+          className='sm:flex-1'
+        >
+          <label htmlFor={`${id}-sync`} className='font-medium'>
+            Keep in step with OpenProject
+          </label>
+        </FieldHint>
         <select
           id={`${id}-sync`}
-          aria-describedby={`${id}-sync-help`}
           className={cn(SELECT, 'sm:w-44')}
           value={sync.minutes === null ? 'off' : String(sync.minutes)}
           disabled={busy}
@@ -673,9 +679,6 @@ function Schedule({ sync, choices, onChange }: ScheduleProps) {
           ))}
         </select>
       </div>
-      <p id={`${id}-sync-help`} className='text-xs text-muted-foreground'>
-        Imports again on its own with the last import's mapping. Changes made here are kept; where OpenProject changed the same field, the last import lists it.
-      </p>
       {sync.error ? (
         <Problem>
           The scheduled import failed {when(sync.error.at)}: {sync.error.message}

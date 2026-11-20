@@ -1,8 +1,8 @@
 // One session per agent per task. Every thread the task manager opens for a
 // task, for a workflow step or for a mention, is that agent's thread on the
-// task: titled with the task key alone (or with a suffix when that title is
-// taken, see `openTaskThread`), and continued by whichever of the two reaches
-// the agent next, from any step and any run of the task.
+// task: titled with the task key, and continued by whichever of the two
+// reaches the agent next, from any step and any run of the task. It opens
+// under that title or not at all (see `openTaskThread`).
 //
 // Only threads the task manager opened itself are found here. The host lets it
 // read the usage of, and archive, only those, so a thread a person started by
@@ -10,47 +10,149 @@
 // thread can still be gone when it is reached again (a person deleted it), or
 // be one the host does not count as the task manager's (opened under another
 // extension id, or with no opener on record):
-// `reopenTaskThread` says so, and the caller opens a new one.
+// `reopenTaskThread` says so, and the caller opens a new one under the task
+// key, which a thread still holding that name refuses.
 
 import type { Db } from './db.ts'
-
-/**
- * The titles the agent's thread on a task may open under, in order: the key
- * alone, then the key with a suffix for when that is taken. The suffix names the
- * task manager, not the workflow, because a mention opens the same thread.
- * Bounded: with all of them taken, something other than one stray thread holds
- * the names, and the step waits with the host's reason for a person to look.
- */
-const taskThreadTitles = (taskKey: string): string[] => [
-  taskKey,
-  `${taskKey} (task manager)`,
-  `${taskKey} (task manager 2)`,
-  `${taskKey} (task manager 3)`,
-]
 
 /** The host's refusal of a second thread of one name for the agent in the chat. */
 const isTitleTaken = (error: unknown): boolean => (error as { code?: unknown } | null)?.code === 'slug-taken'
 
+/** A thread as the host's `activity` lists it: what a taken title is checked by. */
+export interface ListedThread {
+  ref: string
+  threadId: string
+  title: string | null
+  agent: { nodeId: string }
+  chat?: { ref: string }
+  archived: boolean
+  /** When its session last had an event; null when it never had one. Absent on a host that does not say. */
+  lastTurnAt?: string | null
+}
+
+/** The parts of the host's group chats a taken title is checked with; each is absent on a host without it. */
+export interface TakenTitleChecker {
+  activity?(options: {
+    chat?: string
+    limit?: number
+    cursor?: string
+    includeArchived?: boolean
+  }): Promise<{ threads: ListedThread[]; nextCursor: string | null }>
+  usage?(ref: string): Promise<{ turns: unknown[]; busy: boolean }>
+  unarchive?(ref: string): Promise<unknown>
+}
+
+/** Where the agent's thread on a task opens, named as a person reads them. */
+export interface TaskThreadPlace {
+  taskKey: string
+  chat: { ref: string; name: string }
+  agent: { nodeId: string; name: string }
+}
+
 /**
- * Open the agent's thread on the task under the first free title. A thread the
- * agent already has under the task key, started by hand or left over from
- * before, keeps its title and is never written to: the task manager opens its
- * own beside it, and every later step and mention finds that one by its
- * recorded ref, never by its title.
+ * The agent's thread on the task can't open: a thread of its name is there
+ * and isn't one the task manager may take over. A person resolves it; the
+ * task manager never opens one under another name beside it.
  */
-export async function openTaskThread<T>(taskKey: string, start: (title: string) => Promise<T>): Promise<T> {
-  let taken: unknown
-  for (const title of taskThreadTitles(taskKey)) {
-    try {
-      return await start(title)
-    } catch (error) {
-      if (!isTitleTaken(error)) {
-        throw error
-      }
-      taken = error
+export class TaskThreadTaken extends Error {}
+
+// Pages of a chat's threads read to find the one holding a title; past them the title is refused unchecked.
+const THREAD_PAGES = 10
+const THREAD_PAGE_SIZE = 500
+
+/**
+ * Open the agent's thread on the task under the task key. When the agent
+ * already has a thread of that name, there are two answers:
+ * - `{ unstarted }`: it is the thread the task manager itself opened for the
+ *   task whose session never started (the host keeps a thread whose first
+ *   message could not be delivered, and the failed start recorded no ref).
+ *   It comes back out of the archive if it is there, and the caller sends
+ *   into it, so a retry goes on where the first try stopped.
+ * - otherwise `TaskThreadTaken`, saying why it can't be used: a thread a
+ *   person or another agent started, or one already used, is never written to,
+ *   and no thread opens under another name.
+ * Any other refusal of the start is thrown as it is.
+ */
+export async function openTaskThread<T>(
+  chats: TakenTitleChecker,
+  place: TaskThreadPlace,
+  start: (title: string) => Promise<T>,
+): Promise<{ started: T } | { unstarted: TaskThread }> {
+  try {
+    return { started: await start(place.taskKey) }
+  } catch (error) {
+    if (!isTitleTaken(error)) {
+      throw error
     }
   }
-  throw taken
+  const checked = await checkTakenTitle(chats, place)
+  if ('unstarted' in checked) {
+    const { ref, threadId, chat, archived } = checked.unstarted
+    if (archived) {
+      await chats.unarchive?.(ref)
+    }
+    return { unstarted: { ref, threadId, chatRef: chat?.ref ?? place.chat.ref } }
+  }
+  throw new TaskThreadTaken(
+    `${place.agent.name} already has a thread named "${place.taskKey}" in "${place.chat.name}" (${checked.why}): rename or delete that thread`,
+  )
+}
+
+/** The thread holding the task key's title, if the task manager may take it over, or why not. */
+async function checkTakenTitle(
+  chats: TakenTitleChecker,
+  place: TaskThreadPlace,
+): Promise<{ unstarted: ListedThread } | { why: string }> {
+  if (!chats.activity || !chats.usage) {
+    return { why: "this host can't show the task manager whose thread it is" }
+  }
+  const found = await findThread(chats.activity, place)
+  if (found === 'not-listed') {
+    // The host compares addresses, not titles: "task-1" takes the address of "TASK-1".
+    return { why: 'its name differs only in case or punctuation' }
+  }
+  if (found === 'cut') {
+    return { why: 'the chat has too many threads for the task manager to find it' }
+  }
+  let usage: { turns: unknown[]; busy: boolean }
+  try {
+    // The host answers the usage only of a thread this extension opened, so this
+    // decides who opened it before anything says whether it was used.
+    usage = await chats.usage(found.ref)
+  } catch (error) {
+    if (isUnreachable(error)) {
+      return { why: 'the task manager did not open it' }
+    }
+    throw error
+  }
+  // A start whose session failed to open leaves no event behind (measured 2026-11-17: no session
+  // event, queue entry or transcript row). Recorded turns alone can't tell: some agents record none.
+  const used = Boolean(found.lastTurnAt) || usage.turns.length > 0 || usage.busy
+  return used ? { why: 'it is already in use' } : { unstarted: found }
+}
+
+async function findThread(
+  activity: NonNullable<TakenTitleChecker['activity']>,
+  place: TaskThreadPlace,
+): Promise<ListedThread | 'not-listed' | 'cut'> {
+  let cursor: string | null = null
+  for (let page = 0; page < THREAD_PAGES; page += 1) {
+    const result = await activity({
+      chat: place.chat.ref,
+      limit: THREAD_PAGE_SIZE,
+      includeArchived: true,
+      ...(cursor ? { cursor } : {}),
+    })
+    const found = result.threads.find((t) => t.agent.nodeId === place.agent.nodeId && t.title === place.taskKey)
+    if (found) {
+      return found
+    }
+    cursor = result.nextCursor
+    if (!cursor) {
+      return 'not-listed'
+    }
+  }
+  return 'cut'
 }
 
 export interface TaskThread {

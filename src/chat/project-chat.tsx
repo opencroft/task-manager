@@ -1,53 +1,36 @@
 // The project's agent chat beside the App: the host's ChatDock around the
 // pages, in the space's chat (the one mention sessions and workflow steps use,
-// and the one the host treats as the space's own), with the page and the
-// task the reader has open offered to the composer as references. A reference
-// names what is open and how to read it (the App's own actions); it never
-// carries the task's text, so the agent reads the current state itself.
+// and the one the host treats as the space's own), with what the reader has
+// open or picked offered to the composer (chat-selection.ts).
 //
-// The references ride the host's selection scope: the composer shows them as a
-// badge, and the reader's pass toggle holds them back from a message.
+// The selection goes into the scope the host mounts on the App's page: the
+// composer shows it as the quote, and the reader's pass toggle holds it back
+// from a message. This component is its only publisher, so a page that drops
+// its picked tasks hands back to the open task or the page rather than
+// clearing the quote.
 
-import { ChatDock, SelectionProvider, type UserSelection, useSelection } from '@opencroft/client/chat'
-import { type ReactNode, useEffect, useState } from 'react'
+import { ChatDock, usePublishSelection } from '@opencroft/client/chat'
+import { createContext, type ReactNode, useContext, useEffect, useState } from 'react'
 
 import type { ProjectInfo } from '../../shared/settings'
 import { tasksApi } from '../lib/api'
+import { type ChatPlace, chatSelection } from './chat-selection'
 
-/** Where the reader is in the App, for the reference. */
-export interface ChatPlace {
-  /** The page's name as the App's sidebar shows it, e.g. "Board"; null on a task's own page. */
-  page: string | null
-  /** The App path of the page, e.g. `/board`. */
-  path: string
-  /** The task open on its own page or in the peek. */
-  taskKey: string | null
-}
+/** Where a page reports the tasks it has picked. Outside the chat, nowhere. */
+const PickedTasks = createContext<(keys: string[]) => void>(() => {})
 
-/** The reference text the agent receives, and the badge the reader sees. */
-export function referenceOf(app: string, projectKey: string, place: ChatPlace): UserSelection {
-  const lines = [
-    `Task manager App ${app} (project ${projectKey}); the reader is on: ${place.page ?? 'a task page'} (${place.path})`,
-  ]
-  if (place.taskKey) {
-    lines.push(`Open task: ${place.taskKey}`)
-    lines.push(`Read it with app_call on ${app}: task_get {"key":"${place.taskKey}"}`)
-  } else {
-    lines.push(`Read the page's tasks with app_call on ${app}: task_list`)
-  }
-  return {
-    label: [place.page, place.taskKey].filter(Boolean).join(' · '),
-    content: lines.join('\n'),
-  }
-}
-
-function ReferenceBridge({ app, projectKey, place }: { app: string; projectKey: string; place: ChatPlace }) {
-  const { setSelection } = useSelection()
-  const { page, path, taskKey } = place
+/**
+ * Offers `keys`, the tasks a page has picked, to the chat in place of the open
+ * task or the page, until the keys are empty or the page unmounts.
+ */
+export function usePickedTasks(keys: readonly string[]): void {
+  const report = useContext(PickedTasks)
+  // By value: a page hands over a fresh array on every render. Task keys hold no newline.
+  const joined = keys.join('\n')
   useEffect(() => {
-    setSelection(referenceOf(app, projectKey, { page, path, taskKey }))
-  }, [app, projectKey, page, path, taskKey, setSelection])
-  return null
+    report(joined ? joined.split('\n') : [])
+  }, [report, joined])
+  useEffect(() => () => report([]), [report])
 }
 
 /**
@@ -70,6 +53,7 @@ export function ProjectChat({
   // The App's address is what an agent passes to `app_call`; the instance id is not.
   // `failed`: the project could not be read, so the pages show without a chat rather than not at all.
   const [info, setInfo] = useState<ProjectInfo | 'failed' | null>(null)
+  const [picked, setPicked] = useState<string[]>([])
 
   useEffect(() => {
     let live = true
@@ -84,6 +68,8 @@ export function ProjectChat({
     }
   }, [instanceId])
 
+  usePublishSelection(info && info !== 'failed' ? chatSelection(info.address, place, picked) : null)
+
   if (info === 'failed') {
     return <>{children}</>
   }
@@ -91,16 +77,13 @@ export function ProjectChat({
     return null
   }
   return (
-    <SelectionProvider>
-      <ChatDock
-        space={info.space}
-        id={`tasks-${projectKey.toLowerCase()}`}
-        title={`Chat · ${info.name}`}
-        chatName={info.name}
-      >
-        <ReferenceBridge app={info.address} projectKey={projectKey} place={place} />
-        {children}
-      </ChatDock>
-    </SelectionProvider>
+    <ChatDock
+      space={info.space}
+      id={`tasks-${projectKey.toLowerCase()}`}
+      title={`Chat · ${info.name}`}
+      chatName={info.name}
+    >
+      <PickedTasks.Provider value={setPicked}>{children}</PickedTasks.Provider>
+    </ChatDock>
   )
 }

@@ -51,7 +51,16 @@ import {
   type SpaceChatProblemKind,
   spaceChatFor,
 } from '../space-chat.ts'
-import { agentTaskThread, isUnreachable, oneThreadAtATime, openTaskThread, reopenTaskThread } from '../task-threads.ts'
+import {
+  agentTaskThread,
+  isUnreachable,
+  type ListedThread,
+  oneThreadAtATime,
+  openTaskThread,
+  reopenTaskThread,
+  type TaskThread,
+  TaskThreadTaken,
+} from '../task-threads.ts'
 import {
   type CompactPort,
   compactSession,
@@ -120,17 +129,9 @@ export interface ChatsPort extends UsagePort, CompactPort {
   archive?(ref: string): Promise<unknown>
   /** Bring an archived thread back; absent on a host without archiving. */
   unarchive?(ref: string): Promise<unknown>
-  /** A page of a chat's live threads, most recently active first; absent on an older host. */
-  activity?(options: { chat?: string; limit?: number; cursor?: string }): Promise<{
-    threads: Array<
-      ChatThread & {
-        ref: string
-        threadId: string
-        title: string | null
-        agent: { nodeId: string }
-        folder?: string | null
-      }
-    >
+  /** A page of a chat's threads, most recently active first, archived ones only when asked; absent on an older host. */
+  activity?(options: { chat?: string; limit?: number; cursor?: string; includeArchived?: boolean }): Promise<{
+    threads: Array<ListedThread & { folder?: string | null }>
     nextCursor: string | null
   }>
 }
@@ -703,8 +704,42 @@ export async function enterStep(env: EngineEnv, input: EnterInput): Promise<void
           : null
       const recorded = own ?? agentTaskThread(db, { taskId: tid, agentId: worker.nodeId, chatSlug: chat.slug })
       // A thread archived when the task closed takes no messages; the step coming back reopens it first.
-      // One the host refuses as unreachable is left, and the step opens a new thread.
-      const reuse = recorded && (await reopenTaskThread(chats, recorded.ref)) ? recorded : null
+      // One the host refuses as unreachable is left, and the step opens a thread under the task key; while
+      // the one left still holds that name, the step waits for a person instead (see openTaskThread).
+      const reopened = recorded && (await reopenTaskThread(chats, recorded.ref)) ? recorded : null
+      // Null when a new thread opened with the step's message: it then has nothing more to send.
+      const openNew = async (): Promise<TaskThread | null> => {
+        const opened = await openTaskThread(chats, { taskKey: task.key, chat, agent: worker }, (title) =>
+          chats.startThread({
+            chat: chat.ref,
+            agentNodeId: worker.nodeId,
+            title,
+            message: openingMessage(message),
+            folder: step.folder || undefined,
+            sessionOptions,
+          }),
+        ).catch((error: unknown) => {
+          throw error instanceof TaskThreadTaken
+            ? new SessionProblem(`${error.message}, then restart the step`, 'session_failed')
+            : error
+        })
+        if ('started' in opened) {
+          const { thread } = opened.started
+          updateRunStep(db, run.id, step.id, {
+            threadRef: thread.ref,
+            threadId: thread.threadId,
+            chatRef: thread.chat.ref,
+            chatSlug: thread.chat.slug,
+            threadGiven: false,
+          })
+          setRoundThread(db, run.id, step.id, thread.ref)
+          recordSessionOptions(opened.started.sessionOptions)
+          return null
+        }
+        // The thread a start before this one opened, whose session never started: the step goes on in it, as new.
+        return opened.unstarted
+      }
+      const reuse = reopened ?? (await openNew())
       if (reuse) {
         updateRunStep(db, run.id, step.id, {
           threadRef: reuse.ref,
@@ -721,7 +756,7 @@ export async function enterStep(env: EngineEnv, input: EnterInput): Promise<void
             thread: reuse.ref,
             queue: 'wait',
             sessionOptions,
-            message: messageFor(Boolean(own), compacted),
+            message: messageFor(reuse === own, compacted),
           })
           recordSessionOptions(sent?.sessionOptions)
         }
@@ -747,28 +782,7 @@ export async function enterStep(env: EngineEnv, input: EnterInput): Promise<void
         void oneThreadAtATime(lane, () =>
           compactThenDeliver(env, input, worker, { thread: reuse.ref, roundNo, ...over }, deliver),
         )
-        return
       }
-      const started = await openTaskThread(task.key, (title) =>
-        chats.startThread({
-          chat: chat.ref,
-          agentNodeId: worker.nodeId,
-          title,
-          message: openingMessage(message),
-          folder: step.folder || undefined,
-          sessionOptions,
-        }),
-      )
-      const { thread } = started
-      updateRunStep(db, run.id, step.id, {
-        threadRef: thread.ref,
-        threadId: thread.threadId,
-        chatRef: thread.chat.ref,
-        chatSlug: thread.chat.slug,
-        threadGiven: false,
-      })
-      setRoundThread(db, run.id, step.id, thread.ref)
-      recordSessionOptions(started.sessionOptions)
     })
   } catch (error) {
     const hint = await sessionUnreachable(env, input, error)

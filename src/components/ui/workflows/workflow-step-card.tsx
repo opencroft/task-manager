@@ -19,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from "../dropdown-menu"
 import { EffortSelector } from "@/components/effort-selector"
+import { FieldHint } from "../field-hint"
 import { Input } from "../input"
 import { ModeSelector } from "@/components/mode-selector"
 import { type PresenceValue, PresenceSelector } from "@/components/presence-selector"
@@ -163,18 +164,24 @@ function Field({
   children,
   issues,
   hint,
+  help,
   disabled,
 }: {
   label: string
   children: ReactNode
   issues?: string[]
+  /** A short line under the control the reader must see: why it is disabled, what the choice means now. */
   hint?: ReactNode
+  /** What the field does, as markdown, behind a circled "i" beside the label. */
+  help?: string
   /** Disables every control in `children`; the label and hint stay readable, so the hint can say why. */
   disabled?: boolean
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <FieldHint about={label} text={help}>
+        <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      </FieldHint>
       {disabled ? (
         <fieldset disabled className="min-w-0 opacity-60">
           {children}
@@ -484,7 +491,7 @@ export function WorkflowStepCard({
               <Field
                 label="Chat folder"
                 issues={issues.folder}
-                hint={`The folder of ${chat}’s thread list the step’s thread goes in, by its name there. Made if it isn’t there yet.`}
+                help={`The folder of ${chat}’s thread list the step’s thread goes in, by its name there. Made if it isn’t there yet.`}
               >
                 <Input
                   value={value.folder}
@@ -500,9 +507,10 @@ export function WorkflowStepCard({
               label="Session settings"
               issues={sessionIssues}
               disabled={Boolean(thread)}
-              hint={
+              hint={thread ? "The chosen thread’s session is its agent’s own: the step leaves its settings as they are." : undefined}
+              help={
                 thread
-                  ? "The chosen thread’s session is its agent’s own: the step leaves its settings as they are."
+                  ? undefined
                   : "Applied to the step’s session each time the step starts, before its message. Not set leaves the session’s own setting; a value the agent doesn’t offer is skipped. A slower presence also delays the step’s own message."
               }
             >
@@ -540,9 +548,10 @@ export function WorkflowStepCard({
               label="Compact the session above"
               issues={issues["sessionOptions.compactAbove"]}
               disabled={Boolean(thread)}
-              hint={
+              hint={thread ? "The chosen thread is never compacted by the step." : undefined}
+              help={
                 thread
-                  ? "The chosen thread is never compacted by the step."
+                  ? undefined
                   : "When the step comes back to a session it already has, and that session holds more context than this many tokens, it’s compacted before the step’s message, which then gives the instructions again. Empty takes the default; 0 never compacts."
               }
             >
@@ -567,7 +576,7 @@ export function WorkflowStepCard({
       {approval ? (
         <Field
           label="Approvers"
-          hint="Each is asked in the task manager’s notifications when the step starts. The step passes once every required approver has approved and the approvals reach the number needed; any one Reject sends the task back."
+          help="Each is asked in the task manager’s notifications when the step starts. The step passes once every required approver has approved and the approvals reach the number needed; any one Reject sends the task back."
         >
           <WorkflowApproversEditor
             value={value.approval}
@@ -581,7 +590,7 @@ export function WorkflowStepCard({
         <Field
           label="Instructions for the agent"
           issues={issues.instructions}
-          hint="Sent as the session’s first message as written, with the fields filled in. Only how to finish the step is added after it, so name the task here."
+          help="Sent as the session’s first message as written, with the fields filled in. Only how to finish the step is added after it, so name the task here."
         >
           <div className="flex flex-col gap-1.5">
             {renderInstructions ? (
@@ -639,7 +648,7 @@ export function WorkflowStepCard({
       <Field
         label={approval ? "The approvers finish the step by" : "When done, the agent finishes the step by"}
         issues={issues.transitions}
-        hint={
+        help={
           approval
             ? "Approve takes a transition that passes, Reject one that sends the task back; with several, the approver chooses. Each opens the next step (or ends the run) and moves the task to its status."
             : "The agent picks one by its label. Each opens the next step (or ends the run), moves the task to its status, and passes the step or sends the task back."

@@ -19,7 +19,13 @@ import { LOOP_ROUNDS, LOOP_WINDOW_MS, type MentionSession } from '../../shared/m
 import type { Actor, Comment } from '../../shared/types.ts'
 import type { Db } from '../db.ts'
 import { spaceChatFor } from '../space-chat.ts'
-import { agentTaskThread, oneThreadAtATime, openTaskThread, reopenTaskThread } from '../task-threads.ts'
+import {
+  agentTaskThread,
+  oneThreadAtATime,
+  openTaskThread,
+  reopenTaskThread,
+  type TaskThread,
+} from '../task-threads.ts'
 import type { ChatsPort } from '../workflows/engine.ts'
 import { type MentionMessageInput, mentionFollowUpMessage, mentionOpeningMessage } from './messages.ts'
 
@@ -229,17 +235,24 @@ export function deliverMentions(env: MentionEnv, planned: PlannedDelivery[]): Pr
             )
           } else {
             const chats = env.chats
-            const { thread } = await openTaskThread(delivery.taskKey, (title) =>
-              chats.startThread({
-                chat: chat.ref,
-                agentNodeId: delivery.agent.id,
-                title,
-                message: mentionOpeningMessage(delivery.input),
-              }),
+            const message = mentionOpeningMessage(delivery.input)
+            const opened = await openTaskThread(
+              chats,
+              { taskKey: delivery.taskKey, chat, agent: { nodeId: delivery.agent.id, name: delivery.agent.name } },
+              (title) => chats.startThread({ chat: chat.ref, agentNodeId: delivery.agent.id, title, message }),
             )
+            let thread: TaskThread
+            if ('started' in opened) {
+              const { ref, threadId, chat: where } = opened.started.thread
+              thread = { ref, threadId, chatRef: where.ref }
+            } else {
+              // A thread an earlier start opened, whose session never started, takes the mention as new.
+              thread = opened.unstarted
+              await chats.send({ thread: thread.ref, message, queue: 'wait' })
+            }
             saveThread.run(
-              thread.chat.ref,
-              thread.chat.slug,
+              thread.chatRef ?? chat.ref,
+              chat.slug,
               thread.threadId,
               thread.ref,
               delivery.taskId,

@@ -1,7 +1,8 @@
 // Bulk actions for a page that picks tasks (Tasks and Board). Each change is
 // the ordinary action once per picked task, a few at a time, so workflows and
 // history see it exactly as a single edit; the bar reports how many went
-// through and why the rest did not, and retries only those.
+// through and why the rest did not, and retries only those. The picked tasks
+// are also offered to the project chat.
 
 import { useCallback, useMemo, useRef, useState } from 'react'
 
@@ -15,6 +16,7 @@ import type {
 import type { TaskPriority } from '@/components/ui/tasks/task-priority-icon'
 import type { TaskSummary } from '../../shared/types'
 import { useProject } from '../app/project'
+import { usePickedTasks } from '../chat/project-chat'
 import { errorMessage } from '../lib/api'
 import { assigneeInput } from '../lib/assignees'
 import { toTaskMilestone } from '../lib/milestones'
@@ -46,6 +48,8 @@ export function useBulkActions(
 
   const byKey = useMemo(() => new Map(tasks.map((task) => [task.key, task])), [tasks])
   const picked = useMemo(() => selection.flatMap((key) => byKey.get(key) ?? []), [selection, byKey])
+  // What the bar acts on is what the chat quotes.
+  usePickedTasks(picked.map((task) => task.key))
 
   const run = useCallback(
     async (action: TaskBulkBarAction, targets: TaskSummary[], apply: (task: TaskSummary) => Promise<unknown>) => {

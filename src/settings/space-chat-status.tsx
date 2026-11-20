@@ -7,6 +7,7 @@ import { Check } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { FieldHint } from '@/components/ui/field-hint'
 import type { SpaceChatState } from '../../shared/workflows'
 import { useProject } from '../app/project'
 import { errorMessage } from '../lib/api'
@@ -90,7 +91,12 @@ export function SpaceChatStatus() {
         )}
       </div>
       <div className='flex flex-col gap-1'>
-        <p className='font-medium'>Agents it can reach</p>
+        <FieldHint
+          about='Agents it can reach'
+          text="A workflow step or a mention reaches only an agent in this chat; any other one waits, with the reason that it isn't in this space's chat. Add agents in the chat's members."
+        >
+          <span className='font-medium'>Agents it can reach</span>
+        </FieldHint>
         {state.agents.length ? (
           <ul className='flex flex-wrap gap-1.5'>
             {state.agents.map((agent) => (
@@ -102,10 +108,6 @@ export function SpaceChatStatus() {
         ) : (
           <p className='text-muted-foreground'>No agents that the task manager or you can see.</p>
         )}
-        <p className='text-xs text-muted-foreground'>
-          A workflow step or a mention reaches only an agent in this chat; any other one waits with "&lt;agent&gt; isn't
-          in this space's chat". Add agents in the chat's members.
-        </p>
       </div>
     </div>
   )

@@ -81,10 +81,7 @@ function ProjectSection() {
     api.project_info({}).then(setInfo, (failure) => setError(errorMessage(failure)))
   }, [api])
   return (
-    <SettingsSection
-      title='Project'
-      description='What this project is called, and the key its tasks are numbered with.'
-    >
+    <SettingsSection title='Project' hint='What this project is called, and the key its tasks are numbered with.'>
       <dl className='grid gap-x-6 gap-y-3 text-sm sm:grid-cols-[8rem_1fr]'>
         <dt className='text-muted-foreground'>Name</dt>
         <dd className='min-w-0'>
@@ -111,7 +108,8 @@ function LabelsSection() {
   return (
     <SettingsSection
       title='Labels'
-      description='Every label in use, with how many tasks carry it. A rename, merge or delete changes every task that has the label, and the saved views that filter by it.'
+      hint='Every label in use, with how many tasks carry it.'
+      description='A rename, merge or delete changes every task that has the label, and the saved views that filter by it.'
     >
       <TaskLabelsManager
         labels={projectLabels}
@@ -137,7 +135,8 @@ function MilestonesSection() {
   return (
     <SettingsSection
       title='Milestones'
-      description='The stages and goals tasks are planned into, each with an optional start and target date. A task put in one gets dates inside it; changing its dates, archiving it or deleting it moves no task. Not the same as a version, the release a task ships in.'
+      hint='The stages and goals tasks are planned into, each with an optional start and target date. A task put in one gets dates inside it. Not the same as a version, the release a task ships in.'
+      description="Changing a milestone's dates, archiving it or deleting it moves no task."
     >
       <TaskMilestonesManager
         milestones={kitMilestones}
@@ -167,7 +166,7 @@ function VersionsSection() {
   return (
     <SettingsSection
       title='Versions'
-      description='The releases tasks are planned into, named by semantic version (1.4.0, 2.0.0-beta.1). Releasing one dates it and can move what is still open to the next.'
+      hint='The releases tasks are planned into, named by semantic version (`1.4.0`, `2.0.0-beta.1`). Releasing one dates it and can move what is still open to the next.'
     >
       <TaskVersionsManager
         versions={kitVersions}
@@ -231,7 +230,7 @@ function WorkflowsSection() {
   return (
     <SettingsSection
       title='Workflows'
-      description='The default workflow is the one a task starts when none is named.'
+      hint='The default workflow is the one a task starts when none is named.'
       actions={
         <a
           href={hrefFor(['workflows'])}
@@ -329,7 +328,7 @@ function PullRequestsSection() {
   return (
     <SettingsSection
       title='Pull requests'
-      description="Pull requests on the forge that name a task's key in their title, description or branch show on that task with their state. The server reads the forge every minute; nothing is linked by hand."
+      hint="Pull requests on the forge that name a task's key in their title, description or branch show on that task with their state. The server reads the forge every minute; nothing is linked by hand."
     >
       <TaskForgeConnection
         status={status}
@@ -374,7 +373,7 @@ function ImportSection() {
   return (
     <SettingsSection
       title='Import'
-      description='Bring a project in from OpenProject: its work packages become tasks, with their parents, descriptions, dates, comments, relations and attachments. Importing again updates what changed there, keeps what was changed here, and never adds anything twice, nor anything removed here.'
+      hint='Bring a project in from OpenProject: its work packages become tasks, with their parents, descriptions, dates, comments, relations and attachments. Importing again updates what changed there, keeps what was changed here, and never adds anything twice, nor anything removed here.'
     >
       <TaskOpenProjectImport
         connection={state?.connection ?? null}
@@ -434,7 +433,7 @@ export function SettingsPage({ section }: { section?: string }) {
       {active === 'statuses' ? (
         <SettingsSection
           title='Statuses'
-          description='The steps a task moves through, in board order. The category says what a status means (not started, in progress or finished) for filters, progress and workflows.'
+          hint='The steps a task moves through, in board order. The category says what a status means (not started, in progress or finished) for filters, progress and workflows.'
         >
           <StatusesEditor />
         </SettingsSection>
@@ -446,7 +445,7 @@ export function SettingsPage({ section }: { section?: string }) {
       {active === 'chat' ? (
         <SettingsSection
           title='Chat'
-          description="The task manager talks in this space's chat: each workflow step's session, each agent @mentioned in a task's comment, and the project chat beside the pages open their threads there."
+          hint="The task manager talks in this space's chat: each workflow step's session, each agent @mentioned in a task's comment, and the project chat beside the pages open their threads there."
         >
           <SpaceChatStatus />
         </SettingsSection>

@@ -1,6 +1,7 @@
 import { Bot, Minus, Plus, UserPlus, X } from "lucide-react"
 
 import { Button } from "../button"
+import { FieldHint } from "../field-hint"
 import { Checkbox } from "../checkbox"
 import {
   DropdownMenu,
@@ -166,12 +167,12 @@ export function WorkflowApproversEditor({ value, onChange, people, agents = [], 
       <Issues messages={issues.needed} />
 
       <div className="flex min-w-0 flex-col gap-2">
-        <div className="flex min-w-0 flex-col gap-0.5">
+        <FieldHint
+          about="May reject for them"
+          text="Agents that can press Reject for an approver, on that approver’s word: they name the approver and quote them. Approving stays with the approvers."
+        >
           <span className="text-sm font-medium">May reject for them</span>
-          <span className="text-xs text-muted-foreground">
-            Agents that can press Reject for an approver, on that approver’s word: they name the approver and quote them. Approving stays with the approvers.
-          </span>
-        </div>
+        </FieldHint>
         {rejectingAgents.length > 0 ? (
           <ul className="flex min-w-0 flex-col divide-y rounded-md border" aria-label="Agents that may reject">
             {rejectingAgents.map((agent, index) => (

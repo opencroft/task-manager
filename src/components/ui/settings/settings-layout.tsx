@@ -1,7 +1,8 @@
 import { type ComponentType, type ReactNode, useId, useLayoutEffect, useRef } from 'react'
 
+import { FieldHint } from '../field-hint'
 import { ScrollArea } from '@/components/ui/layout/scroll-area'
-import { cn } from '@/lib/utils'
+import { cn } from 'cn'
 
 export interface SettingsLayoutSection {
   id: string
@@ -115,7 +116,9 @@ export function SettingsLayout({ title, sections, active, hrefFor, children, cla
 
 export interface SettingsSectionProps {
   title: ReactNode
-  /** What the section changes, in a sentence or two, under the heading. */
+  /** What the section is for, as markdown, behind a circled "i" beside the heading. */
+  hint?: string
+  /** One short line the reader must know before changing anything here (a consequence), under the heading. */
   description?: ReactNode
   /** Controls beside the heading (a link to a page, an Add button); they wrap under it when there is no room. */
   actions?: ReactNode
@@ -123,15 +126,17 @@ export interface SettingsSectionProps {
   className?: string
 }
 
-/** One section of a settings page: its heading, description and actions over its content. */
-export function SettingsSection({ title, description, actions, children, className }: SettingsSectionProps) {
+/** One section of a settings page: its heading with its hint, a must-know line and actions over its content. */
+export function SettingsSection({ title, hint, description, actions, children, className }: SettingsSectionProps) {
   const heading = useId()
   return (
     <section data-slot='settings-section' aria-labelledby={heading} className={cn('flex min-w-0 flex-col gap-4', className)}>
       <header className='flex flex-wrap items-start justify-between gap-x-4 gap-y-2'>
         <div className='min-w-0 flex-1 basis-64'>
-          <h2 id={heading} className='text-lg font-semibold break-words'>
-            {title}
+          <h2 className='text-lg font-semibold break-words'>
+            <FieldHint about={typeof title === 'string' ? title : 'this section'} text={hint}>
+              <span id={heading}>{title}</span>
+            </FieldHint>
           </h2>
           {description ? <p className='mt-1 text-sm text-pretty text-muted-foreground'>{description}</p> : null}
         </div>

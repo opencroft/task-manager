@@ -2,10 +2,11 @@ import { CircleAlert, GitPullRequest, KeyRound, Loader2, X } from 'lucide-react'
 import { type FormEvent, type ReactNode, useId, useState } from 'react'
 
 import { Button } from '../button'
+import { FieldHint } from '../field-hint'
 import { Input } from '../input'
 import { Skeleton } from '../skeleton'
 import { TaskManagerError } from '../states/task-manager-error'
-import { cn } from '@/lib/utils'
+import { cn } from 'cn'
 
 /** Where pull requests are read from. `secretKey` names a Secrets Store key; the token itself never reaches the page. */
 export interface TaskForgeConnectionValue {
@@ -142,9 +143,14 @@ function ConnectForm({
         </p>
       </div>
       <div className='flex flex-col gap-1.5 text-sm'>
-        <label htmlFor={`${id}-key`} className='font-medium'>
-          Secrets Store key
-        </label>
+        <FieldHint
+          about='Secrets Store key'
+          text='The name of the key that holds the forge access token. The token is read on the server for each read of the forge and never shown here; nothing is ever written to the forge.'
+        >
+          <label htmlFor={`${id}-key`} className='font-medium'>
+            Secrets Store key
+          </label>
+        </FieldHint>
         <Input
           id={`${id}-key`}
           aria-describedby={`${id}-key-help`}
@@ -161,7 +167,7 @@ function ConnectForm({
         <p id={`${id}-key-help`} className='flex items-start gap-1.5 text-xs text-muted-foreground'>
           <KeyRound aria-hidden='true' className='mt-0.5 size-3.5 shrink-0' />
           <span>
-            The name of the key that holds a forge access token with read:repository and read:issue. The token is read on the server for each read of the forge and never shown here; nothing is ever written to the forge.
+            Its token needs read:repository and read:issue.
           </span>
         </p>
       </div>

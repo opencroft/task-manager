@@ -5,6 +5,7 @@ import { LOOP_ROUNDS } from '../../shared/mentions.ts'
 import type { Actor } from '../../shared/types.ts'
 import { makeScope } from '../attachments/testing.ts'
 import { createTask, getTask } from '../service.ts'
+import type { ListedThread } from '../task-threads.ts'
 import type { ChatsPort } from '../workflows/engine.ts'
 import {
   deliverMentions,
@@ -25,8 +26,13 @@ const ALICE: Actor = { kind: 'person', name: 'Alice' }
  * The host's group chats as the task manager sees them: the space's chat
  * (`testing`, the test App's space) with QA and Dev in it, and another chat
  * with Zed. `outsider` leaves the task manager out of the space's chat.
+ * `listed` is every named thread of the space's chat as `activity` lists it;
+ * the host answers the usage only of those a start made (none has turns).
+ * `fail.session` makes a start keep the thread it made and then fail, as the
+ * host does when the agent's session cannot open.
  */
-function fakeChats(fail?: { start?: string; send?: string }, outsider = false) {
+function fakeChats(fail?: { start?: string; send?: string; session?: string }, outsider = false) {
+  const listed: ListedThread[] = []
   const started: Array<{ chat: string; agentNodeId: string; title?: string; message: string }> = []
   const sent: Array<{ thread: string; message: string; queue?: 'wait' | 'push' }> = []
   const unarchived: string[] = []
@@ -77,7 +83,23 @@ function fakeChats(fail?: { start?: string; send?: string }, outsider = false) {
       titles.add(named)
       started.push(input)
       const threadId = `thread-${started.length}`
-      return { thread: { ref: `testing.${threadId}`, threadId, chat: { ref: 'chat-1', slug: 'testing' } } }
+      const ref = `testing.${threadId}`
+      listed.push({
+        ref,
+        threadId,
+        title: input.title ?? null,
+        agent: { nodeId: input.agentNodeId },
+        chat: { ref: 'chat-1' },
+        archived: false,
+      })
+      if (fail?.session) throw new Error(fail.session)
+      return { thread: { ref, threadId, chat: { ref: 'chat-1', slug: 'testing' } } }
+    },
+    activity: async () => ({ threads: listed.filter((t) => !gone.has(t.ref)), nextCursor: null }),
+    usage: async (ref) => {
+      reach(ref)
+      if (!started.some((_, i) => ref === `testing.thread-${i + 1}`)) throw new Error('Not available')
+      return { turns: [], busy: false }
     },
     send: async (input) => {
       reach(input.thread)
@@ -86,10 +108,10 @@ function fakeChats(fail?: { start?: string; send?: string }, outsider = false) {
       return {}
     },
   }
-  return { port, started, sent, unarchived, titles, gone }
+  return { port, started, sent, unarchived, titles, gone, listed }
 }
 
-async function setup(options: { outsider?: boolean; fail?: { start?: string; send?: string } } = {}) {
+async function setup(options: { outsider?: boolean; fail?: { start?: string; send?: string; session?: string } } = {}) {
   const scope = makeScope({ kind: 'person', name: 'Alice' })
   const { key, number } = (
     await createTask(scope, { summary: 'Check on a phone', description: 'The board at 375 px.' })
@@ -187,19 +209,54 @@ test('the first mention opens one thread per task and agent, and a later mention
   assert.ok(changed.length > 0 && changed.every((keys) => keys[0] === key), 'the task is announced as changed')
 })
 
-test("an agent's thread already named with the task key is left alone: the mention opens one beside it, and the next mention goes there", async () => {
+test("an agent's thread a person started under the task key is never written to: the mention is noted as not sent, saying why", async () => {
   const { key, chats, mention, sessions } = await setup()
   // Started by hand, before any mention.
   chats.titles.add(`chat-1 agent_qa ${key}`)
+  chats.listed.push({
+    ref: 'testing.by-hand',
+    threadId: 'by-hand',
+    title: key,
+    agent: { nodeId: 'agent_qa' },
+    chat: { ref: 'chat-1' },
+    archived: false,
+    lastTurnAt: '2026-09-26T06:00:00.000Z',
+  })
   await mention(ALICE, [QA], '@Ace (QA) can you check this on a phone?')
+  assert.deepEqual([chats.started, chats.sent], [[], []], 'no thread under another name, nothing sent')
+  assert.deepEqual(
+    sessions().map((s) => [s.threadRef, s.note]),
+    [
+      [
+        null,
+        `Could not open a session in "Testing": Ace (QA) already has a thread named "${key}" in "Testing" (the task manager did not open it): rename or delete that thread`,
+      ],
+    ],
+  )
+})
+
+test('a first mention whose session failed to open leaves its thread: the next mention goes into it, as a first mention', async () => {
+  const fail: { session?: string } = { session: '(SSH) Channel open failure' }
+  const { key, chats, mention, sessions } = await setup({ fail })
+  await mention(ALICE, [QA], '@Ace (QA) can you check this on a phone?')
+  assert.deepEqual(
+    sessions().map((s) => [s.threadRef, s.note]),
+    [[null, 'Could not open a session in "Testing": (SSH) Channel open failure']],
+  )
+  fail.session = undefined
   await mention(ALICE, [QA], '@Ace (QA) and at 320 px?')
   assert.deepEqual(
     chats.started.map((s) => s.title),
-    [`${key} (task manager)`],
+    [key],
+    'no second thread',
   )
   assert.deepEqual(
     chats.sent.map((s) => s.thread),
     ['testing.thread-1'],
+  )
+  assert.match(
+    chats.sent[0]?.message ?? '',
+    /\*\*Alice\*\* mentioned you in a comment on TASK-1:\n\n> @Ace \(QA\) and at 320 px\?/,
   )
   assert.deepEqual(
     sessions().map((s) => [s.threadRef, s.note]),

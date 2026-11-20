@@ -2,11 +2,12 @@ import { ArrowDown, ArrowLeft, ArrowRight, ArrowRightLeft, ArrowUp, Check, Circl
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 
 import { Button } from '../button'
+import { FieldHint } from '../field-hint'
 import { Input } from '../input'
 import { ScrollArea } from '@/components/ui/layout/scroll-area'
 import { TaskManagerError } from '../states/task-manager-error'
 import { type DragSession, useTimelineDrag } from '@/components/ui/timeline/use-timeline-drag'
-import { cn } from '@/lib/utils'
+import { cn } from 'cn'
 
 import { ItemActionsMenu, ItemContextMenu, type ItemMenuEntries } from './item-menu'
 import { TaskStatusBadge, type TaskStatusCategory } from './task-status-badge'
@@ -110,11 +111,16 @@ function placeAt(pointer: { x: number; y: number }, draggedId: number): BoardSet
   return { column: zone.dataset.setupColumn ?? null, index: index < 0 ? chips.length : index }
 }
 
-function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
+/** `help` is markdown behind a circled "i" beside the title; `hint` is a short line the reader must see under it. */
+function Section({ title, help, hint, children }: { title: string; help?: string; hint?: string; children: ReactNode }) {
   return (
     <section className='flex min-w-0 flex-col gap-2'>
       <div className='flex flex-col gap-0.5'>
-        <h3 className='text-sm font-semibold'>{title}</h3>
+        <h3 className='text-sm font-semibold'>
+          <FieldHint about={title} text={help}>
+            {title}
+          </FieldHint>
+        </h3>
         {hint ? <p className='text-sm text-muted-foreground'>{hint}</p> : null}
       </div>
       {children}
@@ -298,7 +304,8 @@ export function BoardSetupEditor({
 
       <Section
         title='Columns'
-        hint='Left to right, the board’s columns; top to bottom, the sections of a column. Drag a status, or use its menu. A column left with no statuses is not saved.'
+        help='Left to right, the board’s columns; top to bottom, the sections of a column. Drag a status, or use its menu.'
+        hint='A column left with no statuses is not saved.'
       >
         <ScrollArea scrollbars='horizontal' className='-mx-1' innerClassName='flex-row items-start gap-3 px-1 pb-3'>
           {columns.map((column, index) => {
